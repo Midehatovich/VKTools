@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  VK Tools: установка для текущего пользователя.
+
+  %AppData%\Autodesk\Revit\Addins\<год>\
+      VKTools.addin            манифест, Revit читает его при запуске
+      VKTools\
+          VKTools.dll          надстройка, собранная под этот год Revit
+          VKTools.Core.dll
+          config\*.csv         встроенные правила
+
+  Годы — те, на которых работает отдел (2021, 2022, 2024). Добавить год: строка в двух foreach ниже,
+  блок с новыми GUID в конце файла и сборка надстройки под этот год. В профиле пользователя у каждого компонента ключ реестра HKCU
+  как KeyPath и RemoveFolder для каждой папки (так требует Windows Installer, ICE38/ICE64).
+  RemoveFolder удаляет папку, только если она пуста, — чужие надстройки не трогаются.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="VK Tools"
+           Manufacturer="VK Tools"
+           Version="$(var.Version)"
+           UpgradeCode="7E3B1C52-0F4A-4C8E-9B6D-2A5F8E1D4C90"
+           Scope="perUser"
+           Language="1049"
+           Codepage="1251"
+           Compressed="yes">
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="Уже установлена более новая версия VK Tools. Сначала удалите её в «Приложения и возможности»." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="AppDataFolder">
+      <Directory Id="AutodeskDir" Name="Autodesk">
+        <Directory Id="RevitDir" Name="Revit">
+          <Directory Id="AddinsDir" Name="Addins">
+<?foreach Y in 2021;2022;2024 ?>
+            <Directory Id="Addins$(var.Y)" Name="$(var.Y)">
+              <Directory Id="VKTools$(var.Y)" Name="VKTools">
+                <Directory Id="Config$(var.Y)" Name="config" />
+              </Directory>
+            </Directory>
+<?endforeach?>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="VK Tools" Level="1">
+      <ComponentRef Id="ProfileFolders" />
+<?foreach Y in 2021;2022;2024 ?>
+      <ComponentGroupRef Id="Revit$(var.Y)" />
+<?endforeach?>
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <Component Id="ProfileFolders" Directory="AddinsDir" Guid="143CBD44-86E0-403D-A072-EA25101A28CA">
+      <RegistryValue Root="HKCU" Key="Software\VKTools" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+      <RemoveFolder Id="RemoveAddinsDir" Directory="AddinsDir" On="uninstall" />
+      <RemoveFolder Id="RemoveRevitDir" Directory="RevitDir" On="uninstall" />
+      <RemoveFolder Id="RemoveAutodeskDir" Directory="AutodeskDir" On="uninstall" />
+    </Component>
+  </Fragment>
+
+  <!--
+    Компоненты для каждого года. GUID компонентов постоянные: по ним Windows Installer
+    узнаёт свои файлы при обновлении и удалении. Новый год — новый блок с новыми GUID.
+  -->
+  <?define YEAR = "2021" ?>
+  <?define GuidManifest = "624D9C2E-B8FB-4677-A551-7664C08FFD0D" ?>
+  <?define GuidBinaries = "837C95F6-B95C-4B76-80DA-4AE4525A8971" ?>
+  <?define GuidConfig = "271B07AC-E795-4161-B0F6-7F71F5C7D02B" ?>
+  <?include RevitYear.wxi ?>
+  <?undef YEAR ?>
+  <?undef GuidManifest ?>
+  <?undef GuidBinaries ?>
+  <?undef GuidConfig ?>
+
+  <?define YEAR = "2022" ?>
+  <?define GuidManifest = "2E9CA4FF-A5E9-41C1-8BC2-FD8BD6ABFACF" ?>
+  <?define GuidBinaries = "9D1F1E3C-9452-41B5-AC26-2C490CE3406C" ?>
+  <?define GuidConfig = "7C60BF34-A3EF-45FF-B591-69441CAAEA7E" ?>
+  <?include RevitYear.wxi ?>
+  <?undef YEAR ?>
+  <?undef GuidManifest ?>
+  <?undef GuidBinaries ?>
+  <?undef GuidConfig ?>
+
+  <?define YEAR = "2024" ?>
+  <?define GuidManifest = "84386578-05C6-429D-B5D8-BFC04AAB2C4C" ?>
+  <?define GuidBinaries = "79E116A7-A93F-4E82-B47A-936FFF022695" ?>
+  <?define GuidConfig = "B7C66E31-07F8-44D3-A059-F5909F44E000" ?>
+  <?include RevitYear.wxi ?>
+  <?undef YEAR ?>
+  <?undef GuidManifest ?>
+  <?undef GuidBinaries ?>
+  <?undef GuidConfig ?>
+</Wix>

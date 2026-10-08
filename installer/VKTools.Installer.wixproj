@@ -1,0 +1,20 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+  <!--
+    Установщик VK Tools: MSI в профиль пользователя, без прав администратора.
+    Собирается только на Windows, после сборки надстройки под каждую версию Revit:
+      dotnet build src/VKTools.Revit/VKTools.Revit.csproj -c Release -p:RevitVersion=2022   (и 2021, 2024)
+      dotnet build installer/VKTools.Installer.wixproj -c Release
+    WiX 5.0.2 — MS-RL. WiX 6+ не берём: другая лицензия (docs/DEPENDENCIES.md).
+  -->
+  <PropertyGroup>
+    <OutputName>VKTools-$(Version)</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <BinDir>$([MSBuild]::NormalizeDirectory($(MSBuildThisFileDirectory), "..", "src", "VKTools.Revit", "bin", $(Configuration)))</BinDir>
+    <DefineConstants>Version=$(Version);BinDir=$(BinDir)</DefineConstants>
+    <!--
+      ICE61: разрешаем переустановку той же версии (тестовые сборки).
+      ICE91: файлы в профиле пользователя — так и задумано, установка только для себя.
+    -->
+    <SuppressIces>ICE61;ICE91</SuppressIces>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,83 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Надстройка Revit. Одна сборка на каждую версию Revit:
+      dotnet build -c Release -p:RevitVersion=2022
+    2021–2024 → .NET Framework 4.8, 2025–2026 → .NET 8.
+    Ссылки на Revit API — только для компиляции (пакеты Nice3point, MIT),
+    сами DLL Revit в поставку не входят.
+  -->
+  <PropertyGroup>
+    <RevitVersion Condition="'$(RevitVersion)' == ''">2022</RevitVersion>
+    <AssemblyName>VKTools</AssemblyName>
+    <RootNamespace>VKTools.Revit</RootNamespace>
+    <OutputPath>bin\$(Configuration)\$(RevitVersion)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$(RevitVersion) &lt; 2025">
+    <TargetFramework>net48</TargetFramework>
+  </PropertyGroup>
+  <PropertyGroup Condition="$(RevitVersion) &gt;= 2025">
+    <TargetFramework>net8.0-windows</TargetFramework>
+  </PropertyGroup>
+
+  <!-- Константы для различий API между версиями -->
+  <PropertyGroup>
+    <DefineConstants>$(DefineConstants);REVIT$(RevitVersion)</DefineConstants>
+    <DefineConstants Condition="$(RevitVersion) &gt;= 2022">$(DefineConstants);REVIT2022_OR_GREATER</DefineConstants>
+    <DefineConstants Condition="$(RevitVersion) &gt;= 2023">$(DefineConstants);REVIT2023_OR_GREATER</DefineConstants>
+    <DefineConstants Condition="$(RevitVersion) &gt;= 2024">$(DefineConstants);REVIT2024_OR_GREATER</DefineConstants>
+    <DefineConstants Condition="$(RevitVersion) &gt;= 2025">$(DefineConstants);REVIT2025_OR_GREATER</DefineConstants>
+    <DefineConstants Condition="$(RevitVersion) &gt;= 2026">$(DefineConstants);REVIT2026_OR_GREATER</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Зафиксированные версии пакетов Revit API (DEPENDENCIES.md) -->
+  <PropertyGroup>
+    <RevitApiPackageVersion Condition="'$(RevitVersion)' == '2021'">2021.1.100</RevitApiPackageVersion>
+    <RevitApiPackageVersion Condition="'$(RevitVersion)' == '2022'">2022.1.80</RevitApiPackageVersion>
+    <RevitApiPackageVersion Condition="'$(RevitVersion)' == '2023'">2023.1.90</RevitApiPackageVersion>
+    <RevitApiPackageVersion Condition="'$(RevitVersion)' == '2024'">2024.3.60</RevitApiPackageVersion>
+    <RevitApiPackageVersion Condition="'$(RevitVersion)' == '2025'">2025.4.60</RevitApiPackageVersion>
+    <RevitApiPackageVersion Condition="'$(RevitVersion)' == '2026'">2026.4.10</RevitApiPackageVersion>
+  </PropertyGroup>
+
+  <Target Name="CheckRevitVersion" BeforeTargets="Restore;Build">
+    <Error Condition="'$(RevitApiPackageVersion)' == ''" Text="RevitVersion=$(RevitVersion) не поддерживается. Допустимо: 2021–2026." />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="$(RevitApiPackageVersion)" PrivateAssets="all" ExcludeAssets="runtime" />
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="$(RevitApiPackageVersion)" PrivateAssets="all" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!--
+    WPF без XAML-компиляции: окна собираются в коде. Так проект собирается на любой ОС
+    (в том числе в Linux-контейнере разработки), а не только на Windows (ARCHITECTURE.md §7).
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' != 'net48'">
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\VKTools.Core\VKTools.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Версия Revit сборки видна в «О программе» и в шапке отчёта -->
+  <ItemGroup>
+    <AssemblyMetadata Include="RevitVersion" Value="$(RevitVersion)" />
+  </ItemGroup>
+
+  <!-- Встроенные правила копируются рядом с DLL, манифест — в корень выхода (установщик кладёт его на уровень выше DLL) -->
+  <ItemGroup>
+    <None Include="VKTools.addin" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\config\**\*.csv" Link="config\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
