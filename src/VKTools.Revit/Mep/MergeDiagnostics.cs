@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Plumbing;
 using VKTools.Core.Mep;
 using VKTools.Revit.Compat;
 
@@ -136,6 +137,7 @@ namespace VKTools.Revit.Mep
                 var seen = new HashSet<long>(target);
                 var queue = new Queue<long>(target);
                 var border = new Dictionary<string, List<long>>(StringComparer.Ordinal);
+                var reachedFrom = new Dictionary<long, long>();
                 bool capped = false;
                 while (queue.Count > 0)
                 {
@@ -145,6 +147,7 @@ namespace VKTools.Revit.Mep
                     foreach (long n in Connectors.NeighbourIds(e))
                     {
                         if (!seen.Add(n)) continue;
+                        reachedFrom[n] = id;
                         if (seen.Count > 60000)
                         {
                             capped = true;
@@ -162,12 +165,14 @@ namespace VKTools.Revit.Mep
                     if (capped) break;
                 }
                 var systemsAround = new Dictionary<string, int>(StringComparer.Ordinal);
+                var withoutSystem = new List<long>();
                 foreach (long id in seen.Where(x => !target.Contains(x)))
                 {
                     Element? e = doc.GetElement(id.ToElementId());
                     string key = e == null ? "?" : SystemNames(doc, e);
                     systemsAround.TryGetValue(key, out int c);
                     systemsAround[key] = c + 1;
+                    if (e != null && Connectors.SystemsOf(e).Count == 0) withoutSystem.Add(id);
                 }
                 yield return $"  связано с ней через стыки и оборудование: ещё {seen.Count - target.Count} эл.{(capped ? " (обход остановлен на 60000)" : string.Empty)}"
                     + (systemsAround.Count > 0 ? ": " + string.Join("; ", systemsAround.OrderByDescending(x => x.Value).Take(8).Select(x => $"{x.Key} {x.Value}")) : string.Empty);
@@ -226,8 +231,125 @@ namespace VKTools.Revit.Mep
                 yield return $"  коннекторы: {string.Join(", ", classes.OrderByDescending(x => x.Value).Select(x => $"{x.Key} {x.Value}"))}; в группах {grouped}, в вариантах {options}";
                 yield return $"  предупреждения Revit на элементах: {warnedElements}"
                     + (warned.Count > 0 ? " — " + string.Join("; ", warned.OrderByDescending(x => x.Value).Take(5).Select(x => $"{x.Value} × {Short(x.Key)}")) : string.Empty);
+
+                foreach (long id in withoutSystem.Take(20))
+                {
+                    string via = reachedFrom.TryGetValue(id, out long prev) ? Describe(doc, prev) : "?";
+                    yield return $"    без системы: {Describe(doc, id)} ← {via}";
+                }
+                if (withoutSystem.Count > 20) yield return $"    без системы: и ещё {withoutSystem.Count - 20}";
+                yield return "  " + Families(doc, target);
+                var scan = new HashSet<long>(target);
+                scan.UnionWith(withoutSystem);
+                foreach (string line in ConnectorFindings(doc, scan)) yield return "  " + line;
             }
         }
+
+        /// <summary>Из каких семейств собрана сеть (кроме труб): «К1» висла, остальные нет — ищем отличие в составе (0.3.14).</summary>
+        private static string Families(Document doc, HashSet<long> ids)
+        {
+            var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (long id in ids)
+            {
+                if (!(doc.GetElement(id.ToElementId()) is FamilyInstance fi)) continue;
+                string key = $"{fi.Category?.Name ?? "?"}: {fi.Symbol?.FamilyName ?? "?"}";
+                counts.TryGetValue(key, out int c);
+                counts[key] = c + 1;
+            }
+            return $"семейства (без труб): {counts.Count} разных"
+                + (counts.Count > 0 ? " — " + string.Join("; ", counts.OrderByDescending(x => x.Value).ThenBy(x => x.Key, StringComparer.Ordinal).Take(25).Select(x => $"{x.Key} {x.Value}")) : string.Empty);
+        }
+
+        /// <summary>
+        /// Необычные коннекторы сети (0.3.14, только чтение): связанные коннекторы (проходное оборудование), коннектор с несколькими
+        /// присоединениями, односторонняя связь, два соединения между одной парой элементов, соединение с собой, стык разных
+        /// классификаций, открытые концы. Кольца по элементам (D-021) двойные соединения и проходное оборудование не видят.
+        /// </summary>
+        private static IEnumerable<string> ConnectorFindings(Document doc, HashSet<long> ids)
+        {
+            var linked = new List<long>();
+            var multiRef = new List<long>();
+            var oneSided = new List<string>();
+            var self = new List<long>();
+            var mismatch = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            var pairs = new Dictionary<(long, long), HashSet<(int, int)>>();
+            var open = new Dictionary<string, int>(StringComparer.Ordinal);
+            int notEnd = 0;
+            foreach (long id in ids)
+            {
+                Element? e = doc.GetElement(id.ToElementId());
+                if (e == null) continue;
+                foreach (Connector c in Connectors.Piping(e))
+                {
+                    try
+                    {
+                        if (c.ConnectorType != ConnectorType.End) notEnd++;
+                        if (e is FamilyInstance && c.GetMEPConnectorInfo()?.LinkedConnector != null && !linked.Contains(id)) linked.Add(id);
+                        if (!c.IsConnected)
+                        {
+                            string cat = e.Category?.Name ?? "?";
+                            open.TryGetValue(cat, out int k);
+                            open[cat] = k + 1;
+                            continue;
+                        }
+                        var physical = new List<Connector>();
+                        foreach (Connector other in c.AllRefs)
+                        {
+                            if (other.Owner is MEPCurve || other.Owner is FamilyInstance) physical.Add(other);
+                        }
+                        if (physical.Count > 1 && !multiRef.Contains(id)) multiRef.Add(id);
+                        foreach (Connector other in physical)
+                        {
+                            long n = other.Owner.Id.ToLong();
+                            if (n == id)
+                            {
+                                if (!self.Contains(id)) self.Add(id);
+                                continue;
+                            }
+                            bool back = false;
+                            foreach (Connector r in other.AllRefs)
+                            {
+                                if (r.Owner != null && r.Owner.Id.ToLong() == id && r.Id == c.Id) back = true;
+                            }
+                            if (!back && oneSided.Count < 50) oneSided.Add($"{id}:{c.Id} → {n}:{other.Id}");
+                            (long, long) key = id < n ? (id, n) : (n, id);
+                            (int, int) link = id < n ? (c.Id, other.Id) : (other.Id, c.Id);
+                            if (!pairs.TryGetValue(key, out HashSet<(int, int)>? links)) pairs[key] = links = new HashSet<(int, int)>();
+                            links.Add(link);
+                            PipeSystemType a = c.PipeSystemType, b = other.PipeSystemType;
+                            if (a != b && Classified(a) && Classified(b))
+                            {
+                                string kind = a < b ? $"{a}↔{b}" : $"{b}↔{a}";
+                                if (!mismatch.TryGetValue(kind, out List<string>? list)) mismatch[kind] = list = new List<string>();
+                                if (list.Count < 200) list.Add(id < n ? $"{id} ↔ {n}" : $"{n} ↔ {id}");
+                            }
+                        }
+                    }
+                    catch (Autodesk.Revit.Exceptions.ApplicationException)
+                    {
+                        // Недоступный коннектор пропускаем
+                    }
+                }
+            }
+            List<(long, long)> doubled = pairs.Where(x => x.Value.Count > 1).Select(x => x.Key).ToList();
+            yield return $"коннекторы сети: проходное оборудование (связанные коннекторы) {linked.Count}, несколько присоединений на коннекторе {multiRef.Count}, "
+                + $"односторонних связей {oneSided.Count}, пар с двумя и более соединениями {doubled.Count}, соединений с собой {self.Count}, "
+                + $"стыков разных классификаций {mismatch.Sum(x => x.Value.Distinct().Count())}, не торцевых {notEnd}; "
+                + "открытые концы: " + (open.Count == 0 ? "нет" : string.Join(", ", open.OrderByDescending(x => x.Value).Select(x => $"{x.Key} {x.Value}")));
+            foreach (long id in linked.Take(10)) yield return $"  проходное: {Describe(doc, id)}";
+            foreach (long id in multiRef.Take(10)) yield return $"  несколько присоединений: {Describe(doc, id)}";
+            foreach (string s in oneSided.Take(10)) yield return $"  односторонняя связь: {s}";
+            foreach ((long a, long b) in doubled.Take(10)) yield return $"  два соединения: {Describe(doc, a)} ↔ {Describe(doc, b)}";
+            foreach (long id in self.Take(10)) yield return $"  соединён с собой: {Describe(doc, id)}";
+            foreach (KeyValuePair<string, List<string>> m in mismatch)
+            {
+                List<string> distinct = m.Value.Distinct().ToList();
+                yield return $"  стык {m.Key}: {distinct.Count}, например {string.Join("; ", distinct.Take(5))}";
+            }
+        }
+
+        private static bool Classified(PipeSystemType type) =>
+            type != PipeSystemType.UndefinedSystemType && type != PipeSystemType.Fitting && type != PipeSystemType.Global && type != PipeSystemType.OtherPipe;
 
         private static Dictionary<long, List<string>> WarningsByElement(Document doc)
         {
