@@ -32,6 +32,7 @@ namespace VKTools.Revit
 
         public Result OnShutdown(UIControlledApplication application)
         {
+            MergeWindowHost.CloseAll();
             ReportWindowHost.CloseAll();
             Host.Log.Info("VK Tools выгружен.");
             return Result.Succeeded;
@@ -62,6 +63,19 @@ namespace VKTools.Revit
                 Image = RibbonIcons.Check(16),
             };
             check.AddItem(checkModel);
+
+            RibbonPanel systems = application.CreateRibbonPanel(TabName, "Системы");
+            var merge = new PushButtonData("VKTools.MergeSystems", "Объединить\nсистемы", assembly, typeof(MergeSystemsCommand).FullName)
+            {
+                ToolTip = "Копии систем трубопроводов («В1 1», «В1.2 3») — в основные системы. Сначала окно «было → станет» и пробный прогон.",
+                LongDescription =
+                    "Копия — проектное имя + один пробел + номер, тот же тип системы и классификация. Копии без приборов, " +
+                    "занятые, в группах и связанные с другими системами не объединяются. Запись — одна операция в журнале отмены.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.Merge(32),
+                Image = RibbonIcons.Merge(16),
+            };
+            systems.AddItem(merge);
 
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)

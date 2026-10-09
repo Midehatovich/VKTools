@@ -14,6 +14,12 @@ namespace VKTools.Revit.UI
 
         public static ImageSource Check(int size) => Draw(size, Blue, "M 7,16.5 L 13,22.5 L 25,9.5");
 
+        private static readonly Color Teal = Color.FromRgb(0x0F, 0x7C, 0x8C);
+
+        /// <summary>Три ветки сходятся в одну.</summary>
+        public static ImageSource Merge(int size) =>
+            Draw(size, Teal, "M 7,8 C 14,8 14,16 20,16 M 7,16 L 20,16 M 7,24 C 14,24 14,16 20,16 M 20,16 L 25,16");
+
         public static ImageSource Settings(int size) =>
             Draw(size, Gray, "M 7,10 L 25,10 M 7,16 L 25,16 M 7,22 L 25,22 M 12,7.5 L 12,12.5 M 20,13.5 L 20,18.5 M 14,19.5 L 14,24.5");
 

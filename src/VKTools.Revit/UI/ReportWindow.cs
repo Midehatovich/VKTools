@@ -174,7 +174,7 @@ namespace VKTools.Revit.UI
             UpdateCounter();
         }
 
-        private static Button MakeButton(string text, RoutedEventHandler onClick)
+        internal static Button MakeButton(string text, RoutedEventHandler onClick)
         {
             var button = new Button
             {
@@ -187,7 +187,7 @@ namespace VKTools.Revit.UI
             return button;
         }
 
-        private static DataGridTextColumn TextColumn(string header, string path, double width, bool wrap = false)
+        internal static DataGridTextColumn TextColumn(string header, string path, double width, bool wrap = false)
         {
             var column = new DataGridTextColumn
             {
@@ -305,15 +305,31 @@ namespace VKTools.Revit.UI
         /// <summary>Вызывать только из команды Revit (ExternalEvent создаётся в контексте API).</summary>
         public static void Show(CheckReport report, Document document, UIApplication app)
         {
+            EnsureCreated();
+            Show(report, document, app.MainWindowHandle);
+        }
+
+        /// <summary>ExternalEvent для «Показать в модели». Только в контексте Revit API: команда или обработчик события.</summary>
+        public static void EnsureCreated()
+        {
             if (_selectEvent == null || _selectHandler == null)
             {
                 _selectHandler = new SelectElementsHandler();
                 _selectEvent = ExternalEvent.Create(_selectHandler);
             }
+        }
+
+        /// <summary>Из любого окна плагина; перед этим команда должна вызвать <see cref="EnsureCreated"/>.</summary>
+        public static void Show(CheckReport report, Document document, IntPtr owner)
+        {
+            if (_selectEvent == null || _selectHandler == null)
+            {
+                throw new InvalidOperationException("Окно отчёта не подготовлено командой.");
+            }
 
             _current?.Close();
             var window = new ReportWindow(report, document, _selectEvent, _selectHandler);
-            window.AttachTo(app.MainWindowHandle);
+            window.AttachTo(owner);
             window.Closed += (s, e) =>
             {
                 if (ReferenceEquals(_current, s)) _current = null;
