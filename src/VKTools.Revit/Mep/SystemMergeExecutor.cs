@@ -77,6 +77,9 @@ namespace VKTools.Revit.Mep
 
         public List<string> Errors { get; } = new List<string>();
 
+        /// <summary>Обновления других надстроек, отключённые до перезапуска Revit (в этом прогоне или раньше в сеансе), D-017.</summary>
+        public List<string> DisabledUpdaters { get; } = new List<string>();
+
         public bool Committed { get; set; }
 
         public string Status { get; set; } = string.Empty;
@@ -85,6 +88,11 @@ namespace VKTools.Revit.Mep
 
         /// <summary>Время этапов одной строкой (анализ, удаление, Regenerate, фиксация…).</summary>
         public string Timings { get; set; } = string.Empty;
+
+        public static string DisabledUpdatersText(IEnumerable<string> names) =>
+            $"Отключено до перезапуска Revit: обновление {string.Join(", ", names)}. Оно упало при фиксации объединения, "
+            + "VK Tools отключил его (как кнопка в окне Revit), чтобы запись прошла. Пока Revit не перезапущен, эта надстройка "
+            + "не обновляет свои данные ни на этих, ни на других элементах; отключение не отменяется откатом пробного прогона.";
 
         /// <summary>Пробный прогон прошёл без ошибок: можно применять.</summary>
         public bool Passed => Errors.Count == 0 && Outcomes.Count > 0 && Outcomes.All(o => o.State == OutcomeState.TrialPassed || o.State == OutcomeState.Merged);
@@ -101,6 +109,16 @@ namespace VKTools.Revit.Mep
     internal static class SystemMergeExecutor
     {
         public const string OperationName = "VK Tools: объединение систем";
+
+        /// <summary>
+        /// Надстройки, чьё упавшее при фиксации обновление плагин отключает до перезапуска Revit (D-017).
+        /// Citrus [BIM] «MEPUpdater» срывал фиксацию на КрМа3 (2026-10-09); отключать его так решил пользователь.
+        /// Список расширять только решением пользователя.
+        /// </summary>
+        private static readonly HashSet<string> DisableOnFailureApplications = new HashSet<string>(StringComparer.Ordinal) { "Citrus [BIM]" };
+
+        /// <summary>Что уже отключено в этом сеансе Revit — напоминать при каждом прогоне.</summary>
+        private static readonly List<string> SessionDisabledUpdaters = new List<string>();
 
         public static MergeRunResult Run(Document doc, MergePlan plan, IReadOnlyCollection<PlannedCandidate> selected, MergeMode mode,
             IOperationProgress progress, OperationTimings timings, ILog log)
@@ -144,6 +162,7 @@ namespace VKTools.Revit.Mep
                 }
             }
             var systemsBefore = new HashSet<long>(model.Systems.Keys);
+            IReadOnlyList<UpdaterInfo> updaters = RegisteredUpdaters(doc);
             var mergedIds = new HashSet<long>();
             bool fatal = false;
             bool cancelled = false;
@@ -164,7 +183,7 @@ namespace VKTools.Revit.Mep
                             + $"в копиях {candidates.Sum(c => c.ElementIds.Count)}, коннекторов терминалов к переносу {candidates.Sum(c => c.Moves.Count)}");
                         gi++;
 
-                        var failures = new FailureCollector();
+                        var failures = new FailureCollector(updaters, DisableOnFailureApplications);
                         Transaction? transaction = null;
                         try
                         {
@@ -223,6 +242,11 @@ namespace VKTools.Revit.Mep
                             progress.Report($"Объединение {gi} из {groups.Count}: фиксация (здесь же работают апдейтеры других надстроек)", gi - 1, groups.Count);
                             TransactionStatus status;
                             using (timings.Measure("фиксация транзакции")) status = transaction.Commit();
+                            foreach (string note in failures.Notes) log.Warn("    " + note);
+                            foreach (string name in failures.DisabledUpdaters)
+                            {
+                                if (!SessionDisabledUpdaters.Contains(name)) SessionDisabledUpdaters.Add(name);
+                            }
                             if (status != TransactionStatus.Committed)
                             {
                                 throw new InvalidOperationException($"Revit отклонил фиксацию ({status}): "
@@ -323,7 +347,20 @@ namespace VKTools.Revit.Mep
                 }
             }
             result.Cancelled = cancelled;
+            result.DisabledUpdaters.AddRange(SessionDisabledUpdaters);
             return result;
+        }
+
+        private static IReadOnlyList<UpdaterInfo> RegisteredUpdaters(Document doc)
+        {
+            try
+            {
+                return UpdaterRegistry.GetRegisteredUpdaterInfos(doc).ToList();
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                return Array.Empty<UpdaterInfo>(); // без списка ни один апдейтер не отключаем
+            }
         }
 
         private static void MarkRolledBack(MergeRunResult result, bool fatal)

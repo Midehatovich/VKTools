@@ -153,6 +153,7 @@ namespace VKTools.Revit.UI
                 Host.Log.Info($"  «{o.Candidate.Record.Name}» (Id {o.Candidate.Record.Id}) → «{o.Candidate.Group.BaseName}» (Id {o.Candidate.Group.TargetId}): {o.StateText}. {o.Detail}");
             }
             foreach (string line in run.PostCheck) Host.Log.Info("  проверка: " + line);
+            if (run.DisabledUpdaters.Count > 0) Host.Log.Warn("  " + MergeRunResult.DisabledUpdatersText(run.DisabledUpdaters));
             foreach (string w in run.Warnings) Host.Log.Warn("  " + w);
             foreach (string e in run.Errors) Host.Log.Warn("  ошибка: " + e);
             foreach (string s in skipped) Host.Log.Warn("  " + s);

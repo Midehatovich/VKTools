@@ -40,6 +40,10 @@ namespace VKTools.Revit.Mep
                 {
                     report.Findings.Add(new CheckFinding(CheckPost, line.Contains("!!!") ? Severity.Error : Severity.Info, line.Replace("!!! ", string.Empty)));
                 }
+                if (run.DisabledUpdaters.Count > 0)
+                {
+                    report.Findings.Add(new CheckFinding(CheckMerge, Severity.Warning, MergeRunResult.DisabledUpdatersText(run.DisabledUpdaters)));
+                }
                 foreach (string w in run.Warnings) report.Findings.Add(new CheckFinding(CheckMerge, Severity.Warning, w));
                 foreach (string e in run.Errors.Where(e => !e.Contains("!!!"))) report.Findings.Add(new CheckFinding(CheckMerge, Severity.Error, e));
                 report.Findings.Add(new CheckFinding(CheckMerge, run.Errors.Count > 0 ? Severity.Error : Severity.Info, run.Status));

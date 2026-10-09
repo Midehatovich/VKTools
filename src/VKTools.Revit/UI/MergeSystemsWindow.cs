@@ -358,10 +358,12 @@ namespace VKTools.Revit.UI
 
         private void ShowRunStatus(MergeRunResult run)
         {
-            _status.Text = run.Status + (run.Errors.Count > 0 ? $" Ошибок: {run.Errors.Count} — см. «Результат» и «Отчёт…»." : string.Empty);
+            _status.Text = run.Status + (run.Errors.Count > 0 ? $" Ошибок: {run.Errors.Count} — см. «Результат» и «Отчёт…»." : string.Empty)
+                + (run.DisabledUpdaters.Count > 0 ? $" До перезапуска Revit отключено: {string.Join(", ", run.DisabledUpdaters)}." : string.Empty);
             _status.Foreground = run.Errors.Count > 0 ? Brushes.DarkRed : run.Cancelled ? Brushes.DimGray : Brushes.DarkGreen;
             var lines = new List<string>();
             if (!string.IsNullOrEmpty(run.Timings)) lines.Add("Время: " + run.Timings);
+            if (run.DisabledUpdaters.Count > 0) lines.Add(MergeRunResult.DisabledUpdatersText(run.DisabledUpdaters));
             lines.AddRange(run.PostCheck);
             lines.AddRange(run.Warnings);
             lines.AddRange(run.Errors);
