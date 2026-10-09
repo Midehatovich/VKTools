@@ -7,7 +7,6 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Plumbing;
 using VKTools.Core.Checks;
 using VKTools.Core.Logging;
-using VKTools.Core.Mep;
 using VKTools.Core.Progress;
 using VKTools.Revit.Compat;
 using VKTools.Revit.Infrastructure;
@@ -120,7 +119,7 @@ namespace VKTools.Revit.Mep
         /// Citrus [BIM] «MEPUpdater» срывал фиксацию на КрМа3 (2026-10-09); отключать его так решил пользователь.
         /// Список расширять только решением пользователя.
         /// </summary>
-        private static readonly HashSet<string> DisableOnFailureApplications = new HashSet<string>(StringComparer.Ordinal) { "Citrus [BIM]" };
+        internal static readonly HashSet<string> DisableOnFailureApplications = new HashSet<string>(StringComparer.Ordinal) { "Citrus [BIM]" };
 
         /// <summary>
         /// Участки копии, ни с чем не соединённые (на КрМа3 в «К1.1» — 4 участка, 12 эл.), после объединения остаются
@@ -131,6 +130,15 @@ namespace VKTools.Revit.Mep
 
         /// <summary>Что уже отключено в этом сеансе Revit — напоминать при каждом прогоне.</summary>
         private static readonly List<string> SessionDisabledUpdaters = new List<string>();
+
+        /// <summary>Запомнить апдейтеры, отключённые другой операцией плагина («Разорвать стык»).</summary>
+        internal static void RememberDisabled(IEnumerable<string> names)
+        {
+            foreach (string name in names)
+            {
+                if (!SessionDisabledUpdaters.Contains(name)) SessionDisabledUpdaters.Add(name);
+            }
+        }
 
         public static MergeRunResult Run(Document doc, MergePlan plan, IReadOnlyCollection<PlannedCandidate> selected, MergeMode mode,
             IOperationProgress progress, OperationTimings timings, ILog log)
@@ -146,31 +154,6 @@ namespace VKTools.Revit.Mep
             PipingModel model = plan.Model;
             List<IGrouping<PlannedGroup, CandidateOutcome>> groups = result.Outcomes.GroupBy(o => o.Candidate.Group).ToList();
 
-            // Кольца в сети (D-021): на КрМа3 MEPSystem.Add зависал только на «К1» (2 кольца) — на таких сетях Revit не запускаем
-            using (timings.Measure("поиск колец"))
-            {
-                progress.Report("Проверка сети на кольца…");
-                foreach (IGrouping<PlannedGroup, CandidateOutcome> g in groups)
-                {
-                    List<CheckFinding> loops = LoopFindings(doc, model, g.Key, g.Select(o => o.Candidate).ToList(), log);
-                    if (loops.Count == 0) continue;
-                    result.ElementFindings.AddRange(loops);
-                    string text = $"в сети {loops.Count} {Plural(loops.Count, "кольцо", "кольца", "колец")}: на таких сетях Revit зависает при объединении. "
-                        + "Где и что разорвать — см. «Отчёт…»";
-                    result.Errors.Add($"«{g.Key.BaseName}»: {text}");
-                    foreach (CandidateOutcome o in g)
-                    {
-                        o.State = OutcomeState.Failed;
-                        o.Detail = text;
-                    }
-                }
-            }
-            if (result.Errors.Count > 0)
-            {
-                result.Status = "Не запускалось: в сети есть кольца, на них Revit зависает. Модель не изменена.";
-                result.DisabledUpdaters.AddRange(SessionDisabledUpdaters);
-                return result;
-            }
 
             // Состояние до записи: системы и положение всех затронутых элементов (основные + копии)
             var tracked = new HashSet<long>();
@@ -391,7 +374,7 @@ namespace VKTools.Revit.Mep
             return result;
         }
 
-        private static IReadOnlyList<UpdaterInfo> RegisteredUpdaters(Document doc)
+        internal static IReadOnlyList<UpdaterInfo> RegisteredUpdaters(Document doc)
         {
             try
             {
@@ -676,84 +659,6 @@ namespace VKTools.Revit.Mep
         }
 
         /// <summary>«Оборудование 4309526 «Семейство: Тип», трубных коннекторов 3».</summary>
-        /// <summary>
-        /// Кольца в сети основной вместе с копиями: по строке отчёта на кольцо, всё кольцо — «Показать в модели»,
-        /// предлагаемое место разрыва — соединение в самой высокой точке кольца (обычно вентиляционная перемычка), D-021.
-        /// </summary>
-        private static List<CheckFinding> LoopFindings(Document doc, PipingModel model, PlannedGroup group, List<PlannedCandidate> candidates, ILog log)
-        {
-            HashSet<long> target = model.MembersOf(group.TargetId).All;
-            var ids = new HashSet<long>(target);
-            foreach (PlannedCandidate c in candidates) ids.UnionWith(c.ElementIds);
-            var edges = new List<(long A, long B)>();
-            foreach (long id in ids)
-            {
-                Element? e = doc.GetElement(id.ToElementId());
-                if (e == null) continue;
-                foreach (long n in Connectors.NeighbourIds(e))
-                {
-                    if (ids.Contains(n)) edges.Add((id, n));
-                }
-            }
-            List<NetworkLoop> loops = NetworkLoops.Find(ids, edges, (a, b) => JunctionZ(doc, a, b));
-            var findings = new List<CheckFinding>();
-            foreach (NetworkLoop loop in loops)
-            {
-                PlannedCandidate? copy = candidates.FirstOrDefault(c => loop.Ids.Any(c.ElementIds.Contains));
-                string where = copy == null ? $"«{group.BaseName}»" : $"копии «{copy.Record.Name}»";
-                Element? a = doc.GetElement(loop.BreakA.ToElementId());
-                string text = $"Кольцо в сети {where}: {loop.Ids.Count} эл. Предлагаемое место разрыва — верхняя точка кольца: "
-                    + $"{Describe(doc, loop.BreakA)} ↔ {Describe(doc, loop.BreakB)}";
-                log.Info($"    кольцо: {text}; элементы: {string.Join(", ", loop.Ids.Take(30))}{(loop.Ids.Count > 30 ? " …" : string.Empty)}");
-                var finding = new CheckFinding(MergeReportBuilder.CheckMerge, Severity.Error, text)
-                {
-                    ElementId = loop.BreakA,
-                    JunctionWith = loop.BreakB,
-                    Category = a?.Category?.Name ?? string.Empty,
-                    Family = a is FamilyInstance fi && fi.Symbol != null ? fi.Symbol.FamilyName : string.Empty,
-                    Type = a is FamilyInstance fi2 && fi2.Symbol != null ? fi2.Symbol.Name : a?.Name ?? string.Empty,
-                    Current = $"кольцо из {loop.Ids.Count} эл.",
-                    Expected = "сеть без колец",
-                    Action = "Revit зависает, добавляя элементы в сеть с кольцом («К1» на КрМа3: ждали 15 мин), поэтому плагин его не запускает. "
-                        + "«Показать в модели» выделит всё кольцо. Если это вентиляционная перемычка или ошибочное соединение — "
-                        + "«Разорвать стык…» разъединит предложенное место, не сдвигая элементы; сеть останется одной системой. "
-                        + "Если рвать лучше в другом месте — сделайте это в Revit. Затем «Обновить» и пробный прогон.",
-                };
-                finding.RelatedElementIds.AddRange(loop.Ids);
-                findings.Add(finding);
-            }
-            return findings;
-        }
-
-        /// <summary>Высота соединения двух элементов (наибольшая из их общих коннекторов); нет соединения — минимум.</summary>
-        private static double JunctionZ(Document doc, long a, long b)
-        {
-            double z = double.MinValue;
-            foreach (Connector connector in Connectors.Piping(doc.GetElement(a.ToElementId())))
-            {
-                try
-                {
-                    if (!connector.IsConnected) continue;
-                    foreach (Connector other in connector.AllRefs)
-                    {
-                        if (other.Owner != null && other.Owner.Id.ToLong() == b) z = Math.Max(z, connector.Origin.Z);
-                    }
-                }
-                catch (Autodesk.Revit.Exceptions.ApplicationException)
-                {
-                    // Недоступный коннектор пропускаем
-                }
-            }
-            return z;
-        }
-
-        private static string Plural(int n, string one, string few, string many)
-        {
-            int n100 = n % 100, n10 = n % 10;
-            if (n100 >= 11 && n100 <= 14) return many;
-            return n10 == 1 ? one : n10 >= 2 && n10 <= 4 ? few : many;
-        }
-
         private static string Describe(Document doc, long id)
         {
             Element? e = doc.GetElement(id.ToElementId());

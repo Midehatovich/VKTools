@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
+using VKTools.Core.Mep;
 using VKTools.Revit.Compat;
 
 namespace VKTools.Revit.Mep
@@ -32,6 +33,7 @@ namespace VKTools.Revit.Mep
                 var ids = new HashSet<long>(plan.Model.MembersOf(g.Key.TargetId).All);
                 foreach (PlannedCandidate c in g) ids.UnionWith(c.ElementIds);
                 yield return "  сеть основной с копиями: " + Graph(doc, ids);
+                foreach (string line in LoopLines(doc, ids)) yield return "    " + line;
                 if (doc.IsWorkshared) yield return "  совместная работа: " + Ownership(doc, ids);
             }
             List<string> updaters;
@@ -73,6 +75,198 @@ namespace VKTools.Revit.Mep
             int loops = edges.Count - ids.Count + parts;
             return $"элементов {ids.Count}, соединений {edges.Count}, связных частей {parts}, колец {loops}";
         }
+
+        /// <summary>Где кольца: элементы и соединение в верхней точке (D-021, только лог — кольца зависание не объясняют).</summary>
+        private static IEnumerable<string> LoopLines(Document doc, HashSet<long> ids)
+        {
+            var edges = new List<(long A, long B)>();
+            foreach (long id in ids)
+            {
+                Element? e = doc.GetElement(id.ToElementId());
+                if (e == null) continue;
+                foreach (long n in Connectors.NeighbourIds(e))
+                {
+                    if (ids.Contains(n)) edges.Add((id, n));
+                }
+            }
+            foreach (NetworkLoop loop in NetworkLoops.Find(ids, edges, (a, b) => JunctionZ(doc, a, b), 10))
+            {
+                yield return $"кольцо: {loop.Ids.Count} эл., верхняя точка {loop.BreakA} ↔ {loop.BreakB}; элементы {string.Join(", ", loop.Ids.Take(15))}{(loop.Ids.Count > 15 ? " …" : string.Empty)}";
+            }
+        }
+
+        private static double JunctionZ(Document doc, long a, long b)
+        {
+            double z = double.MinValue;
+            foreach (Connector connector in Connectors.Piping(doc.GetElement(a.ToElementId())))
+            {
+                try
+                {
+                    if (!connector.IsConnected) continue;
+                    foreach (Connector other in connector.AllRefs)
+                    {
+                        if (other.Owner != null && other.Owner.Id.ToLong() == b) z = Math.Max(z, connector.Origin.Z);
+                    }
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException)
+                {
+                    // Недоступный коннектор пропускаем
+                }
+            }
+            return z;
+        }
+
+        /// <summary>
+        /// Сеть вокруг каждой основной — при анализе, без изменений модели (0.3.12). На КрМа3 MEPSystem.Add в «К1» зависал
+        /// на первом же терминале (умывальник «К1 1», воронка «К1 2»), а в остальные основные шёл доли секунды. Ищем, чем «К1»
+        /// отличается: что связано с ней через стыки и оборудование, на каких элементах предупреждения Revit, какие классификации
+        /// коннекторов, группы и варианты конструкции.
+        /// </summary>
+        public static IEnumerable<string> Networks(Document doc, MergePlan plan)
+        {
+            Dictionary<long, List<string>> warnings = WarningsByElement(doc);
+            foreach (PlannedGroup g in plan.Groups.Where(x => x.TargetId > 0 && x.Candidates.Count > 0))
+            {
+                SystemMembers members = plan.Model.MembersOf(g.TargetId);
+                var target = new HashSet<long>(members.All);
+                string baseEquipment = members.BaseEquipmentId > 0 ? Describe(doc, members.BaseEquipmentId) : "нет";
+                yield return $"сеть «{g.BaseName}» (Id {g.TargetId}): элементов {target.Count}, терминалов {members.Terminals.Count}, базовое оборудование: {baseEquipment}";
+
+                // Всё, что физически связано с основной (через стыки и оборудование), и в каких системах
+                var seen = new HashSet<long>(target);
+                var queue = new Queue<long>(target);
+                var border = new Dictionary<string, List<long>>(StringComparer.Ordinal);
+                bool capped = false;
+                while (queue.Count > 0)
+                {
+                    long id = queue.Dequeue();
+                    Element? e = doc.GetElement(id.ToElementId());
+                    if (e == null) continue;
+                    foreach (long n in Connectors.NeighbourIds(e))
+                    {
+                        if (!seen.Add(n)) continue;
+                        if (seen.Count > 60000)
+                        {
+                            capped = true;
+                            break;
+                        }
+                        queue.Enqueue(n);
+                        if (target.Contains(id))
+                        {
+                            Element? other = doc.GetElement(n.ToElementId());
+                            string key = other == null ? "?" : SystemNames(doc, other);
+                            if (!border.TryGetValue(key, out List<long>? list)) border[key] = list = new List<long>();
+                            list.Add(id);
+                        }
+                    }
+                    if (capped) break;
+                }
+                var systemsAround = new Dictionary<string, int>(StringComparer.Ordinal);
+                foreach (long id in seen.Where(x => !target.Contains(x)))
+                {
+                    Element? e = doc.GetElement(id.ToElementId());
+                    string key = e == null ? "?" : SystemNames(doc, e);
+                    systemsAround.TryGetValue(key, out int c);
+                    systemsAround[key] = c + 1;
+                }
+                yield return $"  связано с ней через стыки и оборудование: ещё {seen.Count - target.Count} эл.{(capped ? " (обход остановлен на 60000)" : string.Empty)}"
+                    + (systemsAround.Count > 0 ? ": " + string.Join("; ", systemsAround.OrderByDescending(x => x.Value).Take(8).Select(x => $"{x.Key} {x.Value}")) : string.Empty);
+                foreach (KeyValuePair<string, List<long>> b in border.OrderByDescending(x => x.Value.Count).Take(8))
+                {
+                    yield return $"    граница с {b.Key}: {b.Value.Count} соед., например {string.Join("; ", b.Value.Distinct().Take(3).Select(id => Describe(doc, id)))}";
+                }
+
+                // Оборудование и приборы основной, чьи коннекторы в разных системах
+                int bridges = 0;
+                foreach (long id in target)
+                {
+                    if (!(doc.GetElement(id.ToElementId()) is FamilyInstance fi)) continue;
+                    HashSet<long> systems = Connectors.SystemsOf(fi);
+                    if (systems.Count < 2) continue;
+                    if (++bridges > 8) continue;
+                    yield return $"    в нескольких системах: {Describe(doc, id)} — {SystemNames(doc, fi)}";
+                }
+                if (bridges > 8) yield return $"    в нескольких системах: и ещё {bridges - 8}";
+
+                // Классификации коннекторов, группы, варианты, предупреждения Revit
+                var classes = new Dictionary<string, int>(StringComparer.Ordinal);
+                int grouped = 0, options = 0;
+                var warned = new Dictionary<string, int>(StringComparer.Ordinal);
+                int warnedElements = 0;
+                foreach (long id in target)
+                {
+                    Element? e = doc.GetElement(id.ToElementId());
+                    if (e == null) continue;
+                    foreach (Connector c in Connectors.Piping(e))
+                    {
+                        string cls;
+                        try
+                        {
+                            cls = c.PipeSystemType.ToString();
+                        }
+                        catch (Autodesk.Revit.Exceptions.ApplicationException)
+                        {
+                            cls = "?";
+                        }
+                        classes.TryGetValue(cls, out int k);
+                        classes[cls] = k + 1;
+                    }
+                    if (e.GroupId != null && e.GroupId != ElementId.InvalidElementId) grouped++;
+                    if (e.DesignOption != null) options++;
+                    if (warnings.TryGetValue(id, out List<string>? texts))
+                    {
+                        warnedElements++;
+                        foreach (string t in texts.Distinct())
+                        {
+                            warned.TryGetValue(t, out int k);
+                            warned[t] = k + 1;
+                        }
+                    }
+                }
+                yield return $"  коннекторы: {string.Join(", ", classes.OrderByDescending(x => x.Value).Select(x => $"{x.Key} {x.Value}"))}; в группах {grouped}, в вариантах {options}";
+                yield return $"  предупреждения Revit на элементах: {warnedElements}"
+                    + (warned.Count > 0 ? " — " + string.Join("; ", warned.OrderByDescending(x => x.Value).Take(5).Select(x => $"{x.Value} × {Short(x.Key)}")) : string.Empty);
+            }
+        }
+
+        private static Dictionary<long, List<string>> WarningsByElement(Document doc)
+        {
+            var result = new Dictionary<long, List<string>>();
+            try
+            {
+                foreach (FailureMessage w in doc.GetWarnings())
+                {
+                    string text = w.GetDescriptionText() ?? "?";
+                    foreach (ElementId id in w.GetFailingElements())
+                    {
+                        long key = id.ToLong();
+                        if (!result.TryGetValue(key, out List<string>? list)) result[key] = list = new List<string>();
+                        list.Add(text);
+                    }
+                }
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                // Без предупреждений — меньше сведений, анализ идёт дальше
+            }
+            return result;
+        }
+
+        private static string SystemNames(Document doc, Element e)
+        {
+            HashSet<long> ids = Connectors.SystemsOf(e);
+            return ids.Count == 0 ? "без системы" : string.Join("+", ids.OrderBy(x => x).Select(id => "«" + (doc.GetElement(id.ToElementId())?.Name ?? "?") + "»"));
+        }
+
+        private static string Describe(Document doc, long id)
+        {
+            Element? e = doc.GetElement(id.ToElementId());
+            if (e == null) return $"{id} (нет в модели)";
+            string name = e is FamilyInstance fi && fi.Symbol != null ? $"{fi.Symbol.FamilyName}: {fi.Symbol.Name}" : e.Name;
+            return $"{e.Category?.Name ?? "?"} {id} «{name}»";
+        }
+
+        private static string Short(string text) => text.Length <= 90 ? text : text.Substring(0, 90) + "…";
 
         /// <summary>Кто владеет элементами и устарели ли они относительно центральной (локальный кэш Revit, без обращения к серверу).</summary>
         private static string Ownership(Document doc, HashSet<long> ids)

@@ -144,6 +144,16 @@ namespace VKTools.Revit.UI
         {
             Host.Log.Info($"Анализ систем «{doc.Title}»: групп {plan.Groups.Count}, готовы {plan.Count(CandidateState.Ready)}, "
                 + $"нужна отметка {plan.Count(CandidateState.NeedsConfirmation)}, не объединяются {plan.Count(CandidateState.Rejected)}. Время: {timings.Summary()}");
+            try
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                foreach (string line in MergeDiagnostics.Networks(doc, plan)) Host.Log.Info("  " + line);
+                Host.Log.Info($"  (разбор сетей: {watch.Elapsed.TotalSeconds:0.0} с)");
+            }
+            catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException || ex is InvalidOperationException)
+            {
+                Host.Log.Warn("  разбор сетей не удался: " + ex.Message);
+            }
         }
 
         private static void LogRun(MergeRunResult run, List<string> skipped)

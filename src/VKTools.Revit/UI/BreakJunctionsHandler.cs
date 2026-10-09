@@ -55,7 +55,8 @@ namespace VKTools.Revit.UI
                 var done = new List<string>();
                 var skipped = new List<string>();
                 int systemsBefore = new FilteredElementCollector(doc).OfClass(typeof(PipingSystem)).GetElementCount();
-                var collector = new FailureCollector();
+                // Упавший Citrus MEPUpdater отключается так же, как при объединении (D-017): иначе он срывает любой разрыв
+                var collector = new FailureCollector(SystemMergeExecutor.RegisteredUpdaters(doc), SystemMergeExecutor.DisableOnFailureApplications);
                 TransactionStatus status;
                 using (Transaction transaction = FailureCollector.Start(doc, OperationName, collector))
                 {
@@ -101,6 +102,8 @@ namespace VKTools.Revit.UI
                     status = transaction.Commit();
                 }
                 foreach (string w in collector.Warnings) Host.Log.Warn("  предупреждение Revit: " + w);
+                foreach (string n in collector.Notes) Host.Log.Warn("  " + n);
+                SystemMergeExecutor.RememberDisabled(collector.DisabledUpdaters);
                 if (status != TransactionStatus.Committed)
                 {
                     string why = collector.Errors.Count > 0 ? string.Join("; ", collector.Errors) : status.ToString();
@@ -120,6 +123,10 @@ namespace VKTools.Revit.UI
                 string note = systemsAfter != systemsBefore
                     ? $"Систем трубопроводов было {systemsBefore}, стало {systemsAfter}: Revit пересобрал системы. Проверьте их в диспетчере систем."
                     : string.Empty;
+                if (collector.DisabledUpdaters.Count > 0)
+                {
+                    note = (note + "\n" + MergeRunResult.DisabledUpdatersText(collector.DisabledUpdaters)).Trim();
+                }
                 Finish(doc, done, skipped, note);
             }
             catch (Exception ex)
