@@ -261,7 +261,7 @@ namespace VKTools.Revit.Mep
                             // Плохо → исключение ниже, всё откатывает TransactionGroup (D-014).
                             progress.Report($"Объединение {gi} из {groups.Count}: проверка сети после фиксации", gi - 1, groups.Count);
                             List<string> network;
-                            using (timings.Measure("проверка сети после фиксации")) network = VerifyNetworkAfterCommit(doc, group, candidates, systemsBefore, result.ElementFindings, log);
+                            using (timings.Measure("проверка сети после фиксации")) network = VerifyNetworkAfterCommit(doc, group, candidates, model.MembersOf(group.TargetId).All, systemsBefore, tracked, result.ElementFindings, log);
                             if (network.Count > 0) throw new InvalidOperationException(string.Join("; ", network));
                             foreach (CandidateOutcome o in g)
                             {
@@ -489,8 +489,8 @@ namespace VKTools.Revit.Mep
         /// После фиксации группы: все элементы копий в основной и Revit не создал новых систем.
         /// Если нет — куда ушли элементы (в какую систему или без системы): это ответ на Q-201 / MEP-004.
         /// </summary>
-        private static List<string> VerifyNetworkAfterCommit(Document doc, PlannedGroup g, List<PlannedCandidate> candidates, HashSet<long> systemsBefore,
-            List<CheckFinding> findings, ILog log)
+        private static List<string> VerifyNetworkAfterCommit(Document doc, PlannedGroup g, List<PlannedCandidate> candidates, HashSet<long> targetMembers,
+            HashSet<long> systemsBefore, HashSet<long> tracked, List<CheckFinding> findings, ILog log)
         {
             var bad = new List<string>();
             var names = new Dictionary<long, string>();
@@ -506,6 +506,7 @@ namespace VKTools.Revit.Mep
             }
 
             var orphans = new Dictionary<long, PlannedCandidate>();
+            var strays = new List<(long Id, string Owner, HashSet<long> Systems)>();
             foreach (PlannedCandidate c in candidates)
             {
                 var where = new Dictionary<string, List<long>>(StringComparer.Ordinal);
@@ -516,6 +517,7 @@ namespace VKTools.Revit.Mep
                     HashSet<long> systems = Connectors.SystemsOf(e);
                     if (systems.Contains(g.TargetId)) continue;
                     if (systems.Count == 0) orphans[id] = c;
+                    else strays.Add((id, $"копии «{c.Record.Name}»", systems));
                     string key = systems.Count == 0 ? "без системы" : "в " + string.Join(" и ", systems.OrderBy(x => x).Select(SystemName));
                     if (!where.TryGetValue(key, out List<long>? ids)) where[key] = ids = new List<long>();
                     ids.Add(id);
@@ -538,6 +540,24 @@ namespace VKTools.Revit.Mep
                     findings.Add(piece.ToFinding(doc));
                 }
             }
+
+            // Элементы самой основной, ушедшие в чужую систему: стык может быть и через них
+            var leftTarget = new List<long>();
+            foreach (long id in targetMembers.OrderBy(x => x))
+            {
+                Element? e = doc.GetElement(id.ToElementId());
+                if (e == null) continue;
+                HashSet<long> systems = Connectors.SystemsOf(e);
+                if (systems.Count == 0 || systems.Contains(g.TargetId)) continue;
+                leftTarget.Add(id);
+                strays.Add((id, $"основной «{g.BaseName}»", systems));
+            }
+            if (leftTarget.Count > 0)
+            {
+                bad.Add($"{leftTarget.Count} элементов самой основной «{g.BaseName}» после фиксации ушли в другие системы (например, {string.Join(", ", leftTarget.Take(5))})");
+            }
+
+            if (strays.Count > 0) ReportJunctions(doc, strays, tracked, SystemName, bad, findings, log);
 
             var created = new FilteredElementCollector(doc).OfClass(typeof(PipingSystem))
                 .Select(s => s.Id.ToLong()).Where(id => !systemsBefore.Contains(id)).ToList();
@@ -675,6 +695,61 @@ namespace VKTools.Revit.Mep
                 pieces.Add(new OrphanPiece(orphans[start].Record.Name, ids, borderText, borders.Count, touchesTarget));
             }
             return pieces;
+        }
+
+        /// <summary>
+        /// Элементы копий ушли в чужую систему (на КрМа3: «К4.2н 1…5» → «К4.1 1»): сеть копии физически соединена с сетью
+        /// другой системы, и Revit, пересчитав сеть после удаления копии, отдал её той. Ищем стык — соседей этих элементов,
+        /// которые до запуска не были ни в основной, ни в копиях: по строке на стык, «Показать в модели» — оба элемента.
+        /// </summary>
+        private static void ReportJunctions(Document doc, List<(long Id, string Owner, HashSet<long> Systems)> strays, HashSet<long> tracked,
+            Func<long, string> systemName, List<string> bad, List<CheckFinding> findings, ILog log)
+        {
+            var seen = new HashSet<(long, long)>();
+            var perCopy = new Dictionary<string, int>(StringComparer.Ordinal);
+            int found = 0;
+            foreach ((long id, string owner, HashSet<long> systems) in strays)
+            {
+                Element? e = doc.GetElement(id.ToElementId());
+                if (e == null) continue;
+                foreach (long n in Connectors.NeighbourIds(e))
+                {
+                    if (tracked.Contains(n) || !seen.Add((id, n))) continue;
+                    perCopy.TryGetValue(owner, out int count);
+                    perCopy[owner] = ++count;
+                    found++;
+                    if (count > 5) continue; // на копию (основную) — первые 5 стыков, остальные только считаем
+                    Element? other = doc.GetElement(n.ToElementId());
+                    HashSet<long> otherSystems = other != null ? Connectors.SystemsOf(other) : new HashSet<long>();
+                    string where = string.Join(", ", systems.OrderBy(x => x).Select(systemName));
+                    string otherWhere = otherSystems.Count == 0 ? "без системы" : string.Join(", ", otherSystems.OrderBy(x => x).Select(systemName));
+                    string text = $"Сеть {owner} соединена с сетью {otherWhere}: {Describe(doc, id)} ↔ {Describe(doc, n)}. "
+                        + $"После удаления копий Revit отдал её элементы {where}";
+                    log.Info("    стык: " + text);
+                    var finding = new CheckFinding(MergeReportBuilder.CheckMerge, Severity.Error, text)
+                    {
+                        ElementId = id,
+                        Category = e.Category?.Name ?? string.Empty,
+                        Family = e is FamilyInstance fi && fi.Symbol != null ? fi.Symbol.FamilyName : string.Empty,
+                        Type = e is FamilyInstance fi2 && fi2.Symbol != null ? fi2.Symbol.Name : e.Name,
+                        Current = "в " + where,
+                        Expected = "в основной системе",
+                        Action = "Если соединение ошибочное — разъедините сети в этом месте и повторите пробный прогон. "
+                            + "Если так задумано (одна физическая сеть с разными системами), эту копию так не объединить: снимите отметку.",
+                    };
+                    finding.RelatedElementIds.Add(n);
+                    findings.Add(finding);
+                }
+            }
+            if (found > 0)
+            {
+                bad.Add($"сеть соединена с сетями других систем ({found} стыков: "
+                    + string.Join(", ", perCopy.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => $"{x.Key} {x.Value}")) + ") — где, см. «Отчёт…» и лог");
+            }
+            else
+            {
+                bad.Add("стык с сетью другой системы не найден ни у копий, ни у основной — пришлите лог");
+            }
         }
 
         private static string ElementName(Element? e) =>
