@@ -44,10 +44,14 @@ namespace VKTools.Revit.UI
             Levels = c.Levels;
             Explanation = c.Explanation;
             ShowIds = c.ElementIds.OrderBy(x => x).ToList();
+            MoveOwnerIds = c.Moves.Select(m => m.OwnerId).Concat(c.TerminalIds).Distinct().ToList();
             _rowBrush = BaseBrush;
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
+
+        /// <summary>Элементы, коннекторы которых плагин добавляет в основную (MEPSystem.Add), — для списка зависаний.</summary>
+        public List<long> MoveOwnerIds { get; }
 
         public string Key { get; }
 
@@ -140,6 +144,7 @@ namespace VKTools.Revit.UI
     internal sealed class MergeSystemsWindow : Window
     {
         private readonly Autodesk.Revit.DB.Document _document;
+        private readonly string _documentTitle;
         private readonly MergeSystemsHandler _handler;
         private readonly ExternalEvent _event;
         private readonly SelectElementsHandler _selectHandler;
@@ -164,6 +169,7 @@ namespace VKTools.Revit.UI
             SelectElementsHandler selectHandler, ExternalEvent selectEvent, IntPtr owner)
         {
             _document = document;
+            _documentTitle = document.Title;
             _handler = handler;
             _event = externalEvent;
             _selectHandler = selectHandler;
@@ -412,6 +418,24 @@ namespace VKTools.Revit.UI
             _report.IsEnabled = _lastReport != null;
         }
 
+        /// <summary>
+        /// Если на отмеченных копиях Revit уже зависал (его закрывали, пока VK Tools ждал MEPSystem.Add), — предупредить:
+        /// «Отменить» не прерывает операцию внутри Revit.
+        /// </summary>
+        private bool ConfirmAfterHang()
+        {
+            var ids = new HashSet<long>(_rows.Where(r => r.IsChecked).SelectMany(r => r.MoveOwnerIds));
+            List<string> previous = HangMarker.Previous(_documentTitle, ids);
+            if (previous.Count == 0) return true;
+            MessageBoxResult answer = MessageBox.Show(this,
+                "На отмеченных копиях Revit уже зависал, и его закрывали принудительно:\n\n"
+                + string.Join("\n", previous.Take(5)) + (previous.Count > 5 ? $"\n… и ещё {previous.Count - 5}" : string.Empty)
+                + "\n\nRevit может зависнуть снова: «Отменить» не прерывает операцию, пока она идёт внутри Revit. "
+                + "Перед запуском синхронизируйтесь с центральной моделью или снимите отметку с этой копии.\n\nЗапустить всё равно?",
+                "VK Tools", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+            return answer == MessageBoxResult.OK;
+        }
+
         private void ConfirmApply()
         {
             List<string> keys = CheckedKeys();
@@ -425,6 +449,7 @@ namespace VKTools.Revit.UI
         private void Send(MergeRequest request)
         {
             if (_busy) return;
+            if (request != MergeRequest.Refresh && !ConfirmAfterHang()) return;
             _busy = true;
             _status.Text = request == MergeRequest.Refresh ? "Анализ модели…" : request == MergeRequest.Trial ? "Пробный прогон…" : "Запись…";
             _status.Foreground = Brushes.DimGray;

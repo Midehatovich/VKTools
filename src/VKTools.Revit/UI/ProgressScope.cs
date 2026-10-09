@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -8,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Events;
 using VKTools.Core.Logging;
 using VKTools.Core.Progress;
 using VKTools.Revit.Infrastructure;
@@ -41,7 +43,15 @@ namespace VKTools.Revit.UI
         private TimeSpan _revitStarted;
         private TimeSpan _revitLogged = TimeSpan.MinValue;
         private bool _revitDisabled;
-        private bool _disposed;
+        private volatile bool _disposed;
+
+        // Сторож: если главный поток долго не отдаёт управление (вызов Revit не возвращается), пишет об этом в лог
+        // из фонового потока — по логу видно, сколько ждали и на каком шаге, даже если Revit потом закрыли.
+        private static readonly TimeSpan WatchdogQuiet = TimeSpan.FromSeconds(60);
+        private readonly Timer _watchdog;
+        private long _lastActivityTicks = DateTime.UtcNow.Ticks;
+        private long _lastWatchdogLogTicks;
+        private volatile string _currentStage = "Начинаю…";
 
         public ProgressScope(UIApplication app, string title, Window? ownerWindow = null)
         {
@@ -71,6 +81,7 @@ namespace VKTools.Revit.UI
             panel.Children.Add(_elapsed);
             panel.Children.Add(_cancel);
             _window.Content = panel;
+            _watchdog = new Timer(OnWatchdog, null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
             _window.Closing += (s, e) =>
             {
                 // Крестик = «Отменить»: окно закроется само, когда операция остановится
@@ -92,6 +103,7 @@ namespace VKTools.Revit.UI
                 }
                 _window.Show();
                 _app.Application.ProgressChanged += OnRevitProgress;
+                _app.DialogBoxShowing += OnRevitDialog;
                 Pump(force: true);
             }
             catch
@@ -107,6 +119,9 @@ namespace VKTools.Revit.UI
         public void Report(string stage, int done = 0, int total = 0)
         {
             if (_disposed) return;
+            bool changed = stage != _currentStage;
+            _currentStage = stage;
+            Touch();
             _stage.Text = stage;
             if (total > 0)
             {
@@ -119,16 +134,19 @@ namespace VKTools.Revit.UI
                 _bar.IsIndeterminate = true;
             }
             _revitStage.Text = string.Empty;
-            Pump(force: false);
+            // Новый шаг показываем сразу: следующим может быть долгий вызов Revit, во время которого окно не перерисуется
+            Pump(force: changed);
         }
 
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
+            _watchdog.Dispose();
             try
             {
                 _app.Application.ProgressChanged -= OnRevitProgress;
+                _app.DialogBoxShowing -= OnRevitDialog;
             }
             catch (Autodesk.Revit.Exceptions.ApplicationException)
             {
@@ -152,6 +170,7 @@ namespace VKTools.Revit.UI
         /// <summary>Долгая внутренняя операция Revit (пересчёт, фиксация): показываем её и даём отменить, если Revit позволяет.</summary>
         private void OnRevitProgress(object? sender, ProgressChangedEventArgs e)
         {
+            Touch();
             try
             {
                 if (IsCancellationRequested && e.Cancellable && (e.Stage == ProgressStage.PositionChanged || e.Stage == ProgressStage.Unchanged))
@@ -173,6 +192,41 @@ namespace VKTools.Revit.UI
             catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException || ex is InvalidOperationException)
             {
                 // Прогресс — не повод ронять операцию
+            }
+        }
+
+        private void Touch() => Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+
+        /// <summary>Фоновый поток: только лог (FileLog потокобезопасен), ни Revit API, ни окно отсюда не трогаем.</summary>
+        private void OnWatchdog(object? state)
+        {
+            if (_disposed) return;
+            DateTime now = DateTime.UtcNow;
+            TimeSpan quiet = now - new DateTime(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
+            TimeSpan sinceLog = now - new DateTime(Interlocked.Read(ref _lastWatchdogLogTicks), DateTimeKind.Utc);
+            if (quiet < WatchdogQuiet || sinceLog < WatchdogQuiet) return;
+            Interlocked.Exchange(ref _lastWatchdogLogTicks, now.Ticks);
+            Host.Log.Info($"  … Revit не отвечает {OperationTimings.Seconds(quiet)}, шаг: {_currentStage}");
+        }
+
+        /// <summary>
+        /// Revit открывает своё окно (предупреждение, запрос) посреди операции: в лог, и окно прогресса перестаёт
+        /// быть поверх всех — иначе окно Revit может оказаться под ним, и операция выглядит зависшей.
+        /// </summary>
+        private void OnRevitDialog(object? sender, DialogBoxShowingEventArgs e)
+        {
+            try
+            {
+                string message = e is TaskDialogShowingEventArgs task ? task.Message
+                    : e is MessageBoxShowingEventArgs box ? box.Message
+                    : string.Empty;
+                Host.Log.Warn($"  Revit показывает окно «{e.DialogId}»{(string.IsNullOrEmpty(message) ? string.Empty : ": " + message.Replace(Environment.NewLine, " "))}");
+                _window.Topmost = false;
+                _revitStage.Text = "Revit открыл своё окно — ответьте в нём (оно может быть за этим окном).";
+            }
+            catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException || ex is InvalidOperationException)
+            {
+                // Только наблюдаем; окно Revit покажется в любом случае
             }
         }
 

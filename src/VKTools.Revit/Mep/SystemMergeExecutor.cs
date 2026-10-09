@@ -392,7 +392,6 @@ namespace VKTools.Revit.Mep
             for (int i = 0; i < moves.Count; i++)
             {
                 (long ownerId, int connectorId) = moves[i];
-                if (moves.Count > 1) progress.Report($"{stage}: терминал {i + 1} из {moves.Count}", i, moves.Count);
                 progress.ThrowIfCancelled();
                 Connector connector = FindConnector(doc, ownerId, connectorId);
                 if (Connectors.SystemId(connector) == targetId)
@@ -400,7 +399,11 @@ namespace VKTools.Revit.Mep
                     pulled++;
                     continue;
                 }
+                string terminal = Describe(doc, ownerId);
+                progress.Report($"{stage}: терминал {i + 1} из {moves.Count} — Revit добавляет {terminal} в «{target.Name}». "
+                    + "Пока Revit не закончит этот шаг, «Отменить» не сработает.", i, moves.Count);
                 var watch = Stopwatch.StartNew();
+                HangMarker.Begin(doc.Title, ownerId, $"MEPSystem.Add: {terminal} → «{target.Name}»");
                 try
                 {
                     var set = new ConnectorSet();
@@ -421,6 +424,10 @@ namespace VKTools.Revit.Mep
                     throw new InvalidOperationException($"{Describe(doc, ownerId)}: Revit не добавляет коннектор {connectorId} в основную "
                         + $"({first.Message.Replace(Environment.NewLine, " ")}); сейчас коннектор "
                         + (now < 1 ? "без системы" : $"в «{doc.GetElement(now.ToElementId())?.Name}»"));
+                }
+                finally
+                {
+                    HangMarker.End();
                 }
                 if (watch.Elapsed >= TimeSpan.FromSeconds(1)) log.Info($"      медленно: {Describe(doc, ownerId)} — MEPSystem.Add {OperationTimings.Seconds(watch.Elapsed)}");
             }

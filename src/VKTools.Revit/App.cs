@@ -20,6 +20,10 @@ namespace VKTools.Revit
             {
                 Host.Initialize();
                 Host.Log.Info($"VK Tools {BuildInfo.PluginVersion} (сборка для Revit {BuildInfo.RevitVersion}) запущен в Revit {application.ControlledApplication.VersionNumber}.");
+                foreach (string hang in HangMarker.CollectAbandoned())
+                {
+                    Host.Log.Warn($"Прошлый сеанс Revit закрыли, пока VK Tools ждал Revit: {hang}. Перед повторным запуском этой копии плагин предупредит.");
+                }
                 CreateRibbon(application);
                 return Result.Succeeded;
             }
