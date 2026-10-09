@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Plumbing;
+using VKTools.Core.Checks;
 using VKTools.Core.Logging;
 using VKTools.Core.Progress;
 using VKTools.Revit.Compat;
@@ -79,6 +80,9 @@ namespace VKTools.Revit.Mep
 
         /// <summary>Обновления других надстроек, отключённые до перезапуска Revit (в этом прогоне или раньше в сеансе), D-017.</summary>
         public List<string> DisabledUpdaters { get; } = new List<string>();
+
+        /// <summary>Строки отчёта с элементами («Показать в модели»): участки сети, оставшиеся без системы после фиксации.</summary>
+        public List<CheckFinding> ElementFindings { get; } = new List<CheckFinding>();
 
         public bool Committed { get; set; }
 
@@ -257,7 +261,7 @@ namespace VKTools.Revit.Mep
                             // Плохо → исключение ниже, всё откатывает TransactionGroup (D-014).
                             progress.Report($"Объединение {gi} из {groups.Count}: проверка сети после фиксации", gi - 1, groups.Count);
                             List<string> network;
-                            using (timings.Measure("проверка сети после фиксации")) network = VerifyNetworkAfterCommit(doc, group, candidates, systemsBefore);
+                            using (timings.Measure("проверка сети после фиксации")) network = VerifyNetworkAfterCommit(doc, group, candidates, systemsBefore, result.ElementFindings, log);
                             if (network.Count > 0) throw new InvalidOperationException(string.Join("; ", network));
                             foreach (CandidateOutcome o in g)
                             {
@@ -485,7 +489,8 @@ namespace VKTools.Revit.Mep
         /// После фиксации группы: все элементы копий в основной и Revit не создал новых систем.
         /// Если нет — куда ушли элементы (в какую систему или без системы): это ответ на Q-201 / MEP-004.
         /// </summary>
-        private static List<string> VerifyNetworkAfterCommit(Document doc, PlannedGroup g, List<PlannedCandidate> candidates, HashSet<long> systemsBefore)
+        private static List<string> VerifyNetworkAfterCommit(Document doc, PlannedGroup g, List<PlannedCandidate> candidates, HashSet<long> systemsBefore,
+            List<CheckFinding> findings, ILog log)
         {
             var bad = new List<string>();
             var names = new Dictionary<long, string>();
@@ -500,6 +505,7 @@ namespace VKTools.Revit.Mep
                 return name;
             }
 
+            var orphans = new Dictionary<long, PlannedCandidate>();
             foreach (PlannedCandidate c in candidates)
             {
                 var where = new Dictionary<string, List<long>>(StringComparer.Ordinal);
@@ -509,6 +515,7 @@ namespace VKTools.Revit.Mep
                     if (e == null) continue;
                     HashSet<long> systems = Connectors.SystemsOf(e);
                     if (systems.Contains(g.TargetId)) continue;
+                    if (systems.Count == 0) orphans[id] = c;
                     string key = systems.Count == 0 ? "без системы" : "в " + string.Join(" и ", systems.OrderBy(x => x).Select(SystemName));
                     if (!where.TryGetValue(key, out List<long>? ids)) where[key] = ids = new List<long>();
                     ids.Add(id);
@@ -517,6 +524,19 @@ namespace VKTools.Revit.Mep
                 int total = where.Values.Sum(x => x.Count);
                 bad.Add($"«{c.Record.Name}»: {total} элементов после фиксации не в основной системе: "
                     + string.Join("; ", where.OrderByDescending(x => x.Value.Count).Select(x => $"{x.Value.Count} {x.Key} (например, {string.Join(", ", x.Value.OrderBy(id => id).Take(5))})")));
+            }
+
+            if (orphans.Count > 0)
+            {
+                List<OrphanPiece> pieces = OrphanPieces(doc, orphans, g.TargetId, SystemName);
+                bad.Add($"без системы осталось {orphans.Count} эл. в {pieces.Count} участках сети — какие и с чем соединены, см. «Отчёт…» и лог");
+                foreach (OrphanPiece piece in pieces)
+                {
+                    log.Info($"    без системы: участок «{piece.Copy}» из {piece.Ids.Count} эл. ({string.Join(", ", piece.Ids.Take(20))}{(piece.Ids.Count > 20 ? " …" : string.Empty)}); "
+                        + $"соединён с: {(piece.Borders.Count > 0 ? string.Join("; ", piece.Borders) : "ничем")}");
+                    foreach (long id in piece.Ids.Take(5)) log.Info("      " + Describe(doc, id));
+                    findings.Add(piece.ToFinding(doc));
+                }
             }
 
             var created = new FilteredElementCollector(doc).OfClass(typeof(PipingSystem))
@@ -563,8 +583,7 @@ namespace VKTools.Revit.Mep
         {
             Element? e = doc.GetElement(id.ToElementId());
             if (e == null) return $"{id} (нет в модели)";
-            string name = e is FamilyInstance fi && fi.Symbol != null ? $"«{fi.Symbol.FamilyName}: {fi.Symbol.Name}»" : $"«{e.Name}»";
-            return $"{e.Category?.Name ?? "?"} {id} {name}, трубных коннекторов {Connectors.Piping(e).Count}";
+            return $"{e.Category?.Name ?? "?"} {id} {ElementName(e)}, трубных коннекторов {Connectors.Piping(e).Count}";
         }
 
         /// <summary>Состояние каждого переносимого коннектора: система, соединён ли и с чем (элемент и его системы).</summary>
@@ -604,6 +623,106 @@ namespace VKTools.Revit.Mep
                     domain = "?";
                 }
                 yield return $"{ownerId}/{connectorId}: {system}, классификация {domain}, соединён: {(connector.IsConnected ? string.Join("; ", refs) : "нет")}";
+            }
+        }
+
+        /// <summary>
+        /// Элементы копий без системы после фиксации — связные участки (по физическим соединениям между ними же)
+        /// и то, с чем каждый участок граничит: по этому видно, разрыв это, лишний отрезок или переход через оборудование.
+        /// </summary>
+        private static List<OrphanPiece> OrphanPieces(Document doc, Dictionary<long, PlannedCandidate> orphans, long targetId, Func<long, string> systemName)
+        {
+            var pieces = new List<OrphanPiece>();
+            var seen = new HashSet<long>();
+            foreach (long start in orphans.Keys.OrderBy(x => x))
+            {
+                if (!seen.Add(start)) continue;
+                var ids = new List<long>();
+                var borders = new SortedSet<long>();
+                var queue = new Queue<long>();
+                queue.Enqueue(start);
+                while (queue.Count > 0)
+                {
+                    long id = queue.Dequeue();
+                    ids.Add(id);
+                    Element? e = doc.GetElement(id.ToElementId());
+                    if (e == null) continue;
+                    foreach (long n in Connectors.NeighbourIds(e))
+                    {
+                        if (orphans.ContainsKey(n))
+                        {
+                            if (seen.Add(n)) queue.Enqueue(n);
+                        }
+                        else
+                        {
+                            borders.Add(n);
+                        }
+                    }
+                }
+                ids.Sort();
+                var borderText = new List<string>();
+                bool touchesTarget = false;
+                foreach (long n in borders)
+                {
+                    Element? other = doc.GetElement(n.ToElementId());
+                    HashSet<long> systems = other != null ? Connectors.SystemsOf(other) : new HashSet<long>();
+                    if (systems.Contains(targetId)) touchesTarget = true;
+                    if (borderText.Count >= 10) continue;
+                    string where = systems.Count == 0 ? "без системы" : string.Join(", ", systems.OrderBy(x => x).Select(systemName));
+                    borderText.Add($"{other?.Category?.Name ?? "?"} {n} {ElementName(other)} ({where})");
+                }
+                if (borders.Count > 10) borderText.Add($"и ещё {borders.Count - 10}");
+                pieces.Add(new OrphanPiece(orphans[start].Record.Name, ids, borderText, borders.Count, touchesTarget));
+            }
+            return pieces;
+        }
+
+        private static string ElementName(Element? e) =>
+            e == null ? string.Empty : e is FamilyInstance fi && fi.Symbol != null ? $"«{fi.Symbol.FamilyName}: {fi.Symbol.Name}»" : $"«{e.Name}»";
+
+        private sealed class OrphanPiece
+        {
+            public OrphanPiece(string copy, List<long> ids, List<string> borders, int borderCount, bool touchesTarget)
+            {
+                Copy = copy;
+                Ids = ids;
+                Borders = borders;
+                BorderCount = borderCount;
+                TouchesTarget = touchesTarget;
+            }
+
+            public string Copy { get; }
+
+            public List<long> Ids { get; }
+
+            public List<string> Borders { get; }
+
+            public int BorderCount { get; }
+
+            public bool TouchesTarget { get; }
+
+            public CheckFinding ToFinding(Document doc)
+            {
+                Element? first = doc.GetElement(Ids[0].ToElementId());
+                string action = BorderCount == 0
+                    ? "Участок ни с чем не соединён: соедините его с сетью (разрыв) или удалите, если он лишний. Затем повторите пробный прогон."
+                    : TouchesTarget
+                        ? "Участок соединён с элементами основной системы, но Revit не включил его в неё. Посмотрите соединение на границе участка и пришлите лог."
+                        : "Участок соединён только с элементами без системы или других систем (часто — через оборудование без коннектора этой классификации). "
+                            + "Проверьте соединения на границе участка, затем повторите пробный прогон.";
+                var finding = new CheckFinding(MergeReportBuilder.CheckMerge, Severity.Error,
+                    $"После фиксации без системы: участок копии «{Copy}» из {Ids.Count} эл.; соединён с: {(Borders.Count > 0 ? string.Join("; ", Borders) : "ничем")}")
+                {
+                    ElementId = Ids[0],
+                    Category = first?.Category?.Name ?? string.Empty,
+                    Family = first is FamilyInstance fi && fi.Symbol != null ? fi.Symbol.FamilyName : string.Empty,
+                    Type = first is FamilyInstance fi2 && fi2.Symbol != null ? fi2.Symbol.Name : first?.Name ?? string.Empty,
+                    Current = "без системы",
+                    Expected = "в основной системе",
+                    Action = action,
+                };
+                finding.RelatedElementIds.AddRange(Ids);
+                return finding;
             }
         }
 
