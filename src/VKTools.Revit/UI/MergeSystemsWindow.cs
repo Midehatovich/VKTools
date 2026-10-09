@@ -145,11 +145,11 @@ namespace VKTools.Revit.UI
         private readonly SelectElementsHandler _selectHandler;
         private readonly ExternalEvent _selectEvent;
         private readonly IntPtr _owner;
-        private readonly bool _readOnly;
         private readonly ObservableCollection<MergeRow> _rows = new ObservableCollection<MergeRow>();
         private readonly ICollectionView _view;
         private readonly DataGrid _grid;
         private readonly TextBlock _summary;
+        private readonly TextBlock _hint;
         private readonly TextBlock _status;
         private readonly TextBox _details;
         private readonly CheckBox _hideRejected;
@@ -169,7 +169,6 @@ namespace VKTools.Revit.UI
             _selectHandler = selectHandler;
             _selectEvent = selectEvent;
             _owner = owner;
-            _readOnly = document.IsReadOnly;
 
             this.ApplyDefaultLook();
             Title = $"VK Tools — объединение систем: {document.Title}";
@@ -185,6 +184,8 @@ namespace VKTools.Revit.UI
             DockPanel.SetDock(header, Dock.Top);
             _summary = new TextBlock { FontSize = 14, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap };
             header.Children.Add(_summary);
+            _hint = new TextBlock { Foreground = Brushes.DarkRed, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0), Visibility = Visibility.Collapsed };
+            header.Children.Add(_hint);
             var steps = new List<string>
             {
                 "1. Отметьте копии. Готовые отмечены сразу; «Нужна ваша отметка» — только после проверки в модели («Показать в модели»).",
@@ -192,7 +193,6 @@ namespace VKTools.Revit.UI
                 "3. «Применить» включается после успешного пробного прогона с теми же отметками. В журнале отмены будет одна запись.",
             };
             if (document.IsWorkshared) steps.Add("Совместная работа: перед записью синхронизируйтесь; после — синхронизируйте с освобождением элементов.");
-            if (_readOnly) steps.Add("Документ открыт только для чтения: доступен только анализ.");
             header.Children.Add(new TextBlock { Text = string.Join(Environment.NewLine, steps), Foreground = Brushes.DimGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
             root.Children.Add(header);
 
@@ -309,6 +309,13 @@ namespace VKTools.Revit.UI
             _summary.Text = plan.Groups.Count == 0
                 ? "Копий систем («В1 1», «К1.2 3») в модели нет — объединять нечего."
                 : $"Групп к объединению: {groups}. Копий: готовы {plan.Count(CandidateState.Ready)}, нужна ваша отметка {plan.Count(CandidateState.NeedsConfirmation)}, не объединяются {plan.Count(CandidateState.Rejected)}.";
+            List<string> withoutBase = plan.Groups.Where(g => g.Core.BaseMissing)
+                .Select(g => g.BaseName).ToList();
+            _hint.Text = withoutBase.Count == 0 ? string.Empty
+                : $"Нет основной системы с проектным именем: {string.Join(", ", withoutBase.Take(12))}{(withoutBase.Count > 12 ? " …" : string.Empty)}. "
+                  + "Revit назвал все системы сам («В1 6»). Переименуйте основную (F9 → система → Свойства → Имя системы → «В1») и нажмите «Обновить». "
+                  + "Копии с «Терм.» = 0 не перенесутся и после этого: систему из одних труб объединяет только физическое соединение.";
+            _hint.Visibility = withoutBase.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
 
             _lastReport = report;
             if (run != null)
@@ -321,6 +328,8 @@ namespace VKTools.Revit.UI
             else
             {
                 _trialPassedFor = null;
+                _status.Text = $"Анализ модели: {DateTime.Now:HH:mm:ss}.";
+                _status.Foreground = Brushes.DimGray;
             }
             _busy = false;
             UpdateButtons();
@@ -367,8 +376,10 @@ namespace VKTools.Revit.UI
         private void UpdateButtons()
         {
             List<string> keys = CheckedKeys();
-            _trial.IsEnabled = !_busy && !_readOnly && keys.Count > 0;
-            _apply.IsEnabled = !_busy && !_readOnly && keys.Count > 0 && _trialPassedFor == SelectionKey(keys);
+            // Document.IsReadOnly здесь не годится: внутри команды ReadOnly он всегда true.
+            // Можно ли писать, проверяет обработчик в момент записи.
+            _trial.IsEnabled = !_busy && keys.Count > 0;
+            _apply.IsEnabled = !_busy && keys.Count > 0 && _trialPassedFor == SelectionKey(keys);
             _apply.ToolTip = _apply.IsEnabled ? "Записать отмеченное одной операцией" : "Сначала успешный «Пробный прогон» с этими отметками";
             _report.IsEnabled = _lastReport != null;
         }

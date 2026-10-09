@@ -176,6 +176,7 @@ namespace VKTools.Core.Tests
 
             MergeGroup orphan = groups.Single(g => g.BaseName == "В1.3");
             Assert.Null(orphan.Target);
+            Assert.True(orphan.BaseMissing);
             Assert.NotNull(orphan.Problem);
             Assert.All(orphan.Candidates, c => Assert.Equal(CandidateStatus.Rejected, c.Status));
             Assert.Equal(2, orphan.Candidates.Count);
@@ -187,6 +188,7 @@ namespace VKTools.Core.Tests
             var s = Systems("В1", "В1", "В1 1");
             MergeGroup g = Assert.Single(MergeGrouping.BuildGroups(s));
             Assert.Null(g.Target);
+            Assert.False(g.BaseMissing);
             Assert.Contains("неоднозначна", g.Problem);
             Assert.Equal(CandidateStatus.Rejected, Assert.Single(g.Candidates).Status);
         }

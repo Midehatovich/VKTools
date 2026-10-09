@@ -71,6 +71,7 @@ namespace VKTools.Revit.Mep
 
         private static CheckFinding Row(PlannedCandidate c, string check, Severity severity, string message, string action)
         {
+            message += $" [эл. {c.ElementIds.Count}, терм. {c.TerminalIds.Count}, уровни: {c.Levels}]";
             var finding = new CheckFinding(check, severity, message)
             {
                 ElementId = c.TerminalIds.Count > 0 ? c.TerminalIds[0] : c.ElementIds.Count > 0 ? c.ElementIds.Min() : (long?)null,

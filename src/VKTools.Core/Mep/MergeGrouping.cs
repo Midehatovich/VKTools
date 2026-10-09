@@ -89,11 +89,12 @@ namespace VKTools.Core.Mep
     /// <summary>Группа «основная ← копии» для пакетного объединения.</summary>
     public sealed class MergeGroup
     {
-        internal MergeGroup(string baseName, SystemRecord? target, string? problem)
+        internal MergeGroup(string baseName, SystemRecord? target, string? problem, bool baseMissing = false)
         {
             BaseName = baseName;
             Target = target;
             Problem = problem;
+            BaseMissing = baseMissing;
         }
 
         /// <summary>Проектное имя группы («В1.2»).</summary>
@@ -104,6 +105,9 @@ namespace VKTools.Core.Mep
 
         /// <summary>Почему группу нельзя объединять целиком (нет основной, основная неоднозначна).</summary>
         public string? Problem { get; }
+
+        /// <summary>Системы с проектным именем нет вовсе: Revit назвал все системы сам («В1 6»).</summary>
+        public bool BaseMissing { get; }
 
         public List<Candidate> Candidates { get; } = new List<Candidate>();
     }
@@ -285,7 +289,8 @@ namespace VKTools.Core.Mep
             foreach (var orphanGroup in orphans)
             {
                 var group = new MergeGroup(orphanGroup.Key, null,
-                    $"системы «{orphanGroup.Key}» в проекте нет. Плагин не назначает основную сам: переименуйте одну из копий в «{orphanGroup.Key}» вручную");
+                    $"системы «{orphanGroup.Key}» в проекте нет. Плагин не назначает основную сам: переименуйте одну из копий в «{orphanGroup.Key}» вручную",
+                    baseMissing: true);
                 foreach (var x in orphanGroup.OrderBy(x => x.Parts.Number))
                 {
                     claimed.Add(x.Record.Id);

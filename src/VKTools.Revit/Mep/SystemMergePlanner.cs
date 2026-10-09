@@ -156,16 +156,14 @@ namespace VKTools.Revit.Mep
                         // Не объединяется по имени — но элементы нужны, чтобы найти систему в модели
                         CollectElements(doc, plan, planned);
                     }
-                    if (target == null)
+                    if (target == null || candidate.Status == CandidateStatus.Rejected)
                     {
                         planned.State = CandidateState.Rejected;
-                        planned.Reasons.Add(core.Problem ?? candidate.Reason ?? "нет основной системы");
-                        continue;
-                    }
-                    if (candidate.Status == CandidateStatus.Rejected)
-                    {
-                        planned.State = CandidateState.Rejected;
-                        planned.Reasons.Add(candidate.Reason ?? "отклонена по имени");
+                        planned.Reasons.Add(target == null ? core.Problem ?? candidate.Reason ?? "нет основной системы" : candidate.Reason ?? "отклонена по имени");
+                        if (planned.TerminalIds.Count == 0 && planned.ElementIds.Count > 0)
+                        {
+                            planned.Notes.Add("к тому же нет терминалов: систему из одних труб не перенести и после исправления имени, нужно соединить трубы");
+                        }
                         continue;
                     }
                     if (targetBlock != null) planned.Reasons.Add("основная система: " + targetBlock);
