@@ -193,13 +193,13 @@ namespace VKTools.Revit.Mep
 
                             string path = "без Regenerate";
                             List<(long OwnerId, int ConnectorId)> moves = candidates.SelectMany(c => c.Moves).ToList();
-                            progress.Report($"Объединение {gi} из {groups.Count}: перенос {moves.Count} коннекторов в «{group.BaseName}»", gi - 1, groups.Count);
                             try
                             {
-                                using (timings.Measure("добавление в основную (MEPSystem.Add)")) AddConnectors(doc, target, moves);
+                                AddByCopy(doc, target, group, candidates, gi, groups.Count, progress, timings, log);
                             }
                             catch (Exception first) when (first is Autodesk.Revit.Exceptions.ApplicationException || first is InvalidOperationException)
                             {
+                                log.Info($"    MEPSystem.Add отказал: {first.Message.Replace(Environment.NewLine, " ")}; повтор после Regenerate");
                                 using (timings.Measure("Regenerate")) doc.Regenerate();
                                 List<string> busy = ReassignedTerminals(doc, group, moves);
                                 if (busy.Count > 0)
@@ -207,7 +207,7 @@ namespace VKTools.Revit.Mep
                                     throw new InvalidOperationException("после удаления Revit сам назначил терминалам новую систему: "
                                         + string.Join("; ", busy.Take(5)) + $" (первая ошибка: {first.Message})");
                                 }
-                                using (timings.Measure("добавление в основную (MEPSystem.Add)")) AddConnectors(doc, target, moves);
+                                AddByCopy(doc, target, group, candidates, gi, groups.Count, progress, timings, log);
                                 path = "после Regenerate";
                             }
                             progress.Report($"Объединение {gi} из {groups.Count}: пересчёт модели (Regenerate)", gi - 1, groups.Count);
@@ -216,7 +216,7 @@ namespace VKTools.Revit.Mep
 
                             progress.Report($"Объединение {gi} из {groups.Count}: проверка результата", gi - 1, groups.Count);
                             List<string> bad;
-                            using (timings.Measure("проверка внутри транзакции")) bad = VerifyGroup(doc, group, candidates, moves, systemsBefore, geometryBefore);
+                            using (timings.Measure("проверка внутри транзакции")) bad = VerifyGroup(doc, group, candidates, moves, geometryBefore);
                             if (bad.Count > 0) throw new InvalidOperationException(string.Join("; ", bad));
 
                             progress.Report($"Объединение {gi} из {groups.Count}: фиксация (здесь же работают апдейтеры других надстроек)", gi - 1, groups.Count);
@@ -227,6 +227,13 @@ namespace VKTools.Revit.Mep
                                 throw new InvalidOperationException($"Revit отклонил фиксацию ({status}): "
                                     + (failures.Errors.Count > 0 ? string.Join("; ", failures.Errors) : "—"));
                             }
+
+                            // Систему сети (трубам и фитингам) Revit может окончательно назначать только при фиксации — проверяем после неё.
+                            // Плохо → исключение ниже, всё откатывает TransactionGroup (D-014).
+                            progress.Report($"Объединение {gi} из {groups.Count}: проверка сети после фиксации", gi - 1, groups.Count);
+                            List<string> network;
+                            using (timings.Measure("проверка сети после фиксации")) network = VerifyNetworkAfterCommit(doc, group, candidates, systemsBefore);
+                            if (network.Count > 0) throw new InvalidOperationException(string.Join("; ", network));
                             foreach (CandidateOutcome o in g)
                             {
                                 mergedIds.Add(o.Candidate.Record.Id);
@@ -359,9 +366,12 @@ namespace VKTools.Revit.Mep
             return busy;
         }
 
-        /// <summary>Проверка внутри транзакции до фиксации. Непустой список — откат.</summary>
+        /// <summary>
+        /// Проверка внутри транзакции до фиксации, непустой список — откат. Основная на месте, тип и базовое оборудование те же, терминалы в основной, ничего не удалено и не сдвинуто.
+        /// Систему труб и фитингов здесь не проверяем: Revit может назначать её только при фиксации (<see cref="VerifyNetworkAfterCommit"/>).
+        /// </summary>
         private static List<string> VerifyGroup(Document doc, PlannedGroup g, List<PlannedCandidate> candidates, List<(long OwnerId, int ConnectorId)> moves,
-            HashSet<long> systemsBefore, Dictionary<long, GeometryKey> geometryBefore)
+            Dictionary<long, GeometryKey> geometryBefore)
         {
             var bad = new List<string>();
             var target = doc.GetElement(g.TargetId.ToElementId()) as PipingSystem;
@@ -377,7 +387,6 @@ namespace VKTools.Revit.Mep
             }
             foreach (PlannedCandidate c in candidates)
             {
-                int notInTarget = 0;
                 foreach (long id in c.ElementIds)
                 {
                     Element? e = doc.GetElement(id.ToElementId());
@@ -386,19 +395,78 @@ namespace VKTools.Revit.Mep
                         bad.Add($"элемент {id} удалён");
                         continue;
                     }
-                    if (!Connectors.SystemsOf(e).Contains(g.TargetId)) notInTarget++;
                     if (geometryBefore.TryGetValue(id, out GeometryKey g0) && !g0.SameAs(GeometryKey.Of(e))) bad.Add($"изменилось положение элемента {id}");
                 }
-                if (notInTarget > 0) bad.Add($"«{c.Record.Name}»: {notInTarget} элементов сети не перешли в основную систему");
+            }
+            return bad.Distinct().Take(20).ToList();
+        }
+
+        /// <summary>
+        /// После фиксации группы: все элементы копий в основной и Revit не создал новых систем.
+        /// Если нет — куда ушли элементы (в какую систему или без системы): это ответ на Q-201 / MEP-004.
+        /// </summary>
+        private static List<string> VerifyNetworkAfterCommit(Document doc, PlannedGroup g, List<PlannedCandidate> candidates, HashSet<long> systemsBefore)
+        {
+            var bad = new List<string>();
+            var names = new Dictionary<long, string>();
+            string SystemName(long id)
+            {
+                if (!names.TryGetValue(id, out string? name))
+                {
+                    name = doc.GetElement(id.ToElementId())?.Name ?? id.ToString(CultureInfo.InvariantCulture);
+                    name = systemsBefore.Contains(id) ? $"«{name}»" : $"«{name}» (новая, создал Revit)";
+                    names[id] = name;
+                }
+                return name;
+            }
+
+            foreach (PlannedCandidate c in candidates)
+            {
+                var where = new Dictionary<string, List<long>>(StringComparer.Ordinal);
+                foreach (long id in c.ElementIds)
+                {
+                    Element? e = doc.GetElement(id.ToElementId());
+                    if (e == null) continue;
+                    HashSet<long> systems = Connectors.SystemsOf(e);
+                    if (systems.Contains(g.TargetId)) continue;
+                    string key = systems.Count == 0 ? "без системы" : "в " + string.Join(" и ", systems.OrderBy(x => x).Select(SystemName));
+                    if (!where.TryGetValue(key, out List<long>? ids)) where[key] = ids = new List<long>();
+                    ids.Add(id);
+                }
+                if (where.Count == 0) continue;
+                int total = where.Values.Sum(x => x.Count);
+                bad.Add($"«{c.Record.Name}»: {total} элементов после фиксации не в основной системе: "
+                    + string.Join("; ", where.OrderByDescending(x => x.Value.Count).Select(x => $"{x.Value.Count} {x.Key} (например, {string.Join(", ", x.Value.OrderBy(id => id).Take(5))})")));
             }
 
             var created = new FilteredElementCollector(doc).OfClass(typeof(PipingSystem))
                 .Select(s => s.Id.ToLong()).Where(id => !systemsBefore.Contains(id)).ToList();
-            if (created.Count > 0)
-            {
-                bad.Add("Revit создал новые системы: " + string.Join(", ", created.Take(10).Select(id => doc.GetElement(id.ToElementId())?.Name ?? id.ToString(CultureInfo.InvariantCulture))));
-            }
+            if (created.Count > 0) bad.Add("Revit создал новые системы: " + string.Join(", ", created.Take(10).Select(SystemName)));
             return bad.Distinct().Take(20).ToList();
+        }
+
+        /// <summary>
+        /// Терминалы каждой копии — отдельным MEPSystem.Add с замером и строкой в лог: видно, на какой копии и каком терминале
+        /// Revit тратит время. Между копиями можно отменить.
+        /// </summary>
+        private static void AddByCopy(Document doc, PipingSystem target, PlannedGroup group, List<PlannedCandidate> candidates, int groupNumber, int groupCount,
+            IOperationProgress progress, OperationTimings timings, ILog log)
+        {
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                PlannedCandidate c = candidates[i];
+                progress.ThrowIfCancelled();
+                progress.Report($"Объединение {groupNumber} из {groupCount}: добавляю терминалы «{c.Record.Name}» в «{group.BaseName}» "
+                    + $"(копия {i + 1} из {candidates.Count}, коннекторов {c.Moves.Count})", groupNumber - 1, groupCount);
+                string owners = string.Join(", ", c.Moves.Select(m => m.OwnerId).Distinct().Take(5).Select(id =>
+                {
+                    Element? e = doc.GetElement(id.ToElementId());
+                    return $"{e?.Category?.Name ?? "?"} {id}";
+                }));
+                log.Info($"    «{c.Record.Name}» → «{group.BaseName}»: коннекторов {c.Moves.Count}, элементов в копии {c.ElementIds.Count}; терминалы: {owners}"
+                    + (c.Moves.Select(m => m.OwnerId).Distinct().Count() > 5 ? " …" : string.Empty));
+                using (timings.Measure("добавление в основную (MEPSystem.Add)")) AddConnectors(doc, target, c.Moves);
+            }
         }
 
         /// <summary>Итоговая проверка по основным системам и всем затронутым элементам. Строки с «!!!» ведут к откату.</summary>
