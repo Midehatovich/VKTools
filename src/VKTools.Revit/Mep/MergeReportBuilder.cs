@@ -73,6 +73,25 @@ namespace VKTools.Revit.Mep
                         break;
                 }
             }
+            foreach (PlannedGroup g in plan.Groups)
+            {
+                foreach (NetworkJunction j in g.Junctions)
+                {
+                    var finding = new CheckFinding(CheckPlan, Severity.Warning,
+                        $"Сеть «{g.BaseName}» соединена с сетью «{j.OtherSystem}»: {j.DescribeA} ↔ {j.DescribeB}")
+                    {
+                        ElementId = j.A,
+                        JunctionWith = j.B,
+                        Category = Category,
+                        Current = $"стык «{g.BaseName}» ↔ «{j.OtherSystem}»",
+                        Expected = "сети разных систем не соединены",
+                        Action = "Revit держит одну систему на связную сеть: при объединении он может перенести элементы через этот стык. "
+                            + "Если сети должны остаться разными системами — выделите строку и «Разорвать стык…» (элементы не сдвигаются), затем «Обновить».",
+                    };
+                    finding.RelatedElementIds.Add(j.B);
+                    report.Findings.Add(finding);
+                }
+            }
             return report;
         }
 

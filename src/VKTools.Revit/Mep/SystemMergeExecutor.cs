@@ -182,7 +182,12 @@ namespace VKTools.Revit.Mep
                     if (e != null) geometryBefore[id] = GeometryKey.Of(e);
                 }
             }
+            // Системы элементов вокруг (связанных с основными и копиями через стыки): после фиксации видно,
+            // не забрала ли основная элементы чужой системы (0.3.13; на КрМа3 «К1» соединена с «К1.1»)
+            Dictionary<long, HashSet<long>> foreignBefore;
+            using (timings.Measure("подготовка")) foreignBefore = ForeignAround(doc, model, tracked);
             var systemsBefore = new HashSet<long>(model.Systems.Keys);
+            Dictionary<long, string> namesBefore = model.Systems.ToDictionary(x => x.Key, x => x.Value.Name ?? string.Empty);
             IReadOnlyList<UpdaterInfo> updaters = RegisteredUpdaters(doc);
             var mergedIds = new HashSet<long>();
             var isolatedLeft = new HashSet<long>();
@@ -280,7 +285,7 @@ namespace VKTools.Revit.Mep
                             progress.Report($"Объединение {gi} из {groups.Count}: проверка сети после фиксации", gi - 1, groups.Count);
                             List<string> network;
                             using (timings.Measure("проверка сети после фиксации")) network = VerifyNetworkAfterCommit(doc, group, candidates, model.MembersOf(group.TargetId).All, systemsBefore, tracked,
-                                result.ElementFindings, isolatedLeft, result.Warnings, log);
+                                foreignBefore, namesBefore, result.ElementFindings, isolatedLeft, result.Warnings, log);
                             if (network.Count > 0) throw new InvalidOperationException(string.Join("; ", network));
                             foreach (CandidateOutcome o in g)
                             {
@@ -516,7 +521,8 @@ namespace VKTools.Revit.Mep
         /// Если нет — куда ушли элементы (в какую систему или без системы): это ответ на Q-201 / MEP-004.
         /// </summary>
         private static List<string> VerifyNetworkAfterCommit(Document doc, PlannedGroup g, List<PlannedCandidate> candidates, HashSet<long> targetMembers,
-            HashSet<long> systemsBefore, HashSet<long> tracked, List<CheckFinding> findings, HashSet<long> isolatedLeft, List<string> warnings, ILog log)
+            HashSet<long> systemsBefore, HashSet<long> tracked, Dictionary<long, HashSet<long>> foreignBefore, Dictionary<long, string> namesBefore, List<CheckFinding> findings,
+            HashSet<long> isolatedLeft, List<string> warnings, ILog log)
         {
             var bad = new List<string>();
             var names = new Dictionary<long, string>();
@@ -618,11 +624,119 @@ namespace VKTools.Revit.Mep
             }
 
             if (strays.Count > 0) ReportJunctions(doc, strays, tracked, SystemName, bad, findings, log);
+            ReportAbsorbed(doc, g, candidates, tracked, foreignBefore, SystemName, bad, findings, log);
 
-            var created = new FilteredElementCollector(doc).OfClass(typeof(PipingSystem))
-                .Select(s => s.Id.ToLong()).Where(id => !systemsBefore.Contains(id)).ToList();
+            var present = new HashSet<long>(new FilteredElementCollector(doc).OfClass(typeof(PipingSystem)).Select(s => s.Id.ToLong()));
+            var created = present.Where(id => !systemsBefore.Contains(id)).ToList();
             if (created.Count > 0) bad.Add("Revit создал новые системы: " + string.Join(", ", created.Take(10).Select(SystemName)));
+            var copyIds = new HashSet<long>(candidates.Select(c => c.Record.Id));
+            var vanished = systemsBefore.Where(id => !present.Contains(id) && !copyIds.Contains(id)).ToList();
+            if (vanished.Count > 0)
+            {
+                bad.Add("Revit удалил системы, которые не были копиями: "
+                    + string.Join(", ", vanished.Take(10).Select(id => namesBefore.TryGetValue(id, out string? n) ? $"«{n}»" : id.ToString(CultureInfo.InvariantCulture))));
+            }
             return bad.Distinct().Take(20).ToList();
+        }
+
+        /// <summary>
+        /// Элементы вокруг основных и копий (не входящие в них), связанные с ними через стыки и оборудование, и их системы до записи.
+        /// Обход ограничен 20000 элементами: дальше — «неизвестно», это только строка в логе.
+        /// </summary>
+        private static Dictionary<long, HashSet<long>> ForeignAround(Document doc, PipingModel model, HashSet<long> tracked)
+        {
+            var result = new Dictionary<long, HashSet<long>>();
+            var queue = new Queue<long>(tracked);
+            var seen = new HashSet<long>(tracked);
+            while (queue.Count > 0 && result.Count < 20000)
+            {
+                Element? e = doc.GetElement(queue.Dequeue().ToElementId());
+                if (e == null) continue;
+                foreach (long n in Connectors.NeighbourIds(e))
+                {
+                    if (!seen.Add(n)) continue;
+                    result[n] = new HashSet<long>(model.SystemsOf(n));
+                    queue.Enqueue(n);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Основная после фиксации забрала элементы другой системы — сеть основной соединена с ней (обратный случай к «К4.2н» → «К4.1 1»).
+        /// Без этой проверки такое прошло бы молча: чужие элементы не отслеживаются как копии. Элементы без системы, подтянутые по сети, — норма.
+        /// </summary>
+        private static void ReportAbsorbed(Document doc, PlannedGroup g, List<PlannedCandidate> candidates, HashSet<long> tracked,
+            Dictionary<long, HashSet<long>> foreignBefore, Func<long, string> systemName, List<string> bad, List<CheckFinding> findings, ILog log)
+        {
+            if (!(doc.GetElement(g.TargetId.ToElementId()) is PipingSystem target) || !target.IsValidObject) return;
+            var copies = new HashSet<long>(candidates.Select(c => c.Record.Id));
+            // Сравниваем только системы той же классификации: прибор, бывший в «В1», в «К1» входит законно
+            PipeSystemType classification = target.SystemType;
+            // Системы, которой больше нет, считаем «той же»: Revit мог слить её с основной — это тоже надо показать
+            bool SameClass(long sys) => !(doc.GetElement(sys.ToElementId()) is PipingSystem other) || !other.IsValidObject || other.SystemType == classification;
+            var taken = new Dictionary<long, List<long>>();
+            int systemless = 0, unknown = 0;
+            var after = new HashSet<long>();
+            foreach (ElementSet? set in new[] { target.PipingNetwork, target.Elements })
+            {
+                if (set == null) continue;
+                foreach (Element e in set)
+                {
+                    if (e != null) after.Add(e.Id.ToLong());
+                }
+            }
+            foreach (long id in after)
+            {
+                if (tracked.Contains(id)) continue;
+                if (!foreignBefore.TryGetValue(id, out HashSet<long>? was))
+                {
+                    unknown++;
+                    continue;
+                }
+                List<long> from = was.Where(sys => sys != g.TargetId && !copies.Contains(sys) && SameClass(sys)).ToList();
+                if (from.Count == 0)
+                {
+                    systemless++;
+                    continue;
+                }
+                foreach (long sys in from)
+                {
+                    if (!taken.TryGetValue(sys, out List<long>? ids)) taken[sys] = ids = new List<long>();
+                    ids.Add(id);
+                }
+            }
+            if (systemless > 0) log.Info($"    основная подтянула по сети {systemless} эл. без системы");
+            if (unknown > 0) log.Warn($"    в основной {unknown} эл., которых не было ни в ней, ни рядом до записи");
+            foreach (KeyValuePair<long, List<long>> t in taken)
+            {
+                string text = $"Основная «{g.BaseName}» забрала {t.Value.Count} эл. системы {systemName(t.Key)} (например, {string.Join(", ", t.Value.OrderBy(x => x).Take(5))}): "
+                    + "их сети соединены";
+                bad.Add(text + " — см. «Отчёт…»");
+                log.Info("    " + text);
+                // Стык: забранный элемент, соседствующий с основной или копией
+                (long A, long B)? pair = null;
+                foreach (long id in t.Value)
+                {
+                    Element? e = doc.GetElement(id.ToElementId());
+                    if (e == null) continue;
+                    long n = Connectors.NeighbourIds(e).FirstOrDefault(tracked.Contains);
+                    if (n == 0) continue;
+                    pair = (n, id);
+                    break;
+                }
+                var finding = new CheckFinding(MergeReportBuilder.CheckMerge, Severity.Error,
+                    text + (pair != null ? $". Стык: {Describe(doc, pair.Value.A)} ↔ {Describe(doc, pair.Value.B)}" : string.Empty))
+                {
+                    ElementId = pair?.A ?? t.Value.Min(),
+                    JunctionWith = pair?.B,
+                    Current = "в «" + g.BaseName + "»",
+                    Expected = "в " + systemName(t.Key),
+                    Action = "Если сети должны остаться разными системами — выделите строку и «Разорвать стык…», затем «Обновить» и пробный прогон.",
+                };
+                finding.RelatedElementIds.AddRange(t.Value.OrderBy(x => x).Take(500));
+                findings.Add(finding);
+            }
         }
 
         /// <summary>

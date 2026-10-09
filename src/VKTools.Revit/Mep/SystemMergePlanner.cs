@@ -88,6 +88,32 @@ namespace VKTools.Revit.Mep
         public string BaseName => Core.BaseName;
 
         public List<PlannedCandidate> Candidates { get; } = new List<PlannedCandidate>();
+
+        /// <summary>Стыки сети основной с сетями других систем по трубам и фитингам (не через приборы), 0.3.13.</summary>
+        public List<NetworkJunction> Junctions { get; } = new List<NetworkJunction>();
+    }
+
+    /// <summary>Соединение элемента основной (A) с элементом другой системы (B).</summary>
+    internal sealed class NetworkJunction
+    {
+        public NetworkJunction(long a, long b, string otherSystem, string describeA, string describeB)
+        {
+            A = a;
+            B = b;
+            OtherSystem = otherSystem;
+            DescribeA = describeA;
+            DescribeB = describeB;
+        }
+
+        public long A { get; }
+
+        public long B { get; }
+
+        public string OtherSystem { get; }
+
+        public string DescribeA { get; }
+
+        public string DescribeB { get; }
     }
 
     internal sealed class MergePlan
@@ -125,6 +151,44 @@ namespace VKTools.Revit.Mep
     internal static class SystemMergePlanner
     {
         public const string StageAnalysis = "анализ";
+
+        /// <summary>
+        /// Стыки основной с сетями других систем: элемент только основной соединён с элементом только другой системы.
+        /// Приборы и оборудование с коннекторами разных систем (умывальник: К1 и В1) — норма, они сюда не попадают.
+        /// Revit держит одну систему на связную сеть, поэтому при объединении он может перенести элементы через такой стык
+        /// (КрМа3: «К4.2н» ушла в «К4.1 1»). У «К1» на КрМа3 такой стык с «К1.1», и только добавление в «К1» зависало.
+        /// </summary>
+        private static void FindJunctions(Document doc, PipingModel model, PlannedGroup group)
+        {
+            HashSet<long> members = model.MembersOf(group.TargetId).All;
+            var copies = new HashSet<long>(group.Candidates.Select(c => c.Record.Id));
+            var seen = new HashSet<(long, long)>();
+            foreach (long a in members.OrderBy(x => x))
+            {
+                HashSet<long> own = model.SystemsOf(a);
+                if (own.Count != 1 || !own.Contains(group.TargetId)) continue;
+                Element? ea = model.Element(a);
+                if (ea == null) continue;
+                foreach (long b in Connectors.NeighbourIds(ea))
+                {
+                    if (members.Contains(b) || !seen.Add((a, b))) continue;
+                    HashSet<long> other = model.SystemsOf(b);
+                    if (other.Count != 1) continue;
+                    long system = other.First();
+                    if (system == group.TargetId || copies.Contains(system)) continue;
+                    string otherName = model.Systems.TryGetValue(system, out PipingSystem? s) ? s.Name : system.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    group.Junctions.Add(new NetworkJunction(a, b, otherName, Describe(ea), Describe(model.Element(b))));
+                    if (group.Junctions.Count >= 20) return;
+                }
+            }
+        }
+
+        private static string Describe(Element? e)
+        {
+            if (e == null) return "?";
+            string name = e is FamilyInstance fi && fi.Symbol != null ? $"{fi.Symbol.FamilyName}: {fi.Symbol.Name}" : e.Name;
+            return $"{e.Category?.Name ?? "?"} {e.Id.ToLong()} «{name}»";
+        }
 
         /// <param name="onlyKeys">Перед записью — только отмеченные копии: остальные не анализируются и в план не входят.</param>
         public static MergePlan Build(Document doc, IOperationProgress progress, OperationTimings timings, ICollection<string>? onlyKeys = null)
@@ -192,7 +256,11 @@ namespace VKTools.Revit.Mep
                         }
                         else planned.State = CandidateState.Ready;
                     }
-                    if (group.Candidates.Count > 0) plan.Groups.Add(group);
+                    if (group.Candidates.Count > 0)
+                    {
+                        if (target != null) FindJunctions(doc, model, group);
+                        plan.Groups.Add(group);
+                    }
                 }
                 return plan;
             }
