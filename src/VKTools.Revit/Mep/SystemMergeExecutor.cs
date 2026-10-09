@@ -121,6 +121,13 @@ namespace VKTools.Revit.Mep
         /// </summary>
         private static readonly HashSet<string> DisableOnFailureApplications = new HashSet<string>(StringComparer.Ordinal) { "Citrus [BIM]" };
 
+        /// <summary>
+        /// Участки копии, ни с чем не соединённые (на КрМа3 в «К1.1» — 4 участка, 12 эл.), после объединения остаются
+        /// без системы и не мешают записи: они и до запуска оторваны от сети, Revit держал их в копии по старой памяти.
+        /// Каждый — строка-предупреждение в отчёте с «Показать в модели» (D-019; рекомендованный вариант карточки 2026-10-09, при ответе «сначала чинить» — false).
+        /// </summary>
+        private const bool LeaveIsolatedPiecesWithoutSystem = true;
+
         /// <summary>Что уже отключено в этом сеансе Revit — напоминать при каждом прогоне.</summary>
         private static readonly List<string> SessionDisabledUpdaters = new List<string>();
 
@@ -168,6 +175,7 @@ namespace VKTools.Revit.Mep
             var systemsBefore = new HashSet<long>(model.Systems.Keys);
             IReadOnlyList<UpdaterInfo> updaters = RegisteredUpdaters(doc);
             var mergedIds = new HashSet<long>();
+            var isolatedLeft = new HashSet<long>();
             bool fatal = false;
             bool cancelled = false;
 
@@ -261,7 +269,8 @@ namespace VKTools.Revit.Mep
                             // Плохо → исключение ниже, всё откатывает TransactionGroup (D-014).
                             progress.Report($"Объединение {gi} из {groups.Count}: проверка сети после фиксации", gi - 1, groups.Count);
                             List<string> network;
-                            using (timings.Measure("проверка сети после фиксации")) network = VerifyNetworkAfterCommit(doc, group, candidates, model.MembersOf(group.TargetId).All, systemsBefore, tracked, result.ElementFindings, log);
+                            using (timings.Measure("проверка сети после фиксации")) network = VerifyNetworkAfterCommit(doc, group, candidates, model.MembersOf(group.TargetId).All, systemsBefore, tracked,
+                                result.ElementFindings, isolatedLeft, result.Warnings, log);
                             if (network.Count > 0) throw new InvalidOperationException(string.Join("; ", network));
                             foreach (CandidateOutcome o in g)
                             {
@@ -309,7 +318,7 @@ namespace VKTools.Revit.Mep
                     {
                         using (timings.Measure("итоговая проверка"))
                         {
-                            PostCheck(doc, groups.Select(g => g.Key).ToList(), mergedIds, tracked, trackedSystems, geometryBefore, membersBefore,
+                            PostCheck(doc, groups.Select(g => g.Key).ToList(), mergedIds, tracked, trackedSystems, geometryBefore, membersBefore, isolatedLeft,
                                 systemsBefore, progress, result.PostCheck);
                         }
                         List<string> critical = result.PostCheck.Where(line => line.Contains("!!!")).ToList();
@@ -497,7 +506,7 @@ namespace VKTools.Revit.Mep
         /// Если нет — куда ушли элементы (в какую систему или без системы): это ответ на Q-201 / MEP-004.
         /// </summary>
         private static List<string> VerifyNetworkAfterCommit(Document doc, PlannedGroup g, List<PlannedCandidate> candidates, HashSet<long> targetMembers,
-            HashSet<long> systemsBefore, HashSet<long> tracked, List<CheckFinding> findings, ILog log)
+            HashSet<long> systemsBefore, HashSet<long> tracked, List<CheckFinding> findings, HashSet<long> isolatedLeft, List<string> warnings, ILog log)
         {
             var bad = new List<string>();
             var names = new Dictionary<long, string>();
@@ -514,9 +523,11 @@ namespace VKTools.Revit.Mep
 
             var orphans = new Dictionary<long, PlannedCandidate>();
             var strays = new List<(long Id, string Owner, HashSet<long> Systems)>();
+            var perCopy = new List<(PlannedCandidate Copy, Dictionary<string, List<long>> Where)>();
             foreach (PlannedCandidate c in candidates)
             {
                 var where = new Dictionary<string, List<long>>(StringComparer.Ordinal);
+                perCopy.Add((c, where));
                 foreach (long id in c.ElementIds)
                 {
                     Element? e = doc.GetElement(id.ToElementId());
@@ -529,24 +540,56 @@ namespace VKTools.Revit.Mep
                     if (!where.TryGetValue(key, out List<long>? ids)) where[key] = ids = new List<long>();
                     ids.Add(id);
                 }
-                if (where.Count == 0) continue;
-                int total = where.Values.Sum(x => x.Count);
-                bad.Add($"«{c.Record.Name}»: {total} элементов после фиксации не в основной системе: "
-                    + string.Join("; ", where.OrderByDescending(x => x.Value.Count).Select(x => $"{x.Value.Count} {x.Key} (например, {string.Join(", ", x.Value.OrderBy(id => id).Take(5))})")));
             }
 
+            // Участки без системы: ни с чем не соединённые — допустимы (D-019), остальные — ошибка
+            var isolated = new HashSet<long>();
             if (orphans.Count > 0)
             {
                 List<OrphanPiece> pieces = OrphanPieces(doc, orphans, g.TargetId, SystemName);
-                bad.Add($"без системы осталось {orphans.Count} эл. в {pieces.Count} участках сети — какие и с чем соединены, см. «Отчёт…» и лог");
+                int blocking = 0, blockingPieces = 0;
                 foreach (OrphanPiece piece in pieces)
                 {
-                    log.Info($"    без системы: участок «{piece.Copy}» из {piece.Ids.Count} эл. ({string.Join(", ", piece.Ids.Take(20))}{(piece.Ids.Count > 20 ? " …" : string.Empty)}); "
+                    bool allowed = LeaveIsolatedPiecesWithoutSystem && piece.BorderCount == 0;
+                    if (allowed) isolated.UnionWith(piece.Ids);
+                    else
+                    {
+                        blocking += piece.Ids.Count;
+                        blockingPieces++;
+                    }
+                    log.Info($"    без системы{(allowed ? " (допустимо: ни с чем не соединён)" : string.Empty)}: участок «{piece.Copy}» из {piece.Ids.Count} эл. "
+                        + $"({string.Join(", ", piece.Ids.Take(20))}{(piece.Ids.Count > 20 ? " …" : string.Empty)}); "
                         + $"соединён с: {(piece.Borders.Count > 0 ? string.Join("; ", piece.Borders) : "ничем")}");
                     foreach (long id in piece.Ids.Take(5)) log.Info("      " + Describe(doc, id));
-                    findings.Add(piece.ToFinding(doc));
+                    findings.Add(piece.ToFinding(doc, allowed, g.BaseName));
+                }
+                if (blocking > 0)
+                {
+                    bad.Add($"без системы осталось {blocking} эл. в {blockingPieces} участках сети, соединённых с чем-то ещё — какие и с чем, см. «Отчёт…» и лог");
+                }
+                if (isolated.Count > 0)
+                {
+                    int count = pieces.Count(p => LeaveIsolatedPiecesWithoutSystem && p.BorderCount == 0);
+                    warnings.Add($"«{g.BaseName}»: {isolated.Count} эл. в {count} участках ни с чем не соединены — после объединения они без системы. "
+                        + $"Соедините их с сетью (Revit сам включит их в «{g.BaseName}») или удалите лишние; где — см. «Отчёт…»");
                 }
             }
+
+            var copyLines = new List<string>();
+            foreach ((PlannedCandidate c, Dictionary<string, List<long>> where) in perCopy)
+            {
+                if (where.TryGetValue("без системы", out List<long>? none))
+                {
+                    none.RemoveAll(isolated.Contains);
+                    if (none.Count == 0) where.Remove("без системы");
+                }
+                if (where.Count == 0) continue;
+                int total = where.Values.Sum(x => x.Count);
+                copyLines.Add($"«{c.Record.Name}»: {total} элементов после фиксации не в основной системе: "
+                    + string.Join("; ", where.OrderByDescending(x => x.Value.Count).Select(x => $"{x.Value.Count} {x.Key} (например, {string.Join(", ", x.Value.OrderBy(id => id).Take(5))})")));
+            }
+            bad.InsertRange(0, copyLines);
+            isolatedLeft.UnionWith(isolated);
 
             // Элементы самой основной, ушедшие в чужую систему: стык может быть и через них
             var leftTarget = new List<long>();
@@ -783,16 +826,18 @@ namespace VKTools.Revit.Mep
 
             public bool TouchesTarget { get; }
 
-            public CheckFinding ToFinding(Document doc)
+            public CheckFinding ToFinding(Document doc, bool allowed, string targetName)
             {
                 Element? first = doc.GetElement(Ids[0].ToElementId());
-                string action = BorderCount == 0
+                string action = allowed
+                    ? $"Участок ни с чем не соединён и объединению не мешает. Соедините его с сетью (разрыв) — Revit сам включит его в «{targetName}», или удалите, если он лишний."
+                    : BorderCount == 0
                     ? "Участок ни с чем не соединён: соедините его с сетью (разрыв) или удалите, если он лишний. Затем повторите пробный прогон."
                     : TouchesTarget
                         ? "Участок соединён с элементами основной системы, но Revit не включил его в неё. Посмотрите соединение на границе участка и пришлите лог."
                         : "Участок соединён только с элементами без системы или других систем (часто — через оборудование без коннектора этой классификации). "
                             + "Проверьте соединения на границе участка, затем повторите пробный прогон.";
-                var finding = new CheckFinding(MergeReportBuilder.CheckMerge, Severity.Error,
+                var finding = new CheckFinding(MergeReportBuilder.CheckMerge, allowed ? Severity.Warning : Severity.Error,
                     $"После фиксации без системы: участок копии «{Copy}» из {Ids.Count} эл.; соединён с: {(Borders.Count > 0 ? string.Join("; ", Borders) : "ничем")}")
                 {
                     ElementId = Ids[0],
@@ -833,7 +878,7 @@ namespace VKTools.Revit.Mep
 
         /// <summary>Итоговая проверка по основным системам и всем затронутым элементам. Строки с «!!!» ведут к откату.</summary>
         private static void PostCheck(Document doc, List<PlannedGroup> groups, HashSet<long> merged, HashSet<long> tracked,
-            Dictionary<long, HashSet<long>> trackedSystems, Dictionary<long, GeometryKey> geometryBefore, Dictionary<long, int> membersBefore,
+            Dictionary<long, HashSet<long>> trackedSystems, Dictionary<long, GeometryKey> geometryBefore, Dictionary<long, int> membersBefore, HashSet<long> isolatedLeft,
             HashSet<long> systemsBefore, IOperationProgress progress, List<string> output)
         {
             progress.Report("Итоговая проверка…");
@@ -870,10 +915,11 @@ namespace VKTools.Revit.Mep
                     gone.Add(id);
                     continue;
                 }
-                if (trackedSystems.TryGetValue(id, out HashSet<long>? was) && was.Count > 0 && after.SystemsOf(id).Count == 0) orphans.Add(id);
+                if (trackedSystems.TryGetValue(id, out HashSet<long>? was) && was.Count > 0 && after.SystemsOf(id).Count == 0 && !isolatedLeft.Contains(id)) orphans.Add(id);
                 if (geometryBefore.TryGetValue(id, out GeometryKey g0) && !g0.SameAs(GeometryKey.Of(e))) moved.Add(id);
             }
             output.Add(orphans.Count == 0 ? "Элементов, потерявших систему, нет" : $"!!! Потеряли систему {orphans.Count} эл. (например, {string.Join(", ", orphans.Take(10))})");
+            if (isolatedLeft.Count > 0) output.Add($"Без системы оставлены участки, ни с чем не соединённые: {isolatedLeft.Count} эл. — см. отчёт");
 
             var created = after.Systems.Keys.Where(id => !systemsBefore.Contains(id)).ToList();
             output.Add(created.Count == 0 ? "Новых систем нет" : "!!! Revit создал новые системы: " + string.Join(", ", created.Select(id => after.Systems[id].Name)));
