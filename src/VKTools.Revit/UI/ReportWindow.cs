@@ -136,7 +136,7 @@ namespace VKTools.Revit.UI
             if (report.Findings.Any(f => f.JunctionWith.HasValue))
             {
                 Button breakJunction = MakeButton("Разорвать стык…", (s, e) => BreakSelected());
-                breakJunction.ToolTip = "Для строк «Сеть … соединена с сетью …»: разъединить эти два элемента, не сдвигая их";
+                breakJunction.ToolTip = "Для строк «Сеть … соединена с сетью …» и «Кольцо в сети …»: разъединить два элемента строки, не сдвигая их";
                 DockPanel.SetDock(breakJunction, Dock.Left);
                 buttons.Children.Add(breakJunction);
             }
@@ -282,7 +282,7 @@ namespace VKTools.Revit.UI
             List<CheckFinding> rows = _grid.SelectedItems.Cast<CheckFinding>().Where(f => f.ElementId.HasValue && f.JunctionWith.HasValue).ToList();
             if (rows.Count == 0)
             {
-                MessageBox.Show(this, "Выделите строки «Сеть … соединена с сетью …» — для них есть стык.", "VK Tools",
+                MessageBox.Show(this, "Выделите строки «Сеть … соединена с сетью …» или «Кольцо в сети …» — для них есть место разрыва.", "VK Tools",
                     MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
