@@ -29,6 +29,19 @@ namespace VKTools.Core.Tests
         }
 
         [Fact]
+        public void TraceWritesStartBeforeEnd()
+        {
+            var lines = new System.Collections.Generic.List<string>();
+            var t = new OperationTimings { Trace = lines.Add };
+            IDisposable scope = t.Measure("фиксация");
+            Assert.Equal(new[] { "→ фиксация" }, lines);
+            scope.Dispose();
+            scope.Dispose();
+            Assert.Equal(2, lines.Count);
+            Assert.StartsWith("← фиксация: ", lines[1], StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void EmptySummary() => Assert.Equal("—", new OperationTimings().Summary());
 
         [Fact]

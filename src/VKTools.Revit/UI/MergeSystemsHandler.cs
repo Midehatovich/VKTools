@@ -40,7 +40,7 @@ namespace VKTools.Revit.UI
             MergeSystemsWindow? window = _window;
             if (window == null) return;
             Document doc = window.Document;
-            var timings = new OperationTimings();
+            var timings = new OperationTimings { Trace = line => Host.Log.Info("  этап " + line) };
             try
             {
                 if (!doc.IsValidObject)

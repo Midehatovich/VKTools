@@ -37,6 +37,9 @@ namespace VKTools.Revit.UI
         private readonly Button _cancel;
         private readonly Stopwatch _watch = Stopwatch.StartNew();
         private TimeSpan _lastPump = TimeSpan.MinValue;
+        private string _revitCaption = string.Empty;
+        private TimeSpan _revitStarted;
+        private TimeSpan _revitLogged = TimeSpan.MinValue;
         private bool _revitDisabled;
         private bool _disposed;
 
@@ -156,6 +159,7 @@ namespace VKTools.Revit.UI
                     e.Cancel();
                     return;
                 }
+                TraceRevit(e);
                 if (e.Stage == ProgressStage.Finished)
                 {
                     _revitStage.Text = string.Empty;
@@ -169,6 +173,38 @@ namespace VKTools.Revit.UI
             catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException || ex is InvalidOperationException)
             {
                 // Прогресс — не повод ронять операцию
+            }
+        }
+
+        /// <summary>
+        /// Внутренние операции Revit — в лог: начало (не чаще раза в 2 с для одной и той же), каждые 30 с
+        /// положение, конец — если дольше секунды. Если Revit закрыли принудительно, видно, в чём он завис.
+        /// </summary>
+        private void TraceRevit(ProgressChangedEventArgs e)
+        {
+            TimeSpan now = _watch.Elapsed;
+            string caption = e.Caption ?? string.Empty;
+            if (e.Stage == ProgressStage.Started)
+            {
+                bool repeat = caption == _revitCaption && now - _revitLogged < TimeSpan.FromSeconds(2);
+                _revitCaption = caption;
+                _revitStarted = now;
+                if (!repeat)
+                {
+                    _revitLogged = now;
+                    Host.Log.Info($"  Revit → «{caption}»");
+                }
+            }
+            else if (e.Stage == ProgressStage.Finished)
+            {
+                TimeSpan took = now - _revitStarted;
+                if (took >= TimeSpan.FromSeconds(1)) Host.Log.Info($"  Revit ← «{_revitCaption}»: {OperationTimings.Seconds(took)}");
+            }
+            else if (now - _revitLogged >= TimeSpan.FromSeconds(30))
+            {
+                _revitLogged = now;
+                string position = e.UpperRange > 0 ? $" {e.Position} из {e.UpperRange}" : string.Empty;
+                Host.Log.Info($"  Revit … «{(caption.Length > 0 ? caption : _revitCaption)}»{position}, идёт {OperationTimings.Seconds(now - _revitStarted)}");
             }
         }
 

@@ -16,6 +16,12 @@ namespace VKTools.Core.Logging
         private readonly Dictionary<string, TimeSpan> _totals = new Dictionary<string, TimeSpan>(StringComparer.Ordinal);
         private readonly Dictionary<string, int> _counts = new Dictionary<string, int>(StringComparer.Ordinal);
 
+        /// <summary>
+        /// Строка в лог в начале («→ этап») и в конце («← этап: 1,2 с») каждого замера. Если Revit закрыли
+        /// принудительно, последняя «→» в логе показывает, на каком этапе он встал.
+        /// </summary>
+        public Action<string>? Trace { get; set; }
+
         public IDisposable Measure(string stage) => new Scope(this, stage);
 
         public void Add(string stage, TimeSpan elapsed)
@@ -58,13 +64,16 @@ namespace VKTools.Core.Logging
             {
                 _owner = owner;
                 _stage = stage;
+                _owner.Trace?.Invoke("→ " + stage);
             }
 
             public void Dispose()
             {
                 if (_done) return;
                 _done = true;
-                _owner.Add(_stage, _watch.Elapsed);
+                TimeSpan elapsed = _watch.Elapsed;
+                _owner.Add(_stage, elapsed);
+                _owner.Trace?.Invoke($"← {_stage}: {Seconds(elapsed)}");
             }
         }
     }

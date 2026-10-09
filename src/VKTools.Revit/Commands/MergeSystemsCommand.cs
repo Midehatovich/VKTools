@@ -23,7 +23,7 @@ namespace VKTools.Revit.Commands
             try
             {
                 Host.Log.Info($"Объединение систем: анализ «{doc.Title}».");
-                var timings = new OperationTimings();
+                var timings = new OperationTimings { Trace = line => Host.Log.Info("  этап " + line) };
                 MergePlan plan;
                 using (var progress = new ProgressScope(app, "анализ систем"))
                 {

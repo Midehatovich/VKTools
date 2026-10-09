@@ -159,6 +159,8 @@ namespace VKTools.Revit.Mep
                         List<PlannedCandidate> candidates = g.Select(o => o.Candidate).ToList();
                         string label = $"«{group.BaseName}» ← {string.Join(", ", candidates.Take(4).Select(c => $"«{c.Record.Name}»"))}{(candidates.Count > 4 ? $" и ещё {candidates.Count - 4}" : string.Empty)}";
                         progress.Report($"Объединение {gi + 1} из {groups.Count}: {label}", gi, groups.Count);
+                        log.Info($"  группа {gi + 1} из {groups.Count}: {label}; элементов в основной {membersBefore[group.TargetId]}, "
+                            + $"в копиях {candidates.Sum(c => c.ElementIds.Count)}, коннекторов терминалов к переносу {candidates.Sum(c => c.Moves.Count)}");
                         gi++;
 
                         var failures = new FailureCollector();

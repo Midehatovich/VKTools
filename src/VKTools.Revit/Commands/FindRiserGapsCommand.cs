@@ -19,7 +19,7 @@ namespace VKTools.Revit.Commands
         {
             UIApplication app = commandData.Application;
             Document doc = app.ActiveUIDocument.Document;
-            var timings = new OperationTimings();
+            var timings = new OperationTimings { Trace = line => Host.Log.Info("  этап " + line) };
             try
             {
                 Host.Log.Info($"Разрывы стояков: поиск в «{doc.Title}».");
