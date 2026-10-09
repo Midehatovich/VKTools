@@ -225,7 +225,7 @@ namespace VKTools.Revit.Mep
                             if (status != TransactionStatus.Committed)
                             {
                                 throw new InvalidOperationException($"Revit отклонил фиксацию ({status}): "
-                                    + (failures.Errors.Count > 0 ? string.Join("; ", failures.Errors) : "—"));
+                                    + (failures.Errors.Count > 0 ? string.Join("; ", failures.Errors) : "—") + ThirdPartyHint(doc, failures.Errors));
                             }
 
                             // Систему сети (трубам и фитингам) Revit может окончательно назначать только при фиксации — проверяем после неё.
@@ -458,15 +458,93 @@ namespace VKTools.Revit.Mep
                 progress.ThrowIfCancelled();
                 progress.Report($"Объединение {groupNumber} из {groupCount}: добавляю терминалы «{c.Record.Name}» в «{group.BaseName}» "
                     + $"(копия {i + 1} из {candidates.Count}, коннекторов {c.Moves.Count})", groupNumber - 1, groupCount);
-                string owners = string.Join(", ", c.Moves.Select(m => m.OwnerId).Distinct().Take(5).Select(id =>
-                {
-                    Element? e = doc.GetElement(id.ToElementId());
-                    return $"{e?.Category?.Name ?? "?"} {id}";
-                }));
+                string owners = string.Join(", ", c.Moves.Select(m => m.OwnerId).Distinct().Take(5).Select(id => Describe(doc, id)));
                 log.Info($"    «{c.Record.Name}» → «{group.BaseName}»: коннекторов {c.Moves.Count}, элементов в копии {c.ElementIds.Count}; терминалы: {owners}"
                     + (c.Moves.Select(m => m.OwnerId).Distinct().Count() > 5 ? " …" : string.Empty));
-                using (timings.Measure("добавление в основную (MEPSystem.Add)")) AddConnectors(doc, target, c.Moves);
+                try
+                {
+                    using (timings.Measure("добавление в основную (MEPSystem.Add)")) AddConnectors(doc, target, c.Moves);
+                }
+                catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException || ex is InvalidOperationException)
+                {
+                    // Почему Revit не принял коннекторы: в какой они системе и с чем соединены
+                    log.Info($"    MEPSystem.Add «{c.Record.Name}»: {ex.Message.Replace(Environment.NewLine, " ")}");
+                    foreach (string line in DescribeConnectors(doc, c.Moves, group.TargetId)) log.Info("      " + line);
+                    throw;
+                }
             }
+        }
+
+        /// <summary>«Оборудование 4309526 «Семейство: Тип», трубных коннекторов 3».</summary>
+        private static string Describe(Document doc, long id)
+        {
+            Element? e = doc.GetElement(id.ToElementId());
+            if (e == null) return $"{id} (нет в модели)";
+            string name = e is FamilyInstance fi && fi.Symbol != null ? $"«{fi.Symbol.FamilyName}: {fi.Symbol.Name}»" : $"«{e.Name}»";
+            return $"{e.Category?.Name ?? "?"} {id} {name}, трубных коннекторов {Connectors.Piping(e).Count}";
+        }
+
+        /// <summary>Состояние каждого переносимого коннектора: система, соединён ли и с чем (элемент и его системы).</summary>
+        private static IEnumerable<string> DescribeConnectors(Document doc, IEnumerable<(long OwnerId, int ConnectorId)> moves, long targetId)
+        {
+            foreach ((long ownerId, int connectorId) in moves)
+            {
+                Connector? connector = Connectors.Find(doc.GetElement(ownerId.ToElementId()), connectorId);
+                if (connector == null)
+                {
+                    yield return $"{ownerId}/{connectorId}: коннектор не найден";
+                    continue;
+                }
+                long systemId = Connectors.SystemId(connector);
+                string system = systemId < 1 ? "без системы" : systemId == targetId ? "уже в основной" : $"в «{doc.GetElement(systemId.ToElementId())?.Name}» (Id {systemId})";
+                var refs = new List<string>();
+                try
+                {
+                    foreach (Connector other in connector.AllRefs)
+                    {
+                        if (other?.Owner == null || other.Owner.Id.ToLong() == ownerId) continue;
+                        string otherSystems = string.Join(", ", Connectors.SystemsOf(other.Owner).Select(x => doc.GetElement(x.ToElementId())?.Name ?? x.ToString(CultureInfo.InvariantCulture)));
+                        refs.Add($"{other.Owner.Category?.Name} {other.Owner.Id.ToLong()} ({(otherSystems.Length > 0 ? otherSystems : "без системы")})");
+                    }
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException)
+                {
+                    refs.Add("связи не прочитать");
+                }
+                string domain;
+                try
+                {
+                    domain = connector.PipeSystemType.ToString();
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException)
+                {
+                    domain = "?";
+                }
+                yield return $"{ownerId}/{connectorId}: {system}, классификация {domain}, соединён: {(connector.IsConnected ? string.Join("; ", refs) : "нет")}";
+            }
+        }
+
+        /// <summary>Если фиксацию сорвало обновление другой надстройки — назвать её: это не ошибка VK Tools, модель не изменена.</summary>
+        private static string ThirdPartyHint(Document doc, IEnumerable<string> errors)
+        {
+            string all = string.Join(" ", errors);
+            if (all.Length == 0) return string.Empty;
+            try
+            {
+                foreach (UpdaterInfo info in UpdaterRegistry.GetRegisteredUpdaterInfos(doc))
+                {
+                    if (!string.IsNullOrEmpty(info.UpdaterName) && all.Contains("«" + info.UpdaterName + "»"))
+                    {
+                        return $". Фиксацию сорвало обновление «{info.UpdaterName}» надстройки «{info.ApplicationName}»: оно упало на этом изменении, "
+                            + "и Revit отменил всю транзакцию. Это не ошибка VK Tools, модель не изменена";
+                    }
+                }
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                // Список апдейтеров — только для подсказки
+            }
+            return string.Empty;
         }
 
         /// <summary>Итоговая проверка по основным системам и всем затронутым элементам. Строки с «!!!» ведут к откату.</summary>

@@ -1,5 +1,8 @@
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using Autodesk.Revit.DB;
+using VKTools.Revit.Compat;
 
 namespace VKTools.Revit.Infrastructure
 {
@@ -19,6 +22,12 @@ namespace VKTools.Revit.Infrastructure
             foreach (FailureMessageAccessor failure in failuresAccessor.GetFailureMessages())
             {
                 string text = failure.GetDescriptionText() ?? "?";
+                ICollection<ElementId> failing = failure.GetFailingElementIds();
+                if (failing != null && failing.Count > 0)
+                {
+                    text += " [элементы: " + string.Join(", ", failing.Take(10).Select(id => id.ToLong().ToString(CultureInfo.InvariantCulture)))
+                        + (failing.Count > 10 ? " …" : string.Empty) + "]";
+                }
                 if (failure.GetSeverity() == FailureSeverity.Warning)
                 {
                     Warnings.Add(text);
