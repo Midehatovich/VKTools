@@ -43,13 +43,15 @@ namespace VKTools.Revit.Mep
                 foreach (string w in run.Warnings) report.Findings.Add(new CheckFinding(CheckMerge, Severity.Warning, w));
                 foreach (string e in run.Errors.Where(e => !e.Contains("!!!"))) report.Findings.Add(new CheckFinding(CheckMerge, Severity.Error, e));
                 report.Findings.Add(new CheckFinding(CheckMerge, run.Errors.Count > 0 ? Severity.Error : Severity.Info, run.Status));
+                if (!string.IsNullOrEmpty(run.Timings)) report.Findings.Add(new CheckFinding(CheckMerge, Severity.Info, "Время: " + run.Timings));
             }
             foreach (string s in skipped)
             {
                 report.Findings.Add(new CheckFinding(CheckMerge, Severity.Warning, s) { Action = "Нажмите «Обновить», проверьте строку и повторите." });
             }
 
-            foreach (PlannedCandidate c in plan.Candidates.Where(c => !executed.Contains(c.Key)))
+            // Частичный анализ (перед записью) — только отмеченные: неотмеченных в нём нет, пропущенные уже выше
+            foreach (PlannedCandidate c in plan.Candidates.Where(c => !plan.IsPartial && !executed.Contains(c.Key)))
             {
                 switch (c.State)
                 {

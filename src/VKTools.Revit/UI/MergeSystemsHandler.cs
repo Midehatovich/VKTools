@@ -4,6 +4,7 @@ using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using VKTools.Core.Checks;
+using VKTools.Core.Logging;
 using VKTools.Revit.Infrastructure;
 using VKTools.Revit.Mep;
 
@@ -39,6 +40,7 @@ namespace VKTools.Revit.UI
             MergeSystemsWindow? window = _window;
             if (window == null) return;
             Document doc = window.Document;
+            var timings = new OperationTimings();
             try
             {
                 if (!doc.IsValidObject)
@@ -52,65 +54,96 @@ namespace VKTools.Revit.UI
                     return;
                 }
 
-                MergePlan plan = SystemMergePlanner.Build(doc);
                 if (_request == MergeRequest.Refresh)
                 {
-                    LogPlan(doc, plan);
-                    window.ShowPlan(plan, null, MergeReportBuilder.Build(doc.Title, plan, null, Array.Empty<string>()));
+                    MergePlan fresh;
+                    using (var progress = new ProgressScope(app, "анализ систем", window))
+                    {
+                        fresh = SystemMergePlanner.Build(doc, progress, timings);
+                    }
+                    LogPlan(doc, fresh, timings);
+                    window.ShowPlan(fresh, null, MergeReportBuilder.Build(doc.Title, fresh, null, Array.Empty<string>()));
                     return;
                 }
                 if (doc.IsReadOnly)
                 {
-                    window.ShowMessage("Документ только для чтения: запись невозможна.");
+                    window.ShowMessage("Документ сейчас только для чтения: запись невозможна.");
                     return;
                 }
 
-                var byKey = plan.Candidates.ToDictionary(c => c.Key, StringComparer.Ordinal);
-                var selected = new List<PlannedCandidate>();
+                MergeMode mode = _request == MergeRequest.Apply ? MergeMode.Apply : MergeMode.Trial;
+                Host.Log.Info($"Объединение систем «{doc.Title}»: {(mode == MergeMode.Apply ? "запись" : "пробный прогон")}, отмечено {_keys.Count}.");
+                MergePlan plan;
+                MergePlan? after = null;
+                MergeRunResult run;
                 var skipped = new List<string>();
-                foreach (string key in _keys)
+                using (var progress = new ProgressScope(app, mode == MergeMode.Apply ? "объединение систем" : "пробный прогон", window))
                 {
-                    if (!byKey.TryGetValue(key, out PlannedCandidate? c))
+                    // Анализ заново, но только отмеченных копий: остальные для записи не нужны
+                    plan = SystemMergePlanner.Build(doc, progress, timings, new HashSet<string>(_keys, StringComparer.Ordinal));
+                    List<PlannedCandidate> selected = Select(plan, _keys, skipped);
+                    foreach (string line in MergeDiagnostics.Describe(doc, plan, selected)) Host.Log.Info("  " + line);
+                    run = SystemMergeExecutor.Run(doc, plan, selected, mode, progress, timings, Host.Log);
+                    if (run.Committed)
                     {
-                        skipped.Add("Отмеченной системы больше нет в модели или у неё другая основная — пропущена.");
-                    }
-                    else if (c.State == CandidateState.Rejected)
-                    {
-                        skipped.Add($"«{c.Record.Name}»: по новому анализу не объединяется ({c.Explanation}) — пропущена.");
-                    }
-                    else
-                    {
-                        selected.Add(c);
+                        try
+                        {
+                            after = SystemMergePlanner.Build(doc, progress, timings);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            run.Warnings.Add("Записано. Список не обновлён (анализ отменён) — нажмите «Обновить».");
+                        }
                     }
                 }
-
-                MergeMode mode = _request == MergeRequest.Apply ? MergeMode.Apply : MergeMode.Trial;
-                Host.Log.Info($"Объединение систем «{doc.Title}»: {(mode == MergeMode.Apply ? "запись" : "пробный прогон")}, отмечено {_keys.Count}, к выполнению {selected.Count}.");
-                MergeRunResult run = SystemMergeExecutor.Run(doc, plan, selected, mode, Host.Log);
+                run.Timings = timings.Summary();
                 LogRun(run, skipped);
 
-                // Всегда заново: после отката или записи объекты прошлого анализа могут быть недействительны
-                MergePlan after = SystemMergePlanner.Build(doc);
-                CheckReport report = MergeReportBuilder.Build(doc.Title, after, run, skipped);
-                if (skipped.Count > 0 && mode == MergeMode.Apply && run.Committed)
-                {
-                    run.Warnings.AddRange(skipped);
-                }
-                window.ShowPlan(after, run, report);
+                CheckReport report = MergeReportBuilder.Build(doc.Title, after ?? plan, run, skipped);
+                if (after != null) window.ShowPlan(after, run, report);
+                else window.ApplyRun(run, report);
+            }
+            catch (OperationCanceledException)
+            {
+                Host.Log.Info($"Объединение систем: отменено пользователем на этапе анализа. Время: {timings.Summary()}");
+                window.ShowMessage("Отменено на этапе анализа: модель не изменялась.", error: false);
             }
             catch (Exception ex)
             {
-                Host.Log.Error("Объединение систем: ошибка.", ex);
+                Host.Log.Error($"Объединение систем: ошибка. Время: {timings.Summary()}", ex);
                 window.ShowMessage("Ошибка: " + ex.Message + " Модель не изменена, если запись не была подтверждена сообщением. Подробности в логе.");
             }
         }
 
         public string GetName() => "VK Tools: объединение систем";
 
-        private static void LogPlan(Document doc, MergePlan plan)
+        /// <summary>Отмеченные копии по свежему анализу; пропавшие и ставшие «не объединяется» — в skipped.</summary>
+        private static List<PlannedCandidate> Select(MergePlan plan, List<string> keys, List<string> skipped)
+        {
+            var byKey = plan.Candidates.ToDictionary(c => c.Key, StringComparer.Ordinal);
+            var selected = new List<PlannedCandidate>();
+            foreach (string key in keys)
+            {
+                if (!byKey.TryGetValue(key, out PlannedCandidate? c))
+                {
+                    skipped.Add("Отмеченной системы больше нет в модели или у неё другая основная — пропущена.");
+                }
+                else if (c.State == CandidateState.Rejected)
+                {
+                    skipped.Add($"«{c.Record.Name}»: по новому анализу не объединяется ({c.Explanation}) — пропущена.");
+                }
+                else
+                {
+                    selected.Add(c);
+                }
+            }
+            return selected;
+        }
+
+        internal static void LogPlan(Document doc, MergePlan plan, OperationTimings timings)
         {
             Host.Log.Info($"Анализ систем «{doc.Title}»: групп {plan.Groups.Count}, готовы {plan.Count(CandidateState.Ready)}, "
-                + $"нужна отметка {plan.Count(CandidateState.NeedsConfirmation)}, не объединяются {plan.Count(CandidateState.Rejected)}.");
+                + $"нужна отметка {plan.Count(CandidateState.NeedsConfirmation)}, не объединяются {plan.Count(CandidateState.Rejected)}. Время: {timings.Summary()}");
         }
 
         private static void LogRun(MergeRunResult run, List<string> skipped)
@@ -124,6 +157,7 @@ namespace VKTools.Revit.UI
             foreach (string e in run.Errors) Host.Log.Warn("  ошибка: " + e);
             foreach (string s in skipped) Host.Log.Warn("  " + s);
             Host.Log.Info("  итог: " + run.Status);
+            Host.Log.Info("  время: " + run.Timings);
         }
     }
 

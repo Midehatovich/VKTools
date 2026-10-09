@@ -75,7 +75,18 @@ namespace VKTools.Revit
                 LargeImage = RibbonIcons.Merge(32),
                 Image = RibbonIcons.Merge(16),
             };
+            var gaps = new PushButtonData("VKTools.RiserGaps", "Разрывы\nстояков", assembly, typeof(FindRiserGapsCommand).FullName)
+            {
+                ToolTip = "Несоединённые куски стояков: свободные концы одного типа системы на одной вертикали. Ничего не изменяет.",
+                LongDescription =
+                    "Типичная причина — этаж скопирован, а стояк не соединён с нижним, и Revit держит куски как разные системы («В1 6», «В1 8»). " +
+                    "Отчёт с «Показать в модели»: выделяются оба конца разрыва.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.RiserGap(32),
+                Image = RibbonIcons.RiserGap(16),
+            };
             systems.AddItem(merge);
+            systems.AddItem(gaps);
 
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)

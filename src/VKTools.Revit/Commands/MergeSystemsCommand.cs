@@ -2,6 +2,7 @@ using System;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using VKTools.Core.Logging;
 using VKTools.Revit.Infrastructure;
 using VKTools.Revit.Mep;
 using VKTools.Revit.UI;
@@ -22,11 +23,20 @@ namespace VKTools.Revit.Commands
             try
             {
                 Host.Log.Info($"Объединение систем: анализ «{doc.Title}».");
-                MergePlan plan = SystemMergePlanner.Build(doc);
-                Host.Log.Info($"Анализ систем «{doc.Title}»: групп {plan.Groups.Count}, готовы {plan.Count(CandidateState.Ready)}, "
-                    + $"нужна отметка {plan.Count(CandidateState.NeedsConfirmation)}, не объединяются {plan.Count(CandidateState.Rejected)}.");
+                var timings = new OperationTimings();
+                MergePlan plan;
+                using (var progress = new ProgressScope(app, "анализ систем"))
+                {
+                    plan = SystemMergePlanner.Build(doc, progress, timings);
+                }
+                MergeSystemsHandler.LogPlan(doc, plan, timings);
                 MergeWindowHost.Show(app, doc, plan);
                 return Result.Succeeded;
+            }
+            catch (OperationCanceledException)
+            {
+                Host.Log.Info("Объединение систем: анализ отменён пользователем.");
+                return Result.Cancelled;
             }
             catch (Exception ex)
             {

@@ -8,86 +8,103 @@ using VKTools.Revit.Compat;
 
 namespace VKTools.Revit.Mep
 {
-    /// <summary>
-    /// Снимок трубопроводных систем документа: системы и принадлежность элементов по коннекторам.
-    /// MEPSystem.Elements — терминалы, PipingSystem.PipingNetwork — трубы и фитинги;
-    /// обход всех элементов с трубными коннекторами — независимая сверка (как в PipingSystemMerge v1.2).
-    /// </summary>
-    internal sealed class PipingSnapshot
+    /// <summary>Состав системы: терминалы (MEPSystem.Elements), сеть (PipingNetwork) и базовое оборудование.</summary>
+    internal sealed class SystemMembers
     {
-        private PipingSnapshot()
+        public SystemMembers(List<long> terminals, HashSet<long> network, long baseEquipmentId)
         {
+            Terminals = terminals;
+            Network = network;
+            BaseEquipmentId = baseEquipmentId;
+            All = new HashSet<long>(network);
+            All.UnionWith(terminals);
+            if (baseEquipmentId > 0) All.Add(baseEquipmentId);
+        }
+
+        public List<long> Terminals { get; }
+
+        public HashSet<long> Network { get; }
+
+        public long BaseEquipmentId { get; }
+
+        public HashSet<long> All { get; }
+    }
+
+    /// <summary>
+    /// Трубопроводные системы документа. Состав систем и системы элементов читаются по требованию и кэшируются:
+    /// обход всех семейств модели не нужен (в 0.2 он шёл трижды за пробный прогон).
+    /// Кэш действителен, пока модель не менялась: после записи или отката — новый PipingModel.
+    /// </summary>
+    internal sealed class PipingModel
+    {
+        private readonly Document _doc;
+        private readonly Dictionary<long, HashSet<long>> _systemsOf = new Dictionary<long, HashSet<long>>();
+        private readonly Dictionary<long, SystemMembers> _members = new Dictionary<long, SystemMembers>();
+
+        private PipingModel(Document doc)
+        {
+            _doc = doc;
         }
 
         public Dictionary<long, PipingSystem> Systems { get; } = new Dictionary<long, PipingSystem>();
 
-        /// <summary>Система → элементы, у которых есть коннектор в этой системе.</summary>
-        public Dictionary<long, HashSet<long>> Members { get; } = new Dictionary<long, HashSet<long>>();
-
-        /// <summary>Элемент → системы его коннекторов.</summary>
-        public Dictionary<long, HashSet<long>> ElementSystems { get; } = new Dictionary<long, HashSet<long>>();
-
-        public Dictionary<long, Element> Elements { get; } = new Dictionary<long, Element>();
-
-        public static PipingSnapshot Take(Document doc)
+        public static PipingModel Take(Document doc)
         {
-            var snapshot = new PipingSnapshot();
+            var model = new PipingModel(doc);
             foreach (PipingSystem system in new FilteredElementCollector(doc).OfClass(typeof(PipingSystem)).Cast<PipingSystem>())
             {
-                long id = system.Id.ToLong();
-                snapshot.Systems[id] = system;
-                snapshot.Members[id] = new HashSet<long>();
+                model.Systems[system.Id.ToLong()] = system;
             }
-
-            IEnumerable<Element> curves = new FilteredElementCollector(doc)
-                .WherePasses(new ElementMulticategoryFilter(new[] { BuiltInCategory.OST_PipeCurves, BuiltInCategory.OST_FlexPipeCurves }))
-                .WhereElementIsNotElementType();
-            IEnumerable<Element> instances = new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance));
-
-            foreach (Element element in curves.Concat(instances))
-            {
-                HashSet<long> systems;
-                try
-                {
-                    systems = Connectors.SystemsOf(element);
-                }
-                catch (Autodesk.Revit.Exceptions.ApplicationException)
-                {
-                    continue;
-                }
-                if (systems.Count == 0 && !(element is MEPCurve) && Connectors.Piping(element).Count == 0) continue;
-
-                long id = element.Id.ToLong();
-                snapshot.Elements[id] = element;
-                snapshot.ElementSystems[id] = systems;
-                foreach (long systemId in systems)
-                {
-                    if (!snapshot.Members.TryGetValue(systemId, out HashSet<long>? members))
-                    {
-                        members = new HashSet<long>();
-                        snapshot.Members[systemId] = members;
-                    }
-                    members.Add(id);
-                }
-            }
-            return snapshot;
+            return model;
         }
 
-        public HashSet<long> MembersOf(long systemId) =>
-            Members.TryGetValue(systemId, out HashSet<long>? members) ? members : new HashSet<long>();
+        public Element? Element(long id) => _doc.GetElement(id.ToElementId());
 
-        public HashSet<long> SystemsOf(long elementId) =>
-            ElementSystems.TryGetValue(elementId, out HashSet<long>? systems) ? systems : new HashSet<long>();
+        /// <summary>Системы коннекторов элемента (кэш).</summary>
+        public HashSet<long> SystemsOf(long elementId)
+        {
+            if (_systemsOf.TryGetValue(elementId, out HashSet<long>? cached)) return cached;
+            Element? e = Element(elementId);
+            HashSet<long> systems;
+            try
+            {
+                systems = e == null ? new HashSet<long>() : Connectors.SystemsOf(e);
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                systems = new HashSet<long>();
+            }
+            _systemsOf[elementId] = systems;
+            return systems;
+        }
+
+        /// <summary>Состав системы (кэш). Нет такой системы — пустой состав.</summary>
+        public SystemMembers MembersOf(long systemId)
+        {
+            if (_members.TryGetValue(systemId, out SystemMembers? cached)) return cached;
+            var terminals = new List<long>();
+            var network = new HashSet<long>();
+            long baseEquipment = -1;
+            if (Systems.TryGetValue(systemId, out PipingSystem? system))
+            {
+                foreach (Element e in Iterate(system.Elements)) terminals.Add(e.Id.ToLong());
+                foreach (Element e in Iterate(system.PipingNetwork)) network.Add(e.Id.ToLong());
+                baseEquipment = system.BaseEquipment?.Id.ToLong() ?? -1;
+            }
+            var members = new SystemMembers(terminals.Distinct().OrderBy(x => x).ToList(), network, baseEquipment);
+            _members[systemId] = members;
+            return members;
+        }
 
         /// <summary>Записи систем для логики имён в ядре.</summary>
-        public Dictionary<long, SystemRecord> Records(Document doc)
+        public Dictionary<long, SystemRecord> Records()
         {
             var records = new Dictionary<long, SystemRecord>();
             foreach (KeyValuePair<long, PipingSystem> pair in Systems)
             {
                 PipingSystem system = pair.Value;
                 ElementId typeId = system.GetTypeId();
-                var type = doc.GetElement(typeId) as MEPSystemType;
+                var type = _doc.GetElement(typeId) as MEPSystemType;
                 records[pair.Key] = new SystemRecord(
                     pair.Key,
                     system.Name ?? string.Empty,
@@ -108,6 +125,15 @@ namespace VKTools.Revit.Mep
             catch (Autodesk.Revit.Exceptions.ApplicationException)
             {
                 return "?";
+            }
+        }
+
+        private static IEnumerable<Element> Iterate(ElementSet? set)
+        {
+            if (set == null) yield break;
+            foreach (Element e in set)
+            {
+                if (e != null) yield return e;
             }
         }
     }

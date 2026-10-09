@@ -4,7 +4,9 @@ using System.Globalization;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Plumbing;
+using VKTools.Core.Logging;
 using VKTools.Core.Mep;
+using VKTools.Core.Progress;
 using VKTools.Revit.Compat;
 
 namespace VKTools.Revit.Mep
@@ -90,16 +92,20 @@ namespace VKTools.Revit.Mep
 
     internal sealed class MergePlan
     {
-        public MergePlan(Document document, PipingSnapshot snapshot, Dictionary<long, SystemRecord> records)
+        public MergePlan(Document document, PipingModel model, Dictionary<long, SystemRecord> records, bool partial)
         {
             Document = document;
-            Snapshot = snapshot;
+            Model = model;
             Records = records;
+            IsPartial = partial;
         }
 
         public Document Document { get; }
 
-        public PipingSnapshot Snapshot { get; }
+        public PipingModel Model { get; }
+
+        /// <summary>Проанализированы только отмеченные копии (перед записью), а не весь проект.</summary>
+        public bool IsPartial { get; }
 
         public Dictionary<long, SystemRecord> Records { get; }
 
@@ -118,107 +124,116 @@ namespace VKTools.Revit.Mep
     /// </summary>
     internal static class SystemMergePlanner
     {
-        public static MergePlan Build(Document doc)
+        public const string StageAnalysis = "анализ";
+
+        /// <param name="onlyKeys">Перед записью — только отмеченные копии: остальные не анализируются и в план не входят.</param>
+        public static MergePlan Build(Document doc, IOperationProgress progress, OperationTimings timings, ICollection<string>? onlyKeys = null)
         {
-            PipingSnapshot snapshot = PipingSnapshot.Take(doc);
-            Dictionary<long, SystemRecord> records = snapshot.Records(doc);
-            var plan = new MergePlan(doc, snapshot, records);
-            var worksharing = new WorksharingGuard(doc);
-
-            // Проектное имя каждой системы: для проверки связей с чужими группами
-            var baseOf = new Dictionary<long, string>();
-            foreach (SystemRecord r in records.Values)
+            using (timings.Measure(StageAnalysis))
             {
-                SystemNameParts parts = SystemNames.Split(r.Name);
-                baseOf[r.Id] = parts.Issue == null ? parts.BaseName : r.Name;
-            }
+                progress.Report("Чтение систем трубопроводов…");
+                PipingModel model = PipingModel.Take(doc);
+                Dictionary<long, SystemRecord> records = model.Records();
+                var plan = new MergePlan(doc, model, records, onlyKeys != null);
+                var worksharing = new WorksharingGuard(doc);
 
-            foreach (MergeGroup core in MergeGrouping.BuildGroups(records.Values.ToList()))
-            {
-                PipingSystem? target = core.Target != null && snapshot.Systems.TryGetValue(core.Target.Id, out PipingSystem? t) ? t : null;
-                var group = new PlannedGroup(core, target);
-                plan.Groups.Add(group);
-
-                string? targetBlock = null;
-                if (target != null)
+                // Проектное имя каждой системы: для проверки связей с чужими группами
+                var baseOf = new Dictionary<long, string>();
+                foreach (SystemRecord r in records.Values)
                 {
-                    FamilyInstance? baseEquipment = target.BaseEquipment;
-                    group.TargetBaseEquipmentId = baseEquipment?.Id.ToLong() ?? -1;
-                    targetBlock = worksharing.Block(target);
+                    SystemNameParts parts = SystemNames.Split(r.Name);
+                    baseOf[r.Id] = parts.Issue == null ? parts.BaseName : r.Name;
                 }
 
-                foreach (Candidate candidate in core.Candidates)
+                IReadOnlyList<MergeGroup> groups = MergeGrouping.BuildGroups(records.Values.ToList());
+                int total = onlyKeys?.Count ?? groups.Sum(g => g.Candidates.Count);
+                int done = 0;
+                foreach (MergeGroup core in groups)
                 {
-                    var planned = new PlannedCandidate(group, candidate.System);
-                    group.Candidates.Add(planned);
-                    if (target == null || candidate.Status == CandidateStatus.Rejected)
+                    PipingSystem? target = core.Target != null && model.Systems.TryGetValue(core.Target.Id, out PipingSystem? t) ? t : null;
+                    var group = new PlannedGroup(core, target);
+
+                    string? targetBlock = null;
+                    if (target != null)
                     {
-                        // Не объединяется по имени — но элементы нужны, чтобы найти систему в модели
-                        CollectElements(doc, plan, planned);
+                        group.TargetBaseEquipmentId = target.BaseEquipment?.Id.ToLong() ?? -1;
+                        targetBlock = worksharing.Block(target, checkCentral: true);
                     }
-                    if (target == null || candidate.Status == CandidateStatus.Rejected)
+
+                    foreach (Candidate candidate in core.Candidates)
                     {
-                        planned.State = CandidateState.Rejected;
-                        planned.Reasons.Add(target == null ? core.Problem ?? candidate.Reason ?? "нет основной системы" : candidate.Reason ?? "отклонена по имени");
-                        if (planned.TerminalIds.Count == 0 && planned.ElementIds.Count > 0)
+                        if (onlyKeys != null && !onlyKeys.Contains(MergeKeys.Of(group.TargetId, candidate.System.Id))) continue;
+                        progress.Report($"Анализ: «{candidate.System.Name}» → «{core.BaseName}»", done++, total);
+                        progress.ThrowIfCancelled();
+
+                        var planned = new PlannedCandidate(group, candidate.System);
+                        group.Candidates.Add(planned);
+                        CollectElements(doc, model, planned);
+
+                        if (target == null || candidate.Status == CandidateStatus.Rejected)
                         {
-                            planned.Notes.Add("к тому же нет терминалов: систему из одних труб не перенести и после исправления имени, нужно соединить трубы");
+                            planned.State = CandidateState.Rejected;
+                            planned.Reasons.Add(target == null ? core.Problem ?? candidate.Reason ?? "нет основной системы" : candidate.Reason ?? "отклонена по имени");
+                            if (planned.TerminalIds.Count == 0 && planned.ElementIds.Count > 0)
+                            {
+                                planned.Notes.Add("к тому же нет терминалов: систему из одних труб не перенести и после исправления имени, нужно соединить трубы");
+                            }
+                            continue;
                         }
-                        continue;
-                    }
-                    if (targetBlock != null) planned.Reasons.Add("основная система: " + targetBlock);
+                        if (targetBlock != null) planned.Reasons.Add("основная система: " + targetBlock);
 
-                    AnalyzeInModel(doc, plan, group, planned, baseOf, worksharing);
+                        AnalyzeInModel(doc, plan, group, planned, baseOf, worksharing);
 
-                    if (planned.Reasons.Count > 0) planned.State = CandidateState.Rejected;
-                    else if (candidate.Status == CandidateStatus.NeedsConfirmation)
-                    {
-                        planned.State = CandidateState.NeedsConfirmation;
-                        planned.Reasons.Add(candidate.Reason ?? "нужно подтверждение");
+                        if (planned.Reasons.Count > 0) planned.State = CandidateState.Rejected;
+                        else if (candidate.Status == CandidateStatus.NeedsConfirmation)
+                        {
+                            planned.State = CandidateState.NeedsConfirmation;
+                            planned.Reasons.Add(candidate.Reason ?? "нужно подтверждение");
+                        }
+                        else planned.State = CandidateState.Ready;
                     }
-                    else planned.State = CandidateState.Ready;
+                    if (group.Candidates.Count > 0) plan.Groups.Add(group);
                 }
+                return plan;
             }
-            return plan;
         }
 
         private static void AnalyzeInModel(Document doc, MergePlan plan, PlannedGroup group, PlannedCandidate planned,
             Dictionary<long, string> baseOf, WorksharingGuard worksharing)
         {
-            PipingSnapshot snapshot = plan.Snapshot;
+            PipingModel model = plan.Model;
             long sid = planned.Record.Id;
-            if (!snapshot.Systems.TryGetValue(sid, out PipingSystem? system))
+            if (!model.Systems.TryGetValue(sid, out PipingSystem? system))
             {
                 planned.Reasons.Add("система не найдена в модели");
                 return;
             }
-
-            (List<Element> terminals, List<Element> elements, int extra) = CollectElements(doc, plan, planned);
-            FamilyInstance? baseEquipment = system.BaseEquipment;
-            if (extra > 0) planned.Notes.Add($"по коннекторам ещё {extra} эл. вне состава системы");
+            SystemMembers members = model.MembersOf(sid);
 
             // Базовое оборудование: у системы оно одно, переносить чужое нельзя
-            if (baseEquipment != null)
+            if (members.BaseEquipmentId > 0)
             {
-                long beId = baseEquipment.Id.ToLong();
+                long beId = members.BaseEquipmentId;
                 planned.Reasons.Add(group.TargetBaseEquipmentId > 0 && beId != group.TargetBaseEquipmentId
                     ? $"своё базовое оборудование (Id {beId}), у основной — Id {group.TargetBaseEquipmentId}"
                     : $"есть базовое оборудование (Id {beId}): плагин его не переносит");
             }
-            if (terminals.Count == 0)
+            if (members.Terminals.Count == 0)
             {
                 planned.Reasons.Add("нет терминалов (приборов, оборудования): систему из одних труб через API не перенести, нужно соединить трубы физически");
             }
 
             // Коннекторы терминалов: классификация и что переносим
             string targetClass = group.Core.Target!.Classification;
-            foreach (Element owner in terminals)
+            foreach (long terminalId in members.Terminals)
             {
+                Element? owner = model.Element(terminalId);
+                if (owner == null) continue;
                 List<Connector> connectors = Connectors.Piping(owner);
                 List<Connector> mine = connectors.Where(c => Connectors.SystemId(c) == sid).ToList();
                 if (mine.Count == 0)
                 {
-                    planned.Notes.Add($"у элемента {owner.Id.ToLong()} нет трубных коннекторов этой системы");
+                    planned.Notes.Add($"у элемента {terminalId} нет трубных коннекторов этой системы");
                     continue;
                 }
                 foreach (Connector c in mine)
@@ -230,22 +245,22 @@ namespace VKTools.Revit.Mep
                     }
                     catch (Autodesk.Revit.Exceptions.ApplicationException)
                     {
-                        planned.Moves.Add((owner.Id.ToLong(), c.Id));
+                        planned.Moves.Add((terminalId, c.Id));
                         continue;
                     }
                     if (!IsNeutral(pst) && pst.ToString() != targetClass)
                     {
-                        planned.Reasons.Add($"коннектор {c.Id} элемента {owner.Id.ToLong()} классифицирован как {pst}, а основная — {targetClass}");
+                        planned.Reasons.Add($"коннектор {c.Id} элемента {terminalId} классифицирован как {pst}, а основная — {targetClass}");
                         continue;
                     }
-                    planned.Moves.Add((owner.Id.ToLong(), c.Id));
+                    planned.Moves.Add((terminalId, c.Id));
                 }
                 var others = new HashSet<long>(connectors.Select(Connectors.SystemId));
                 others.Remove(sid);
                 others.Remove(-1);
                 if (others.Count > 0)
                 {
-                    planned.Notes.Add($"{owner.Category?.Name} {owner.Id.ToLong()}: другие коннекторы в "
+                    planned.Notes.Add($"{owner.Category?.Name} {terminalId}: другие коннекторы в "
                         + string.Join(", ", others.Select(k => plan.Records.TryGetValue(k, out SystemRecord? r) ? r.Name : k.ToString(CultureInfo.InvariantCulture)))
                         + " — не трогаются");
                 }
@@ -253,10 +268,12 @@ namespace VKTools.Revit.Mep
 
             // Физические связи с системами других проектных имён того же типа
             var foreign = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (Element e in elements)
+            foreach (long id in planned.ElementIds)
             {
-                var linked = new HashSet<long>(snapshot.SystemsOf(e.Id.ToLong()));
-                foreach (long neighbour in Connectors.NeighbourIds(e)) linked.UnionWith(snapshot.SystemsOf(neighbour));
+                Element? e = model.Element(id);
+                if (e == null) continue;
+                var linked = new HashSet<long>(model.SystemsOf(id));
+                foreach (long neighbour in Connectors.NeighbourIds(e)) linked.UnionWith(model.SystemsOf(neighbour));
                 foreach (long other in linked)
                 {
                     if (other == sid || other == group.TargetId || !plan.Records.TryGetValue(other, out SystemRecord? r)) continue;
@@ -272,10 +289,13 @@ namespace VKTools.Revit.Mep
                     + string.Join(", ", foreign.OrderByDescending(p => p.Value).Take(5).Select(p => $"«{p.Key}» ×{p.Value}")));
             }
 
-            // Группы, варианты конструкции, совместная работа
-            foreach (Element e in elements)
+            // Группы, варианты конструкции, совместная работа. Состояние в хранилище — только у терминалов и самой системы:
+            // по трубам его проверит Revit при фиксации (ошибка → откат всего)
+            var terminalSet = new HashSet<long>(members.Terminals);
+            foreach (long id in planned.ElementIds)
             {
-                long id = e.Id.ToLong();
+                Element? e = model.Element(id);
+                if (e == null) continue;
                 if (e.GroupId != null && e.GroupId.ToLong() > 0)
                 {
                     planned.Reasons.Add($"элементы в группах модели (например, Id {id})");
@@ -287,14 +307,14 @@ namespace VKTools.Revit.Mep
                     planned.Reasons.Add($"элементы во вторичном варианте конструкции (Id {id})");
                     break;
                 }
-                string? block = worksharing.Block(e);
+                string? block = worksharing.Block(e, checkCentral: terminalSet.Contains(id));
                 if (block != null)
                 {
                     planned.Reasons.Add($"элемент {id}: {block}");
                     break;
                 }
             }
-            string? systemBlock = worksharing.Block(system);
+            string? systemBlock = worksharing.Block(system, checkCentral: true);
             if (systemBlock != null) planned.Reasons.Add("сама система: " + systemBlock);
 
             if (planned.Reasons.Count == 0 && planned.Moves.Count == 0) planned.Reasons.Add("нет коннекторов для переноса");
@@ -314,66 +334,29 @@ namespace VKTools.Revit.Mep
             }
         }
 
-        /// <summary>
-        /// Состав системы: терминалы (MEPSystem.Elements), сеть (PipingNetwork) и всё, что связано с ней коннекторами.
-        /// Заполняет ElementIds, TerminalIds и Levels. extra — элементы по коннекторам вне Elements и PipingNetwork.
-        /// </summary>
-        private static (List<Element> Terminals, List<Element> Elements, int Extra) CollectElements(Document doc, MergePlan plan, PlannedCandidate planned)
+        /// <summary>Состав копии: ElementIds, TerminalIds, Levels.</summary>
+        private static void CollectElements(Document doc, PipingModel model, PlannedCandidate planned)
         {
-            PipingSnapshot snapshot = plan.Snapshot;
-            long sid = planned.Record.Id;
-            if (!snapshot.Systems.TryGetValue(sid, out PipingSystem? system)) return (new List<Element>(), new List<Element>(), 0);
-
-            List<Element> terminals = ToList(system.Elements);
-            List<Element> network = ToList(system.PipingNetwork);
-            HashSet<long> members = snapshot.MembersOf(sid);
-            var terminalIds = new HashSet<long>(terminals.Select(e => e.Id.ToLong()));
-            var networkIds = new HashSet<long>(network.Select(e => e.Id.ToLong()));
-            planned.ElementIds.UnionWith(members);
-            planned.ElementIds.UnionWith(terminalIds);
-            planned.ElementIds.UnionWith(networkIds);
-            planned.TerminalIds.AddRange(terminalIds.OrderBy(x => x));
-
-            var extra = new HashSet<long>(members);
-            extra.ExceptWith(networkIds);
-            extra.ExceptWith(terminalIds);
-            FamilyInstance? baseEquipment = system.BaseEquipment;
-            if (baseEquipment != null) extra.Remove(baseEquipment.Id.ToLong());
-
-            var elements = new List<Element>();
-            foreach (long id in planned.ElementIds)
-            {
-                Element? e = snapshot.Elements.TryGetValue(id, out Element? known) ? known : doc.GetElement(id.ToElementId());
-                if (e != null) elements.Add(e);
-            }
-            planned.Levels = LevelNames(doc, terminals.Count > 0 ? terminals : elements);
-            return (terminals, elements, extra.Count);
+            SystemMembers members = model.MembersOf(planned.Record.Id);
+            planned.ElementIds.UnionWith(members.All);
+            planned.TerminalIds.AddRange(members.Terminals);
+            IEnumerable<long> forLevels = members.Terminals.Count > 0 ? members.Terminals : (IEnumerable<long>)members.All;
+            planned.Levels = LevelNames(doc, forLevels.Select(model.Element).Where(e => e != null)!);
         }
 
         private static bool IsNeutral(PipeSystemType type) =>
             type == PipeSystemType.Global || type == PipeSystemType.Fitting || type == PipeSystemType.UndefinedSystemType;
 
-        private static List<Element> ToList(ElementSet? set)
-        {
-            var result = new List<Element>();
-            if (set == null) return result;
-            foreach (Element e in set)
-            {
-                if (e != null) result.Add(e);
-            }
-            return result;
-        }
-
         private static string LevelNames(Document doc, IEnumerable<Element> elements, int limit = 3)
         {
-            var names = new List<string>();
+            var levelIds = new HashSet<long>();
             foreach (Element e in elements)
             {
                 ElementId levelId = e.LevelId;
                 if ((levelId == null || levelId.ToLong() < 1) && e is MEPCurve curve) levelId = curve.ReferenceLevel?.Id ?? ElementId.InvalidElementId;
-                string? name = levelId != null && levelId.ToLong() > 0 ? doc.GetElement(levelId)?.Name : null;
-                if (!string.IsNullOrEmpty(name) && !names.Contains(name!)) names.Add(name!);
+                if (levelId != null && levelId.ToLong() > 0) levelIds.Add(levelId.ToLong());
             }
+            List<string> names = levelIds.Select(id => doc.GetElement(id.ToElementId())?.Name).Where(n => !string.IsNullOrEmpty(n)).Select(n => n!).Distinct().ToList();
             names.Sort(StringComparer.CurrentCulture);
             if (names.Count > limit) return string.Join(", ", names.Take(limit)) + $" и ещё {names.Count - limit}";
             return names.Count == 0 ? "—" : string.Join(", ", names);
@@ -391,7 +374,8 @@ namespace VKTools.Revit.Mep
             _doc = doc;
         }
 
-        public string? Block(Element element)
+        /// <param name="checkCentral">Проверять ли «изменён в хранилище» (кэш Revit, но для тысяч труб лишнее).</param>
+        public string? Block(Element element, bool checkCentral)
         {
             if (!_doc.IsWorkshared) return null;
             try
@@ -404,6 +388,7 @@ namespace VKTools.Revit.Mep
                 }
                 if (!open) return "рабочий набор закрыт";
                 if (WorksharingUtils.GetCheckoutStatus(_doc, element.Id) == CheckoutStatus.OwnedByOtherUser) return "занят другим пользователем";
+                if (!checkCentral) return null;
                 ModelUpdatesStatus status = WorksharingUtils.GetModelUpdatesStatus(_doc, element.Id);
                 if (status == ModelUpdatesStatus.UpdatedInCentral || status == ModelUpdatesStatus.DeletedInCentral)
                 {

@@ -320,10 +320,7 @@ namespace VKTools.Revit.UI
             _lastReport = report;
             if (run != null)
             {
-                _status.Text = run.Status + (run.Errors.Count > 0 ? $" Ошибок: {run.Errors.Count} — см. «Результат» и «Отчёт…»." : string.Empty);
-                _status.Foreground = run.Errors.Count > 0 ? Brushes.DarkRed : Brushes.DarkGreen;
-                _details.Text = string.Join(Environment.NewLine, run.PostCheck.Concat(run.Warnings).Concat(run.Errors));
-                _trialPassedFor = run.Mode == MergeMode.Trial && run.Passed ? SelectionKey(run.Outcomes.Select(o => o.Candidate.Key)) : null;
+                ShowRunStatus(run);
             }
             else
             {
@@ -335,12 +332,41 @@ namespace VKTools.Revit.UI
             UpdateButtons();
         }
 
-        public void ShowMessage(string text)
+        public void ShowMessage(string text, bool error = true)
         {
             _busy = false;
             _status.Text = text;
-            _status.Foreground = Brushes.DarkRed;
+            _status.Foreground = error ? Brushes.DarkRed : Brushes.DimGray;
             UpdateButtons();
+        }
+
+        /// <summary>Результат прогона без нового анализа (пробный прогон, откат, отмена): строки остаются, меняется «Результат».</summary>
+        public void ApplyRun(MergeRunResult run, CheckReport report)
+        {
+            Dictionary<string, CandidateOutcome> outcomes = run.Outcomes.ToDictionary(o => o.Candidate.Key, StringComparer.Ordinal);
+            foreach (MergeRow row in _rows)
+            {
+                outcomes.TryGetValue(row.Key, out CandidateOutcome? outcome);
+                row.SetOutcome(outcome);
+                if (outcome?.State == OutcomeState.Merged) row.IsChecked = false;
+            }
+            ShowRunStatus(run);
+            _lastReport = report;
+            _busy = false;
+            UpdateButtons();
+        }
+
+        private void ShowRunStatus(MergeRunResult run)
+        {
+            _status.Text = run.Status + (run.Errors.Count > 0 ? $" Ошибок: {run.Errors.Count} — см. «Результат» и «Отчёт…»." : string.Empty);
+            _status.Foreground = run.Errors.Count > 0 ? Brushes.DarkRed : run.Cancelled ? Brushes.DimGray : Brushes.DarkGreen;
+            var lines = new List<string>();
+            if (!string.IsNullOrEmpty(run.Timings)) lines.Add("Время: " + run.Timings);
+            lines.AddRange(run.PostCheck);
+            lines.AddRange(run.Warnings);
+            lines.AddRange(run.Errors);
+            _details.Text = string.Join(Environment.NewLine, lines);
+            _trialPassedFor = run.Mode == MergeMode.Trial && run.Passed ? SelectionKey(run.Outcomes.Select(o => o.Candidate.Key)) : null;
         }
 
         private static DataGridTemplateColumn CheckColumn()
