@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using Autodesk.Revit.DB;
@@ -334,21 +335,63 @@ namespace VKTools.Revit.Mep
             }
         }
 
-        /// <summary>MEPSystem.Add только для коннекторов, которых ещё нет в основной: занятый коннектор ломает весь набор.</summary>
-        private static void AddConnectors(Document doc, PipingSystem target, IEnumerable<(long OwnerId, int ConnectorId)> moves)
+        /// <summary>
+        /// MEPSystem.Add по одному коннектору; коннектор, уже попавший в основную, пропускается.
+        /// Набор из нескольких терминалов одной сети Revit не принял («Some connectors … have been used», КрМа3, «К1.1 2», 0.3.3,
+        /// все коннекторы перед вызовом были без системы). По всей видимости, добавив первый, он тянет за ним сеть и соседние
+        /// терминалы, и остальные для него уже заняты; одиночные добавления на той же модели проходили.
+        /// Возвращает: сколько добавлено и сколько Revit подтянул сам.
+        /// </summary>
+        private static (int added, int pulled) AddConnectors(Document doc, PipingSystem target, IReadOnlyList<(long OwnerId, int ConnectorId)> moves,
+            IOperationProgress progress, ILog log, string stage)
         {
             long targetId = target.Id.ToLong();
-            var set = new ConnectorSet();
-            foreach ((long ownerId, int connectorId) in moves)
+            int added = 0;
+            int pulled = 0;
+            for (int i = 0; i < moves.Count; i++)
             {
-                Element owner = doc.GetElement(ownerId.ToElementId())
-                    ?? throw new InvalidOperationException($"терминал {ownerId} исчез после удаления системы");
-                Connector connector = Connectors.Find(owner, connectorId)
-                    ?? throw new InvalidOperationException($"у элемента {ownerId} не найден коннектор {connectorId}");
-                if (Connectors.SystemId(connector) == targetId) continue;
-                set.Insert(connector);
+                (long ownerId, int connectorId) = moves[i];
+                if (moves.Count > 1) progress.Report($"{stage}: терминал {i + 1} из {moves.Count}", i, moves.Count);
+                progress.ThrowIfCancelled();
+                Connector connector = FindConnector(doc, ownerId, connectorId);
+                if (Connectors.SystemId(connector) == targetId)
+                {
+                    pulled++;
+                    continue;
+                }
+                var watch = Stopwatch.StartNew();
+                try
+                {
+                    var set = new ConnectorSet();
+                    set.Insert(connector);
+                    target.Add(set);
+                    added++;
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException first)
+                {
+                    // Возможно, Revit уже включает его в основную вместе с сетью соседнего терминала — смотрим после пересчёта
+                    doc.Regenerate();
+                    long now = Connectors.SystemId(FindConnector(doc, ownerId, connectorId));
+                    if (now == targetId)
+                    {
+                        pulled++;
+                        continue;
+                    }
+                    throw new InvalidOperationException($"{Describe(doc, ownerId)}: Revit не добавляет коннектор {connectorId} в основную "
+                        + $"({first.Message.Replace(Environment.NewLine, " ")}); сейчас коннектор "
+                        + (now < 1 ? "без системы" : $"в «{doc.GetElement(now.ToElementId())?.Name}»"));
+                }
+                if (watch.Elapsed >= TimeSpan.FromSeconds(1)) log.Info($"      медленно: {Describe(doc, ownerId)} — MEPSystem.Add {OperationTimings.Seconds(watch.Elapsed)}");
             }
-            if (!set.IsEmpty) target.Add(set);
+            return (added, pulled);
+        }
+
+        private static Connector FindConnector(Document doc, long ownerId, int connectorId)
+        {
+            Element owner = doc.GetElement(ownerId.ToElementId())
+                ?? throw new InvalidOperationException($"терминал {ownerId} исчез после удаления системы");
+            return Connectors.Find(owner, connectorId)
+                ?? throw new InvalidOperationException($"у элемента {ownerId} не найден коннектор {connectorId}");
         }
 
         private static List<string> ReassignedTerminals(Document doc, PlannedGroup group, IEnumerable<(long OwnerId, int ConnectorId)> moves)
@@ -463,7 +506,10 @@ namespace VKTools.Revit.Mep
                     + (c.Moves.Select(m => m.OwnerId).Distinct().Count() > 5 ? " …" : string.Empty));
                 try
                 {
-                    using (timings.Measure("добавление в основную (MEPSystem.Add)")) AddConnectors(doc, target, c.Moves);
+                    (int added, int pulled) stats;
+                    string stage = $"Объединение {groupNumber} из {groupCount}: «{c.Record.Name}» → «{group.BaseName}»";
+                    using (timings.Measure("добавление в основную (MEPSystem.Add)")) stats = AddConnectors(doc, target, c.Moves, progress, log, stage);
+                    log.Info($"      добавлено коннекторов {stats.added}, уже оказались в основной (Revit подтянул по сети) {stats.pulled}");
                 }
                 catch (Exception ex) when (ex is Autodesk.Revit.Exceptions.ApplicationException || ex is InvalidOperationException)
                 {
