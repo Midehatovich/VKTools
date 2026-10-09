@@ -163,6 +163,7 @@ namespace VKTools.Revit.Checks
         private void CheckCategories(CheckContext context, RequiredParameter required, ElementBinding bound, Document doc)
         {
             var missing = new List<string>();
+            var absent = new List<string>();
             foreach (string categoryName in required.Categories)
             {
                 if (!CheckContext.TryResolveCategory(categoryName, out BuiltInCategory bic))
@@ -172,14 +173,26 @@ namespace VKTools.Revit.Checks
                     continue;
                 }
                 Category? category = Category.GetCategory(doc, bic);
-                if (category == null) continue;
-                if (!bound.Categories.Contains(category)) missing.Add(category.Name);
+                if (category == null || bound.Categories.Contains(category)) continue;
+
+                switch (CategoryCoverage(doc, bic, required.Guid))
+                {
+                    case Coverage.NoElements:
+                        absent.Add(category.Name);
+                        break;
+                    case Coverage.FromFamilies:
+                        // Параметр приходит из семейств этой категории — спецификация его видит
+                        break;
+                    default:
+                        missing.Add(category.Name);
+                        break;
+                }
             }
 
             if (missing.Count > 0)
             {
                 context.Add(new CheckFinding(Name, Severity.Warning,
-                    $"«{required.Name}» не назначен категориям: {string.Join(", ", missing)}. "
+                    $"«{required.Name}» не назначен категориям: {string.Join(", ", missing)}, и в их семействах его нет. "
                     + "Элементы этих категорий выпадут из спецификаций, которые фильтруют или сортируют по этому параметру.")
                 {
                     Current = "нет у: " + string.Join(", ", missing),
@@ -187,6 +200,38 @@ namespace VKTools.Revit.Checks
                     Action = "Управление → Параметры проекта → «" + required.Name + "» → Изменить → отметьте категории.",
                 });
             }
+            if (absent.Count > 0)
+            {
+                context.Add(new CheckFinding(Name, Severity.Info,
+                    $"«{required.Name}» не назначен категориям: {string.Join(", ", absent)}. Элементов этих категорий в модели нет, сейчас это ни на что не влияет.")
+                {
+                    Current = "нет у: " + string.Join(", ", absent),
+                    Action = "Если такие элементы появятся — отметьте категории: Управление → Параметры проекта.",
+                });
+            }
+        }
+
+        private enum Coverage
+        {
+            NoElements,
+            FromFamilies,
+            Missing,
+        }
+
+        /// <summary>Есть ли в модели элементы категории и у всех ли (из первых 200) параметр есть из семейства.</summary>
+        private static Coverage CategoryCoverage(Document doc, BuiltInCategory bic, Guid guid)
+        {
+            bool any = false;
+            IEnumerable<Element> elements = new FilteredElementCollector(doc)
+                .OfCategory(bic)
+                .WhereElementIsNotElementType()
+                .Take(200);
+            foreach (Element element in elements)
+            {
+                any = true;
+                if (element.GetText(guid) == null) return Coverage.Missing;
+            }
+            return any ? Coverage.FromFamilies : Coverage.NoElements;
         }
     }
 }

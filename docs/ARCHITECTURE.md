@@ -30,7 +30,7 @@ ModelCheckRunner
    └─ проверки IModelCheck, каждая в try/catch (упавшая проверка не прячет остальные):
          ParameterBindingCheck   параметры по GUID, общий ли, экземпляр/тип, категории привязки
          UpdaterCheck            UpdaterRegistry.GetRegisteredUpdaterInfos(doc)
-         EmptyNameCheck          ADSK_Наименование у экземпляра, иначе у типа
+         EmptyNameCheck          ADSK_Наименование у экземпляра и типа; строка на типоразмер
          InsulationHostCheck     PipeInsulation.HostElementId → сравнение параметров
          LookalikeValuesCheck    ValueNormalizer: ключ сравнения, группы двойников
    ▼

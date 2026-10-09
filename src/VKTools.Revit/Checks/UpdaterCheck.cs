@@ -18,20 +18,30 @@ namespace VKTools.Revit.Checks
         {
             IList<UpdaterInfo> infos = UpdaterRegistry.GetRegisteredUpdaterInfos(context.Document);
             List<UpdaterRule> rules = context.Updaters ?? new List<UpdaterRule>();
+            var others = new List<string>();
             foreach (UpdaterInfo info in infos)
             {
                 UpdaterRule? rule = rules.FirstOrDefault(r => r.Matches(info.UpdaterName, info.ApplicationName));
-                string who = $"«{info.UpdaterName}» ({info.ApplicationName})";
-                context.Add(rule != null
-                    ? new CheckFinding(Name, rule.Severity, $"Апдейтер {who}. {rule.Message}")
-                    {
-                        Current = info.UpdaterName,
-                        Action = "Перед записью VK Tools убедитесь, что это правило в надстройке отключено, иначе результат будет перезаписан.",
-                    }
-                    : new CheckFinding(Name, Severity.Info, $"Апдейтер {who}.")
-                    {
-                        Current = info.UpdaterName,
-                    });
+                if (rule == null)
+                {
+                    others.Add($"{info.UpdaterName} ({info.ApplicationName})");
+                    continue;
+                }
+                context.Add(new CheckFinding(Name, rule.Severity, $"Апдейтер «{info.UpdaterName}» ({info.ApplicationName}). {rule.Message}")
+                {
+                    Current = info.UpdaterName,
+                    Action = "Перед записью VK Tools убедитесь, что это правило в надстройке отключено, иначе результат будет перезаписан.",
+                });
+            }
+
+            // Остальные — одной строкой: в основном служебные апдейтеры Revit. Пишут ли они параметры ВК, плагин не знает
+            if (others.Count > 0)
+            {
+                context.Add(new CheckFinding(Name, Severity.Info,
+                    $"Ещё {others.Count} апдейтеров не из списка правил: {string.Join("; ", others)}.")
+                {
+                    Action = "Если какой-то из них пишет параметры ВК — добавьте его в updaters.csv.",
+                });
             }
         }
     }

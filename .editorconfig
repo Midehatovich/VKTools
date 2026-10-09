@@ -20,6 +20,7 @@ dotnet_diagnostic.CA1866.severity = none
 dotnet_diagnostic.CA1847.severity = none   # Contains(char)
 dotnet_diagnostic.CA2249.severity = none   # string.Contains(string, StringComparison)
 dotnet_diagnostic.CA1870.severity = none   # SearchValues
+dotnet_diagnostic.CA1845.severity = none   # AsSpan / string.Concat(ReadOnlySpan)
 # Имена из предметной области: GUID параметра ФОП, уровень лога Error.
 dotnet_diagnostic.CA1720.severity = none
 dotnet_diagnostic.CA1716.severity = none
