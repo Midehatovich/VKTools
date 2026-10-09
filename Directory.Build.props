@@ -1,0 +1,19 @@
+<Project>
+  <!-- Общие настройки для всех проектов VK Tools. -->
+  <PropertyGroup>
+    <Product>VK Tools</Product>
+    <Company>VK Tools</Company>
+    <Copyright>© 2026 VK Tools</Copyright>
+    <Version>0.1.1</Version>
+    <LangVersion>10.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors Condition="'$(CI)' == 'true'">true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- Сборка WPF и net48 на Linux (локально и в CI для проверки) -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+</Project>

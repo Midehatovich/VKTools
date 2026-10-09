@@ -1,0 +1,20 @@
+﻿# VK Tools: параметры, которые нужны спецификациям ВК и плагину.
+# Кодировка UTF-8 с BOM, разделитель «;». Можно править в Excel: Сохранить как → «CSV UTF-8 (разделитель — запятая)».
+# GUID — из ФОП отдела LSR_ФОП_02 и ФОП SYS. Плагин ищет параметры по GUID, имя нужно для отчёта.
+# Обязательный: да — нет в проекте → ошибка; нет — информация (параметр нужен не во всех проектах).
+# Привязка: Экземпляр / Тип / Любая. Категории — имена BuiltInCategory через запятую (не зависят от языка Revit).
+# Списки категорий — предварительные (Q-024): уточнить по экспорту спецификаций ВК.
+#schema=1
+Параметр;GUID;Обязательный;Привязка;Категории;Назначение
+ADSK_Наименование;e6e0f5cd-3e26-485b-9342-23882b20eb43;да;Любая;OST_PipeCurves, OST_FlexPipeCurves, OST_PipeFitting, OST_PipeAccessory, OST_PlumbingFixtures, OST_MechanicalEquipment, OST_Sprinklers, OST_PipeInsulations, OST_GenericModel;Наименование в спецификации
+ADSK_Этаж;9eabf56c-a6cd-4b5c-a9d0-e9223e19ea3f;да;Экземпляр;OST_PipeCurves, OST_FlexPipeCurves, OST_PipeFitting, OST_PipeAccessory, OST_PlumbingFixtures, OST_MechanicalEquipment, OST_Sprinklers, OST_PipeInsulations, OST_GenericModel;Фильтр спецификаций по этажу
+ADSK_Группирование;3de5f1a4-d560-4fa8-a74f-25d250fb3401;да;Экземпляр;OST_PipeCurves, OST_FlexPipeCurves, OST_PipeFitting, OST_PipeAccessory, OST_PlumbingFixtures, OST_MechanicalEquipment, OST_Sprinklers, OST_PipeInsulations, OST_GenericModel;Сортировка разделов спецификации
+ADSK_Количество;8d057bb3-6ccd-4655-9165-55526691fe3a;да;Любая;OST_PipeCurves, OST_FlexPipeCurves, OST_PipeFitting, OST_PipeAccessory, OST_PlumbingFixtures, OST_MechanicalEquipment, OST_Sprinklers, OST_PipeInsulations, OST_GenericModel;Количество в спецификации
+ADSK_Единица измерения;4289cb19-9517-45de-9c02-5a74ebf5c86d;да;Любая;OST_PipeCurves, OST_FlexPipeCurves, OST_PipeFitting, OST_PipeAccessory, OST_PlumbingFixtures, OST_MechanicalEquipment, OST_Sprinklers, OST_PipeInsulations, OST_GenericModel;Единица измерения
+LSR_Имя системы;0cc98b64-809e-45f3-9ea7-553b2d6f21ca;нет;Экземпляр;OST_PipeCurves, OST_FlexPipeCurves, OST_PipeFitting, OST_PipeAccessory, OST_PlumbingFixtures, OST_MechanicalEquipment, OST_Sprinklers, OST_PipeInsulations, OST_GenericModel;Система (проекты LSR)
+LSR_Тип системы;2a1e0a57-00cc-40f2-950d-eb2cf918e0d2;нет;Экземпляр;OST_PipeCurves, OST_FlexPipeCurves, OST_PipeFitting, OST_PipeAccessory, OST_PlumbingFixtures, OST_MechanicalEquipment, OST_Sprinklers, OST_PipeInsulations, OST_GenericModel;Тип системы (проекты LSR)
+SYS_Ключ;ba2a88aa-82d8-4f53-b4a8-493357b3b4e9;нет;Экземпляр;OST_GenericModel;Расчётные позиции: ключ
+SYS_Кол-во вручную;1800e7b3-7a14-408d-9d29-4f1b6a3c35f9;нет;Экземпляр;OST_GenericModel;Расчётные позиции: ручная корректировка
+SYS_Кол-во расчёт;bc891ceb-a0be-4641-871b-ea0ce1034128;нет;Экземпляр;OST_GenericModel;Расчётные позиции: расчёт
+SYS_Основание;55ee5cc1-6fe1-4eaa-a568-ce129e59f682;нет;Экземпляр;OST_GenericModel;Расчётные позиции: основание
+SYS_Способ;68b76ce7-4f25-431d-9eae-8fd68f1ff933;нет;Экземпляр;OST_GenericModel;Расчётные позиции: способ

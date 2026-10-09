@@ -1,0 +1,13 @@
+﻿# VK Tools: категории элементов, которые попадают в спецификации ВК.
+# По ним «Проверить модель» ищет пустое ADSK_Наименование и разные написания одного значения.
+#schema=1
+Категория;Название
+OST_PipeCurves;Трубы
+OST_FlexPipeCurves;Гибкие трубы
+OST_PipeFitting;Соединительные детали трубопроводов
+OST_PipeAccessory;Арматура трубопроводов
+OST_PlumbingFixtures;Сантехнические приборы
+OST_MechanicalEquipment;Оборудование
+OST_Sprinklers;Спринклеры
+OST_PipeInsulations;Материалы изоляции трубопроводов
+OST_GenericModel;Обобщённые модели

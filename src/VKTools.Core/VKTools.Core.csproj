@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Логика без Revit API: правила, CSV, проверки значений, модель отчёта.
+    Две платформы: net48 для Revit 2021–2024, net8.0 для Revit 2025–2026.
+    Сторонних пакетов нет (DEPENDENCIES.md, решение D-004).
+  -->
+  <PropertyGroup>
+    <TargetFrameworks>net48;net8.0</TargetFrameworks>
+    <RootNamespace>VKTools.Core</RootNamespace>
+    <AssemblyName>VKTools.Core</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="VKTools.Core.Tests" />
+  </ItemGroup>
+</Project>
