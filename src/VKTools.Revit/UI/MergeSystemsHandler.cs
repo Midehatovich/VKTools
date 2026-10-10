@@ -18,6 +18,9 @@ namespace VKTools.Revit.UI
 
         /// <summary>Пробная пересборка основных отмеченных копий (D-023): всегда откат.</summary>
         RebuildProbe,
+
+        /// <summary>Поиск элемента основной, из-за которого Revit зависает на добавлении (D-024): пробы с откатом.</summary>
+        FindHangCause,
     }
 
     /// <summary>
@@ -79,6 +82,11 @@ namespace VKTools.Revit.UI
                     RebuildProbe(app, window, doc, timings);
                     return;
                 }
+                if (_request == MergeRequest.FindHangCause)
+                {
+                    FindHangCause(app, window, doc, timings);
+                    return;
+                }
 
                 MergeMode mode = _request == MergeRequest.Apply ? MergeMode.Apply : MergeMode.Trial;
                 Host.Log.Info($"Объединение систем «{doc.Title}»: {(mode == MergeMode.Apply ? "запись" : "пробный прогон")}, отмечено {_keys.Count}.");
@@ -125,6 +133,35 @@ namespace VKTools.Revit.UI
         }
 
         public string GetName() => "VK Tools: объединение систем";
+
+        /// <summary>Поиск причины зависания по одной отмеченной копии (D-024): только пробы, модель не меняется.</summary>
+        private void FindHangCause(UIApplication app, MergeSystemsWindow window, Document doc, OperationTimings timings)
+        {
+            Host.Log.Info($"Поиск причины зависания «{doc.Title}», отмечено {_keys.Count}.");
+            if (_keys.Count != 1)
+            {
+                window.ShowMessage("Для поиска причины отметьте одну копию — ту, на добавлении которой Revit зависает.");
+                return;
+            }
+            var skipped = new List<string>();
+            HangSearchResult? result = null;
+            using (var progress = new ProgressScope(app, "поиск причины зависания", window))
+            {
+                MergePlan plan = SystemMergePlanner.Build(doc, progress, timings, new HashSet<string>(_keys, StringComparer.Ordinal));
+                PlannedCandidate? copy = Select(plan, _keys, skipped).FirstOrDefault();
+                if (copy != null) result = HangSearch.Run(doc, plan.Model, copy.Group, copy, progress, Host.Log);
+            }
+            foreach (string s in skipped) Host.Log.Warn("  " + s);
+            Host.Log.Info("  время: " + timings.Summary());
+            if (result == null)
+            {
+                window.ShowMessage(skipped.Count > 0 ? string.Join(" ", skipped) : "Отмеченная копия не найдена.");
+                return;
+            }
+            var lines = new List<string> { "Время: " + timings.Summary() };
+            lines.AddRange(result.Lines);
+            window.ShowProbe(result.Status, lines, result.Found);
+        }
 
         /// <summary>Пересборка основных отмеченных копий — только проба, модель не меняется (D-023).</summary>
         private void RebuildProbe(UIApplication app, MergeSystemsWindow window, Document doc, OperationTimings timings)

@@ -160,6 +160,7 @@ namespace VKTools.Revit.UI
         private readonly CheckBox _hideRejected;
         private readonly Button _trial;
         private readonly Button _rebuild;
+        private readonly Button _findHang;
         private readonly Button _apply;
         private readonly Button _report;
         private string? _trialPassedFor;
@@ -232,17 +233,21 @@ namespace VKTools.Revit.UI
             _rebuild = ReportWindow.MakeButton("Пересборка (проба)", (s, e) => Send(MergeRequest.RebuildProbe));
             _rebuild.ToolTip = "Если Revit зависает на добавлении в основную: удалить основную и копии, собрать новую систему того же типа "
                 + "по частям сети с замером времени — и откатить. Модель не меняется.";
+            _findHang = ReportWindow.MakeButton("Найти причину зависания", (s, e) => ConfirmFindHang());
+            _findHang.ToolTip = "Если Revit зависает на добавлении отмеченной копии в основную: пробами с откатом найти элемент основной, "
+                + "без которого добавление проходит. Модель не меняется.";
             _apply = ReportWindow.MakeButton("Применить", (s, e) => ConfirmApply());
             _apply.FontWeight = FontWeights.SemiBold;
             Button close = ReportWindow.MakeButton("Закрыть", (s, e) => Close());
             foreach (Button b in new[] { show, _report }) DockPanel.SetDock(b, Dock.Left);
-            foreach (Button b in new[] { close, _apply, _trial, _rebuild }) DockPanel.SetDock(b, Dock.Right);
+            foreach (Button b in new[] { close, _apply, _trial, _rebuild, _findHang }) DockPanel.SetDock(b, Dock.Right);
             buttons.Children.Add(show);
             buttons.Children.Add(_report);
             buttons.Children.Add(close);
             buttons.Children.Add(_apply);
             buttons.Children.Add(_trial);
             buttons.Children.Add(_rebuild);
+            buttons.Children.Add(_findHang);
             bottom.Children.Add(buttons);
             root.Children.Add(bottom);
 
@@ -429,6 +434,7 @@ namespace VKTools.Revit.UI
             // Можно ли писать, проверяет обработчик в момент записи.
             _trial.IsEnabled = !_busy && keys.Count > 0;
             _rebuild.IsEnabled = !_busy && keys.Count > 0;
+            _findHang.IsEnabled = !_busy && keys.Count == 1;
             _apply.IsEnabled = !_busy && keys.Count > 0 && _trialPassedFor == SelectionKey(keys);
             _apply.ToolTip = _apply.IsEnabled ? "Записать отмеченное одной операцией" : "Сначала успешный «Пробный прогон» с этими отметками";
             _report.IsEnabled = _lastReport != null;
@@ -452,6 +458,19 @@ namespace VKTools.Revit.UI
             return answer == MessageBoxResult.OK;
         }
 
+        private void ConfirmFindHang()
+        {
+            MergeRow? row = _rows.FirstOrDefault(r => r.IsChecked);
+            if (row == null) return;
+            MessageBoxResult answer = MessageBox.Show(this,
+                $"Найти, из-за какого элемента «{row.Target}» Revit зависает на добавлении «{row.SystemName}».\n\n"
+                + "Плагин пробами удаляет половину основной системы, добавляет копию и всё откатывает. Модель не меняется.\n\n"
+                + "На каком-то шаге Revit зависнет — так и задумано. Если он не отвечает 5 минут, снимите его в диспетчере задач, "
+                + "откройте модель без сохранения и снова нажмите эту кнопку с той же отметкой: поиск продолжится с того же места.\n\nНачать?",
+                "VK Tools", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
+            if (answer == MessageBoxResult.OK) Send(MergeRequest.FindHangCause);
+        }
+
         private void ConfirmApply()
         {
             List<string> keys = CheckedKeys();
@@ -465,10 +484,12 @@ namespace VKTools.Revit.UI
         private void Send(MergeRequest request)
         {
             if (_busy) return;
-            if (request != MergeRequest.Refresh && !ConfirmAfterHang()) return;
+            // При поиске причины зависание ожидаемо: предупреждение о прошлых зависаниях не нужно
+            if (request != MergeRequest.Refresh && request != MergeRequest.FindHangCause && !ConfirmAfterHang()) return;
             _busy = true;
             _status.Text = request == MergeRequest.Refresh ? "Анализ модели…" : request == MergeRequest.Trial ? "Пробный прогон…"
-                : request == MergeRequest.RebuildProbe ? "Пересборка (проба)…" : "Запись…";
+                : request == MergeRequest.RebuildProbe ? "Пересборка (проба)…"
+                : request == MergeRequest.FindHangCause ? "Поиск причины зависания…" : "Запись…";
             _status.Foreground = Brushes.DimGray;
             UpdateButtons();
             _handler.Set(this, request, CheckedKeys());
