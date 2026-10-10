@@ -10,6 +10,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using Autodesk.Revit.UI;
 using VKTools.Core.Checks;
+using VKTools.Core.Mep;
 using VKTools.Revit.Infrastructure;
 using VKTools.Revit.Mep;
 using Binding = System.Windows.Data.Binding;
@@ -28,21 +29,25 @@ namespace VKTools.Revit.UI
         private static readonly Brush PassedBrush = Frozen(Color.FromRgb(0xE6, 0xF4, 0xE6));
         private static readonly Brush FailedBrush = Frozen(Color.FromRgb(0xFD, 0xE7, 0xE7));
 
+        private readonly string _explanation;
         private bool _isChecked;
+        private bool _skip;
         private string _result = string.Empty;
         private Brush _rowBrush;
 
-        public MergeRow(PlannedCandidate c)
+        public MergeRow(PlannedCandidate c, string hangNote = "")
         {
             Key = c.Key;
             State = c.State;
+            BaseName = c.Group.BaseName;
+            HangNote = hangNote;
             Target = c.Group.Target != null ? c.Group.BaseName : "— (" + c.Group.BaseName + ")";
             SystemName = c.Record.Name;
             TypeName = c.Record.TypeName;
             Elements = c.ElementIds.Count;
             Terminals = c.TerminalIds.Count;
             Levels = c.Levels;
-            Explanation = c.Explanation;
+            _explanation = c.Explanation;
             ShowIds = c.ElementIds.OrderBy(x => x).ToList();
             MoveOwnerIds = c.Moves.Select(m => m.OwnerId).Concat(c.TerminalIds).Distinct().ToList();
             _rowBrush = BaseBrush;
@@ -57,7 +62,33 @@ namespace VKTools.Revit.UI
 
         public CandidateState State { get; }
 
-        public bool IsCheckable => State != CandidateState.Rejected;
+        /// <summary>Проектное имя основной — для отметки «Не объединять» (по именам, D-025).</summary>
+        public string BaseName { get; }
+
+        /// <summary>Когда и на чём Revit зависал на этой копии; пусто — не зависал.</summary>
+        public string HangNote { get; }
+
+        public bool Hung => HangNote.Length > 0;
+
+        /// <summary>«Не объединять» (D-025): отметка снимается, пока стоит.</summary>
+        public bool Skip
+        {
+            get => _skip;
+            set
+            {
+                if (_skip == value) return;
+                _skip = value;
+                if (value) IsChecked = false;
+                OnChanged(nameof(Skip));
+                OnChanged(nameof(IsCheckable));
+                OnChanged(nameof(StateText));
+                RowBrush = BaseBrush;
+            }
+        }
+
+        public bool CanSkip => State != CandidateState.Rejected;
+
+        public bool IsCheckable => State != CandidateState.Rejected && !_skip;
 
         public bool IsChecked
         {
@@ -78,7 +109,8 @@ namespace VKTools.Revit.UI
         public string TypeName { get; }
 
         public string StateText =>
-            State == CandidateState.Ready ? "Готова" : State == CandidateState.NeedsConfirmation ? "Нужна ваша отметка" : "Не объединяется";
+            _skip && State != CandidateState.Rejected ? "Не объединять"
+            : State == CandidateState.Ready ? "Готова" : State == CandidateState.NeedsConfirmation ? "Нужна ваша отметка" : "Не объединяется";
 
         public int Elements { get; }
 
@@ -86,7 +118,7 @@ namespace VKTools.Revit.UI
 
         public string Levels { get; }
 
-        public string Explanation { get; }
+        public string Explanation => Hung ? $"Revit зависал на добавлении этой копии ({HangNote}). {_explanation}" : _explanation;
 
         public List<long> ShowIds { get; }
 
@@ -110,7 +142,7 @@ namespace VKTools.Revit.UI
             }
         }
 
-        private Brush BaseBrush => State == CandidateState.Ready ? ReadyBrush : State == CandidateState.NeedsConfirmation ? ConfirmBrush : RejectedBrush;
+        private Brush BaseBrush => _skip ? RejectedBrush : State == CandidateState.Ready ? ReadyBrush : State == CandidateState.NeedsConfirmation ? ConfirmBrush : RejectedBrush;
 
         public void SetOutcome(CandidateOutcome? outcome)
         {
@@ -159,13 +191,12 @@ namespace VKTools.Revit.UI
         private readonly TextBox _details;
         private readonly CheckBox _hideRejected;
         private readonly Button _trial;
-        private readonly Button _rebuild;
-        private readonly Button _findHang;
         private readonly Button _apply;
         private readonly Button _report;
         private string? _trialPassedFor;
         private CheckReport? _lastReport;
         private bool _busy;
+        private MergeSkipList _skipList = new MergeSkipList();
 
         public MergeSystemsWindow(Autodesk.Revit.DB.Document document, MergeSystemsHandler handler, ExternalEvent externalEvent,
             SelectElementsHandler selectHandler, ExternalEvent selectEvent, IntPtr owner)
@@ -196,7 +227,8 @@ namespace VKTools.Revit.UI
             header.Children.Add(_hint);
             var steps = new List<string>
             {
-                "1. Отметьте копии. Готовые отмечены сразу; «Нужна ваша отметка» — только после проверки в модели («Показать в модели»).",
+                "1. Отметьте копии. Готовые отмечены сразу; «Нужна ваша отметка» — только после проверки в модели («Показать в модели»). "
+                    + "«Не объ.» — копию не объединять (запоминается на этом компьютере); копии, на которых Revit зависал, помечены так сразу.",
                 "2. «Пробный прогон» выполняет объединение и откатывает его: модель не меняется.",
                 "3. «Применить» включается после успешного пробного прогона с теми же отметками. В журнале отмены будет одна запись.",
             };
@@ -230,24 +262,16 @@ namespace VKTools.Revit.UI
             _report.ToolTip = "Таблица с ElementId и сохранением в CSV";
             _trial = ReportWindow.MakeButton("Пробный прогон", (s, e) => Send(MergeRequest.Trial));
             _trial.ToolTip = "Выполнить отмеченное и откатить. Модель не меняется.";
-            _rebuild = ReportWindow.MakeButton("Пересборка (проба)", (s, e) => Send(MergeRequest.RebuildProbe));
-            _rebuild.ToolTip = "Если Revit зависает на добавлении в основную: удалить основную и копии, собрать новую систему того же типа "
-                + "по частям сети с замером времени — и откатить. Модель не меняется.";
-            _findHang = ReportWindow.MakeButton("Найти причину зависания", (s, e) => ConfirmFindHang());
-            _findHang.ToolTip = "Если Revit зависает на добавлении отмеченной копии в основную: пробами с откатом найти элемент основной, "
-                + "без которого добавление проходит. Модель не меняется.";
             _apply = ReportWindow.MakeButton("Применить", (s, e) => ConfirmApply());
             _apply.FontWeight = FontWeights.SemiBold;
             Button close = ReportWindow.MakeButton("Закрыть", (s, e) => Close());
             foreach (Button b in new[] { show, _report }) DockPanel.SetDock(b, Dock.Left);
-            foreach (Button b in new[] { close, _apply, _trial, _rebuild, _findHang }) DockPanel.SetDock(b, Dock.Right);
+            foreach (Button b in new[] { close, _apply, _trial }) DockPanel.SetDock(b, Dock.Right);
             buttons.Children.Add(show);
             buttons.Children.Add(_report);
             buttons.Children.Add(close);
             buttons.Children.Add(_apply);
             buttons.Children.Add(_trial);
-            buttons.Children.Add(_rebuild);
-            buttons.Children.Add(_findHang);
             bottom.Children.Add(buttons);
             root.Children.Add(bottom);
 
@@ -263,7 +287,9 @@ namespace VKTools.Revit.UI
                 HorizontalGridLinesBrush = Brushes.Gainsboro,
                 RowHeaderWidth = 0,
             };
-            _grid.Columns.Add(CheckColumn());
+            _grid.Columns.Add(CheckColumn("✓", nameof(MergeRow.IsChecked), nameof(MergeRow.IsCheckable), 32, null));
+            _grid.Columns.Add(CheckColumn("Не объ.", nameof(MergeRow.Skip), nameof(MergeRow.CanSkip), 54,
+                "Не объединять эту копию. Запоминается на этом компьютере по модели и именам систем; модель не меняется."));
             _grid.Columns.Add(ReportWindow.TextColumn("Основная", nameof(MergeRow.Target), 110));
             _grid.Columns.Add(ReportWindow.TextColumn("Копия", nameof(MergeRow.SystemName), 110));
             _grid.Columns.Add(ReportWindow.TextColumn("Состояние", nameof(MergeRow.StateText), 130));
@@ -305,7 +331,8 @@ namespace VKTools.Revit.UI
 
             Dictionary<string, CandidateOutcome> outcomes = run?.Outcomes.ToDictionary(o => o.Candidate.Key, StringComparer.Ordinal)
                 ?? new Dictionary<string, CandidateOutcome>(StringComparer.Ordinal);
-            var rows = plan.Candidates.Select(c => new MergeRow(c)).ToList();
+            _skipList = MergeSkipStore.Load();
+            var rows = plan.Candidates.Select(c => new MergeRow(c, HangNote(c))).ToList();
             // Объединённые (их систем уже нет в модели) остаются в списке с результатом
             if (run != null && run.Committed)
             {
@@ -313,6 +340,8 @@ namespace VKTools.Revit.UI
             }
             foreach (MergeRow row in rows)
             {
+                bool merged = outcomes.TryGetValue(row.Key, out CandidateOutcome? found) && found.State == OutcomeState.Merged;
+                if (!merged) row.Skip = MergeSkipList.IsSkipped(_skipList.Get(_documentTitle, row.BaseName, row.SystemName), row.Hung);
                 if (outcomes.TryGetValue(row.Key, out CandidateOutcome? outcome)) row.SetOutcome(outcome);
                 if (outcome?.State == OutcomeState.Merged) row.IsChecked = false;
                 else if (previous.TryGetValue(row.Key, out bool wasChecked) && !first) row.IsChecked = wasChecked;
@@ -322,9 +351,11 @@ namespace VKTools.Revit.UI
             }
 
             int groups = plan.Groups.Count(g => g.Target != null && g.Candidates.Any(c => c.State != CandidateState.Rejected));
+            int skipped = _rows.Count(r => r.Skip && r.CanSkip);
             _summary.Text = plan.Groups.Count == 0
                 ? "Копий систем («В1 1», «К1.2 3») в модели нет — объединять нечего."
-                : $"Групп к объединению: {groups}. Копий: готовы {plan.Count(CandidateState.Ready)}, нужна ваша отметка {plan.Count(CandidateState.NeedsConfirmation)}, не объединяются {plan.Count(CandidateState.Rejected)}.";
+                : $"Групп к объединению: {groups}. Копий: готовы {plan.Count(CandidateState.Ready)}, нужна ваша отметка {plan.Count(CandidateState.NeedsConfirmation)}, не объединяются {plan.Count(CandidateState.Rejected)}"
+                  + (skipped > 0 ? $"; из них помечены «Не объединять»: {skipped}." : ".");
             List<string> withoutBase = plan.Groups.Where(g => g.Core.BaseMissing)
                 .Select(g => g.BaseName).ToList();
             _hint.Text = withoutBase.Count == 0 ? string.Empty
@@ -353,16 +384,6 @@ namespace VKTools.Revit.UI
             _busy = false;
             _status.Text = text;
             _status.Foreground = error ? Brushes.DarkRed : Brushes.DimGray;
-            UpdateButtons();
-        }
-
-        /// <summary>Итог пробной пересборки: строки списка не меняются, «Применить» не включается.</summary>
-        public void ShowProbe(string status, IEnumerable<string> lines, bool ok)
-        {
-            _busy = false;
-            _status.Text = status;
-            _status.Foreground = ok ? Brushes.DarkGreen : Brushes.DarkRed;
-            _details.Text = string.Join(Environment.NewLine, lines);
             UpdateButtons();
         }
 
@@ -397,25 +418,49 @@ namespace VKTools.Revit.UI
             _trialPassedFor = run.Mode == MergeMode.Trial && run.Passed ? SelectionKey(run.Outcomes.Select(o => o.Candidate.Key)) : null;
         }
 
-        private static DataGridTemplateColumn CheckColumn()
+        private static DataGridTemplateColumn CheckColumn(string header, string valuePath, string enabledPath, double width, string? tooltip)
         {
             var factory = new FrameworkElementFactory(typeof(CheckBox));
             factory.SetBinding(System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty,
-                new Binding(nameof(MergeRow.IsChecked)) { Mode = BindingMode.TwoWay, UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged });
-            factory.SetBinding(IsEnabledProperty, new Binding(nameof(MergeRow.IsCheckable)) { Mode = BindingMode.OneWay });
+                new Binding(valuePath) { Mode = BindingMode.TwoWay, UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged });
+            factory.SetBinding(IsEnabledProperty, new Binding(enabledPath) { Mode = BindingMode.OneWay });
             factory.SetValue(HorizontalAlignmentProperty, HorizontalAlignment.Center);
             factory.SetValue(VerticalAlignmentProperty, VerticalAlignment.Center);
+            if (tooltip != null) factory.SetValue(ToolTipProperty, tooltip);
             return new DataGridTemplateColumn
             {
-                Header = "✓",
+                Header = header,
                 CellTemplate = new DataTemplate { VisualTree = factory },
-                Width = new DataGridLength(32),
+                Width = new DataGridLength(width),
             };
+        }
+
+        /// <summary>Зависал ли Revit на добавлении элементов этой копии (список зависаний HangMarker): дата последнего раза.</summary>
+        private string HangNote(PlannedCandidate c)
+        {
+            var ids = new HashSet<long>(c.Moves.Select(m => m.OwnerId).Concat(c.TerminalIds));
+            string? last = HangMarker.Previous(_documentTitle, ids).OrderByDescending(x => x, StringComparer.Ordinal).FirstOrDefault();
+            if (last == null) return string.Empty;
+            int dash = last.IndexOf(" — ", StringComparison.Ordinal);
+            return "последний раз " + (dash > 0 ? last.Substring(0, dash) : last);
         }
 
         private void OnRowChanged(object? sender, PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(MergeRow.IsChecked)) UpdateButtons();
+            if (e.PropertyName == nameof(MergeRow.Skip) && sender is MergeRow row) RememberSkip(row);
+        }
+
+        private void RememberSkip(MergeRow row)
+        {
+            _skipList.Set(_documentTitle, row.BaseName, row.SystemName, MergeSkipList.DecisionFor(row.Skip, row.Hung));
+            if (!MergeSkipStore.Save(_skipList))
+            {
+                // Не через ShowMessage: тот снимает «занято», а отметку можно поставить и во время операции
+                _status.Text = "Не удалось записать отметку «Не объединять» на диск: она действует, пока открыто это окно.";
+                _status.Foreground = Brushes.DarkRed;
+            }
+            UpdateButtons();
         }
 
         private void SetChecks(Func<MergeRow, bool> rule)
@@ -433,8 +478,6 @@ namespace VKTools.Revit.UI
             // Document.IsReadOnly здесь не годится: внутри команды ReadOnly он всегда true.
             // Можно ли писать, проверяет обработчик в момент записи.
             _trial.IsEnabled = !_busy && keys.Count > 0;
-            _rebuild.IsEnabled = !_busy && keys.Count > 0;
-            _findHang.IsEnabled = !_busy && keys.Count == 1;
             _apply.IsEnabled = !_busy && keys.Count > 0 && _trialPassedFor == SelectionKey(keys);
             _apply.ToolTip = _apply.IsEnabled ? "Записать отмеченное одной операцией" : "Сначала успешный «Пробный прогон» с этими отметками";
             _report.IsEnabled = _lastReport != null;
@@ -458,19 +501,6 @@ namespace VKTools.Revit.UI
             return answer == MessageBoxResult.OK;
         }
 
-        private void ConfirmFindHang()
-        {
-            MergeRow? row = _rows.FirstOrDefault(r => r.IsChecked);
-            if (row == null) return;
-            MessageBoxResult answer = MessageBox.Show(this,
-                $"Найти, из-за какого элемента «{row.Target}» Revit зависает на добавлении «{row.SystemName}».\n\n"
-                + "Плагин пробами удаляет половину основной системы, добавляет копию и всё откатывает. Модель не меняется.\n\n"
-                + "На каком-то шаге Revit зависнет — так и задумано. Если он не отвечает 5 минут, снимите его в диспетчере задач, "
-                + "откройте модель без сохранения и снова нажмите эту кнопку с той же отметкой: поиск продолжится с того же места.\n\nНачать?",
-                "VK Tools", MessageBoxButton.OKCancel, MessageBoxImage.Information, MessageBoxResult.Cancel);
-            if (answer == MessageBoxResult.OK) Send(MergeRequest.FindHangCause);
-        }
-
         private void ConfirmApply()
         {
             List<string> keys = CheckedKeys();
@@ -484,12 +514,9 @@ namespace VKTools.Revit.UI
         private void Send(MergeRequest request)
         {
             if (_busy) return;
-            // При поиске причины зависание ожидаемо: предупреждение о прошлых зависаниях не нужно
-            if (request != MergeRequest.Refresh && request != MergeRequest.FindHangCause && !ConfirmAfterHang()) return;
+            if (request != MergeRequest.Refresh && !ConfirmAfterHang()) return;
             _busy = true;
-            _status.Text = request == MergeRequest.Refresh ? "Анализ модели…" : request == MergeRequest.Trial ? "Пробный прогон…"
-                : request == MergeRequest.RebuildProbe ? "Пересборка (проба)…"
-                : request == MergeRequest.FindHangCause ? "Поиск причины зависания…" : "Запись…";
+            _status.Text = request == MergeRequest.Refresh ? "Анализ модели…" : request == MergeRequest.Trial ? "Пробный прогон…" : "Запись…";
             _status.Foreground = Brushes.DimGray;
             UpdateButtons();
             _handler.Set(this, request, CheckedKeys());

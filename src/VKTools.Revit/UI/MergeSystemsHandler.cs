@@ -15,12 +15,6 @@ namespace VKTools.Revit.UI
         Refresh,
         Trial,
         Apply,
-
-        /// <summary>Пробная пересборка основных отмеченных копий (D-023): всегда откат.</summary>
-        RebuildProbe,
-
-        /// <summary>Поиск элемента основной, из-за которого Revit зависает на добавлении (D-024): пробы с откатом.</summary>
-        FindHangCause,
     }
 
     /// <summary>
@@ -77,17 +71,6 @@ namespace VKTools.Revit.UI
                     return;
                 }
 
-                if (_request == MergeRequest.RebuildProbe)
-                {
-                    RebuildProbe(app, window, doc, timings);
-                    return;
-                }
-                if (_request == MergeRequest.FindHangCause)
-                {
-                    FindHangCause(app, window, doc, timings);
-                    return;
-                }
-
                 MergeMode mode = _request == MergeRequest.Apply ? MergeMode.Apply : MergeMode.Trial;
                 Host.Log.Info($"Объединение систем «{doc.Title}»: {(mode == MergeMode.Apply ? "запись" : "пробный прогон")}, отмечено {_keys.Count}.");
                 MergePlan plan;
@@ -133,67 +116,6 @@ namespace VKTools.Revit.UI
         }
 
         public string GetName() => "VK Tools: объединение систем";
-
-        /// <summary>Поиск причины зависания по одной отмеченной копии (D-024): только пробы, модель не меняется.</summary>
-        private void FindHangCause(UIApplication app, MergeSystemsWindow window, Document doc, OperationTimings timings)
-        {
-            Host.Log.Info($"Поиск причины зависания «{doc.Title}», отмечено {_keys.Count}.");
-            if (_keys.Count != 1)
-            {
-                window.ShowMessage("Для поиска причины отметьте одну копию — ту, на добавлении которой Revit зависает.");
-                return;
-            }
-            var skipped = new List<string>();
-            HangSearchResult? result = null;
-            using (var progress = new ProgressScope(app, "поиск причины зависания", window))
-            {
-                MergePlan plan = SystemMergePlanner.Build(doc, progress, timings, new HashSet<string>(_keys, StringComparer.Ordinal));
-                PlannedCandidate? copy = Select(plan, _keys, skipped).FirstOrDefault();
-                if (copy != null) result = HangSearch.Run(doc, plan.Model, copy.Group, copy, progress, Host.Log);
-            }
-            foreach (string s in skipped) Host.Log.Warn("  " + s);
-            Host.Log.Info("  время: " + timings.Summary());
-            if (result == null)
-            {
-                window.ShowMessage(skipped.Count > 0 ? string.Join(" ", skipped) : "Отмеченная копия не найдена.");
-                return;
-            }
-            var lines = new List<string> { "Время: " + timings.Summary() };
-            lines.AddRange(result.Lines);
-            window.ShowProbe(result.Status, lines, result.Found);
-        }
-
-        /// <summary>Пересборка основных отмеченных копий — только проба, модель не меняется (D-023).</summary>
-        private void RebuildProbe(UIApplication app, MergeSystemsWindow window, Document doc, OperationTimings timings)
-        {
-            Host.Log.Info($"Пересборка систем «{doc.Title}» (проба), отмечено {_keys.Count}.");
-            var skipped = new List<string>();
-            var results = new List<RebuildProbeResult>();
-            using (var progress = new ProgressScope(app, "пересборка (проба)", window))
-            {
-                MergePlan plan = SystemMergePlanner.Build(doc, progress, timings, new HashSet<string>(_keys, StringComparer.Ordinal));
-                List<PlannedCandidate> selected = Select(plan, _keys, skipped);
-                foreach (IGrouping<PlannedGroup, PlannedCandidate> g in selected.GroupBy(c => c.Group))
-                {
-                    results.Add(SystemRebuildProbe.Run(doc, plan.Model, g.Key, g.ToList(), progress, timings, Host.Log));
-                    if (progress.IsCancellationRequested) break;
-                }
-            }
-            foreach (string s in skipped) Host.Log.Warn("  " + s);
-            Host.Log.Info("  время: " + timings.Summary());
-            var lines = new List<string> { "Время: " + timings.Summary() };
-            foreach (RebuildProbeResult r in results)
-            {
-                lines.Add(r.Summary);
-                lines.AddRange(r.Lines.Select(x => "  " + x));
-            }
-            lines.AddRange(skipped);
-            bool ok = results.Count > 0 && results.All(r => r.Passed);
-            string status = results.Count == 0
-                ? "Пересборка (проба): нечего проверять."
-                : string.Join(" ", results.Select(r => r.Summary));
-            window.ShowProbe(status, lines, ok);
-        }
 
         /// <summary>Отмеченные копии по свежему анализу; пропавшие и ставшие «не объединяется» — в skipped.</summary>
         private static List<PlannedCandidate> Select(MergePlan plan, List<string> keys, List<string> skipped)
