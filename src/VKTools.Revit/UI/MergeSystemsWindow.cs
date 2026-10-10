@@ -159,6 +159,7 @@ namespace VKTools.Revit.UI
         private readonly TextBox _details;
         private readonly CheckBox _hideRejected;
         private readonly Button _trial;
+        private readonly Button _rebuild;
         private readonly Button _apply;
         private readonly Button _report;
         private string? _trialPassedFor;
@@ -228,16 +229,20 @@ namespace VKTools.Revit.UI
             _report.ToolTip = "Таблица с ElementId и сохранением в CSV";
             _trial = ReportWindow.MakeButton("Пробный прогон", (s, e) => Send(MergeRequest.Trial));
             _trial.ToolTip = "Выполнить отмеченное и откатить. Модель не меняется.";
+            _rebuild = ReportWindow.MakeButton("Пересборка (проба)", (s, e) => Send(MergeRequest.RebuildProbe));
+            _rebuild.ToolTip = "Если Revit зависает на добавлении в основную: удалить основную и копии, собрать новую систему того же типа "
+                + "по частям сети с замером времени — и откатить. Модель не меняется.";
             _apply = ReportWindow.MakeButton("Применить", (s, e) => ConfirmApply());
             _apply.FontWeight = FontWeights.SemiBold;
             Button close = ReportWindow.MakeButton("Закрыть", (s, e) => Close());
             foreach (Button b in new[] { show, _report }) DockPanel.SetDock(b, Dock.Left);
-            foreach (Button b in new[] { close, _apply, _trial }) DockPanel.SetDock(b, Dock.Right);
+            foreach (Button b in new[] { close, _apply, _trial, _rebuild }) DockPanel.SetDock(b, Dock.Right);
             buttons.Children.Add(show);
             buttons.Children.Add(_report);
             buttons.Children.Add(close);
             buttons.Children.Add(_apply);
             buttons.Children.Add(_trial);
+            buttons.Children.Add(_rebuild);
             bottom.Children.Add(buttons);
             root.Children.Add(bottom);
 
@@ -346,6 +351,16 @@ namespace VKTools.Revit.UI
             UpdateButtons();
         }
 
+        /// <summary>Итог пробной пересборки: строки списка не меняются, «Применить» не включается.</summary>
+        public void ShowProbe(string status, IEnumerable<string> lines, bool ok)
+        {
+            _busy = false;
+            _status.Text = status;
+            _status.Foreground = ok ? Brushes.DarkGreen : Brushes.DarkRed;
+            _details.Text = string.Join(Environment.NewLine, lines);
+            UpdateButtons();
+        }
+
         /// <summary>Результат прогона без нового анализа (пробный прогон, откат, отмена): строки остаются, меняется «Результат».</summary>
         public void ApplyRun(MergeRunResult run, CheckReport report)
         {
@@ -413,6 +428,7 @@ namespace VKTools.Revit.UI
             // Document.IsReadOnly здесь не годится: внутри команды ReadOnly он всегда true.
             // Можно ли писать, проверяет обработчик в момент записи.
             _trial.IsEnabled = !_busy && keys.Count > 0;
+            _rebuild.IsEnabled = !_busy && keys.Count > 0;
             _apply.IsEnabled = !_busy && keys.Count > 0 && _trialPassedFor == SelectionKey(keys);
             _apply.ToolTip = _apply.IsEnabled ? "Записать отмеченное одной операцией" : "Сначала успешный «Пробный прогон» с этими отметками";
             _report.IsEnabled = _lastReport != null;
@@ -451,7 +467,8 @@ namespace VKTools.Revit.UI
             if (_busy) return;
             if (request != MergeRequest.Refresh && !ConfirmAfterHang()) return;
             _busy = true;
-            _status.Text = request == MergeRequest.Refresh ? "Анализ модели…" : request == MergeRequest.Trial ? "Пробный прогон…" : "Запись…";
+            _status.Text = request == MergeRequest.Refresh ? "Анализ модели…" : request == MergeRequest.Trial ? "Пробный прогон…"
+                : request == MergeRequest.RebuildProbe ? "Пересборка (проба)…" : "Запись…";
             _status.Foreground = Brushes.DimGray;
             UpdateButtons();
             _handler.Set(this, request, CheckedKeys());
