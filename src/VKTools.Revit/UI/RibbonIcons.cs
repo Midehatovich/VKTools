@@ -24,6 +24,12 @@ namespace VKTools.Revit.UI
         public static ImageSource RiserGap(int size) =>
             Draw(size, Teal, "M 16,5 L 16,12.5 M 16,19.5 L 16,27 M 11,13 L 21,13 M 11,19 L 21,19");
 
+        private static readonly Color Green = Color.FromRgb(0x3C, 0x7D, 0x2E);
+
+        /// <summary>Строки спецификации со вложенной строкой.</summary>
+        public static ImageSource SpecParams(int size) =>
+            Draw(size, Green, "M 7,9 L 25,9 M 7,15 L 25,15 M 12,21 L 25,21 M 7,21 L 8,21 M 12,26 L 25,26");
+
         public static ImageSource Settings(int size) =>
             Draw(size, Gray, "M 7,10 L 25,10 M 7,16 L 25,16 M 7,22 L 25,22 M 12,7.5 L 12,12.5 M 20,13.5 L 20,18.5 M 14,19.5 L 14,24.5");
 

@@ -37,6 +37,7 @@ namespace VKTools.Revit
         public Result OnShutdown(UIControlledApplication application)
         {
             MergeWindowHost.CloseAll();
+            SpecParamsHost.CloseAll();
             ReportWindowHost.CloseAll();
             Host.Log.Info("VK Tools выгружен.");
             return Result.Succeeded;
@@ -91,6 +92,20 @@ namespace VKTools.Revit
             };
             systems.AddItem(merge);
             systems.AddItem(gaps);
+
+            RibbonPanel spec = application.CreateRibbonPanel(TabName, "Спецификация");
+            var specParams = new PushButtonData("VKTools.SpecParams", "Параметры\nспецификации", assembly, typeof(SpecParamsCommand).FullName)
+            {
+                ToolTip = "Вложенные семейства получают ADSK_Этаж и LSR_ от родителя; ADSK_Группирование по категории и комплектам шкафов. Сначала окно «было → станет» и пробный прогон.",
+                LongDescription =
+                    "Вложенные: значение экземпляра верхнего родителя → все его общие вложенные (пустое не переносится). " +
+                    "Группирование: 0 спринклеры … 8 прочее, шкаф и его комплектующие подряд; служебные позиции _SYS_ не трогаются. " +
+                    "Пишутся только изменившиеся значения; занятые, в группах и «только чтение» — в отчёт. Запись — одна операция в журнале отмены.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.SpecParams(32),
+                Image = RibbonIcons.SpecParams(16),
+            };
+            spec.AddItem(specParams);
 
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)
