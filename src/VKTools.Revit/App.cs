@@ -20,6 +20,10 @@ namespace VKTools.Revit
             {
                 Host.Initialize();
                 Host.Log.Info($"VK Tools {BuildInfo.PluginVersion} (сборка для Revit {BuildInfo.RevitVersion}) запущен в Revit {application.ControlledApplication.VersionNumber}.");
+                foreach (string hang in HangMarker.CollectAbandoned())
+                {
+                    Host.Log.Warn($"Прошлый сеанс Revit закрыли, пока VK Tools ждал Revit: {hang}. Перед повторным запуском этой копии плагин предупредит.");
+                }
                 CreateRibbon(application);
                 return Result.Succeeded;
             }
@@ -32,6 +36,7 @@ namespace VKTools.Revit
 
         public Result OnShutdown(UIControlledApplication application)
         {
+            MergeWindowHost.CloseAll();
             ReportWindowHost.CloseAll();
             Host.Log.Info("VK Tools выгружен.");
             return Result.Succeeded;
@@ -62,6 +67,30 @@ namespace VKTools.Revit
                 Image = RibbonIcons.Check(16),
             };
             check.AddItem(checkModel);
+
+            RibbonPanel systems = application.CreateRibbonPanel(TabName, "Системы");
+            var merge = new PushButtonData("VKTools.MergeSystems", "Объединить\nсистемы", assembly, typeof(MergeSystemsCommand).FullName)
+            {
+                ToolTip = "Копии систем трубопроводов («В1 1», «В1.2 3») — в основные системы. Сначала окно «было → станет» и пробный прогон.",
+                LongDescription =
+                    "Копия — проектное имя + один пробел + номер, тот же тип системы и классификация. Копии без приборов, " +
+                    "занятые, в группах и связанные с другими системами не объединяются. Запись — одна операция в журнале отмены.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.Merge(32),
+                Image = RibbonIcons.Merge(16),
+            };
+            var gaps = new PushButtonData("VKTools.RiserGaps", "Разрывы\nстояков", assembly, typeof(FindRiserGapsCommand).FullName)
+            {
+                ToolTip = "Несоединённые куски стояков: свободные концы одного типа системы на одной вертикали. Ничего не изменяет.",
+                LongDescription =
+                    "Типичная причина — этаж скопирован, а стояк не соединён с нижним, и Revit держит куски как разные системы («В1 6», «В1 8»). " +
+                    "Отчёт с «Показать в модели»: выделяются оба конца разрыва.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.RiserGap(32),
+                Image = RibbonIcons.RiserGap(16),
+            };
+            systems.AddItem(merge);
+            systems.AddItem(gaps);
 
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)

@@ -41,6 +41,18 @@ namespace VKTools.Core.Text
             return sb.ToString();
         }
 
+        /// <summary>Только замена латинских двойников на кириллицу, без смены регистра и пробелов.</summary>
+        public static string ReplaceLatinLookalikes(string? value)
+        {
+            if (string.IsNullOrEmpty(value)) return value ?? string.Empty;
+            var sb = new StringBuilder(value!.Length);
+            foreach (char c in value)
+            {
+                sb.Append(LatinToCyrillic.TryGetValue(c, out char cyr) ? cyr : c);
+            }
+            return sb.ToString();
+        }
+
         /// <summary>В одном значении есть и латинские, и кириллические буквы.</summary>
         public static bool HasMixedScripts(string? value)
         {

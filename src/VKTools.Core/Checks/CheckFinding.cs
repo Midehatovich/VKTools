@@ -21,6 +21,12 @@ namespace VKTools.Core.Checks
         /// <summary>Все элементы, к которым относится строка (например, все элементы с одним написанием значения).</summary>
         public List<long> RelatedElementIds { get; } = new List<long>();
 
+        /// <summary>
+        /// Второй элемент стыка двух сетей разных систем: отчёт предлагает «Разорвать стык» —
+        /// разъединить коннекторы между <see cref="ElementId"/> и им, не сдвигая элементы (D-020).
+        /// </summary>
+        public long? JunctionWith { get; set; }
+
         /// <summary>Что выделить в модели: <see cref="ElementId"/> и <see cref="RelatedElementIds"/> без повторов.</summary>
         public IEnumerable<long> ElementsToShow()
         {

@@ -36,6 +36,8 @@ namespace VKTools.Revit.UI
         private readonly Document _document;
         private readonly ExternalEvent _selectEvent;
         private readonly SelectElementsHandler _selectHandler;
+        private readonly ExternalEvent _breakEvent;
+        private readonly BreakJunctionsHandler _breakHandler;
         private readonly ICollectionView _view;
         private readonly DataGrid _grid;
         private readonly ComboBox _severityFilter;
@@ -43,12 +45,15 @@ namespace VKTools.Revit.UI
         private readonly TextBox _search;
         private readonly TextBlock _counter;
 
-        public ReportWindow(CheckReport report, Document document, ExternalEvent selectEvent, SelectElementsHandler selectHandler)
+        public ReportWindow(CheckReport report, Document document, ExternalEvent selectEvent, SelectElementsHandler selectHandler,
+            ExternalEvent breakEvent, BreakJunctionsHandler breakHandler)
         {
             _report = report;
             _document = document;
             _selectEvent = selectEvent;
             _selectHandler = selectHandler;
+            _breakEvent = breakEvent;
+            _breakHandler = breakHandler;
 
             this.ApplyDefaultLook();
             Title = $"VK Tools — {report.Title}: {report.DocumentTitle}";
@@ -128,6 +133,13 @@ namespace VKTools.Revit.UI
             DockPanel.SetDock(export, Dock.Left);
             DockPanel.SetDock(close, Dock.Right);
             buttons.Children.Add(show);
+            if (report.Findings.Any(f => f.JunctionWith.HasValue))
+            {
+                Button breakJunction = MakeButton("Разорвать стык…", (s, e) => BreakSelected());
+                breakJunction.ToolTip = "Для строк «Сеть … соединена с сетью …» и «Кольцо в сети …»: разъединить два элемента строки, не сдвигая их";
+                DockPanel.SetDock(breakJunction, Dock.Left);
+                buttons.Children.Add(breakJunction);
+            }
             buttons.Children.Add(export);
             buttons.Children.Add(close);
             root.Children.Add(buttons);
@@ -174,7 +186,7 @@ namespace VKTools.Revit.UI
             UpdateCounter();
         }
 
-        private static Button MakeButton(string text, RoutedEventHandler onClick)
+        internal static Button MakeButton(string text, RoutedEventHandler onClick)
         {
             var button = new Button
             {
@@ -187,7 +199,7 @@ namespace VKTools.Revit.UI
             return button;
         }
 
-        private static DataGridTextColumn TextColumn(string header, string path, double width, bool wrap = false)
+        internal static DataGridTextColumn TextColumn(string header, string path, double width, bool wrap = false)
         {
             var column = new DataGridTextColumn
             {
@@ -265,6 +277,27 @@ namespace VKTools.Revit.UI
             _selectEvent.Raise();
         }
 
+        private void BreakSelected()
+        {
+            List<CheckFinding> rows = _grid.SelectedItems.Cast<CheckFinding>().Where(f => f.ElementId.HasValue && f.JunctionWith.HasValue).ToList();
+            if (rows.Count == 0)
+            {
+                MessageBox.Show(this, "Выделите строки «Сеть … соединена с сетью …» или «Кольцо в сети …» — для них есть место разрыва.", "VK Tools",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            List<(long A, long B)> pairs = rows.Select(f => (f.ElementId!.Value, f.JunctionWith!.Value)).Distinct().ToList();
+            string list = string.Join(Environment.NewLine, rows.Take(10).Select(f => $"• {f.ElementId} ({f.Type}) ↔ {f.JunctionWith}"))
+                + (rows.Count > 10 ? Environment.NewLine + $"… и ещё {rows.Count - 10}" : string.Empty);
+            string text = $"Разорвать стыков: {pairs.Count}?" + Environment.NewLine + Environment.NewLine + list + Environment.NewLine + Environment.NewLine
+                + "Разъединяются только коннекторы этих пар, элементы не сдвигаются. Это одна операция, Ctrl+Z её отменяет." + Environment.NewLine
+                + "Подводный камень: на месте стыка останутся открытые концы, проверки Revit их покажут." + Environment.NewLine
+                + "Затем — «Обновить» и пробный прогон.";
+            if (MessageBox.Show(this, text, "VK Tools", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+            _breakHandler.Request(_document, pairs);
+            _breakEvent.Raise();
+        }
+
         private void ExportCsv()
         {
             var dialog = new SaveFileDialog
@@ -301,19 +334,42 @@ namespace VKTools.Revit.UI
         private static ReportWindow? _current;
         private static ExternalEvent? _selectEvent;
         private static SelectElementsHandler? _selectHandler;
+        private static ExternalEvent? _breakEvent;
+        private static BreakJunctionsHandler? _breakHandler;
 
         /// <summary>Вызывать только из команды Revit (ExternalEvent создаётся в контексте API).</summary>
         public static void Show(CheckReport report, Document document, UIApplication app)
+        {
+            EnsureCreated();
+            Show(report, document, app.MainWindowHandle);
+        }
+
+        /// <summary>ExternalEvent для «Показать в модели». Только в контексте Revit API: команда или обработчик события.</summary>
+        public static void EnsureCreated()
         {
             if (_selectEvent == null || _selectHandler == null)
             {
                 _selectHandler = new SelectElementsHandler();
                 _selectEvent = ExternalEvent.Create(_selectHandler);
             }
+            if (_breakEvent == null || _breakHandler == null)
+            {
+                _breakHandler = new BreakJunctionsHandler();
+                _breakEvent = ExternalEvent.Create(_breakHandler);
+            }
+        }
+
+        /// <summary>Из любого окна плагина; перед этим команда должна вызвать <see cref="EnsureCreated"/>.</summary>
+        public static void Show(CheckReport report, Document document, IntPtr owner)
+        {
+            if (_selectEvent == null || _selectHandler == null || _breakEvent == null || _breakHandler == null)
+            {
+                throw new InvalidOperationException("Окно отчёта не подготовлено командой.");
+            }
 
             _current?.Close();
-            var window = new ReportWindow(report, document, _selectEvent, _selectHandler);
-            window.AttachTo(app.MainWindowHandle);
+            var window = new ReportWindow(report, document, _selectEvent, _selectHandler, _breakEvent, _breakHandler);
+            window.AttachTo(owner);
             window.Closed += (s, e) =>
             {
                 if (ReferenceEquals(_current, s)) _current = null;
@@ -328,6 +384,8 @@ namespace VKTools.Revit.UI
             _current = null;
             _selectEvent?.Dispose();
             _selectEvent = null;
+            _breakEvent?.Dispose();
+            _breakEvent = null;
         }
     }
 }
