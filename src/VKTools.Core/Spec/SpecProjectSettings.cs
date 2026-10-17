@@ -7,16 +7,19 @@ namespace VKTools.Core.Spec
     /// <summary>
     /// Настройки «Параметров спецификации», сохранённые в модели (REQ-CFG-005): словарь «ключ → текст».
     /// Раздел, которого нет, означает «по умолчанию» (правила отдела или встроенные). Новые разделы
-    /// (комплекты в 0.6.0) добавляются новыми ключами без смены схемы хранилища.
+    /// (комплекты с 0.6.0) добавляются новыми ключами без смены схемы хранилища.
     /// </summary>
     public sealed class SpecProjectSettings
     {
         public const string NestedSection = "nested";
         public const string GroupingSection = "grouping";
+        public const string KitsSection = "kits";
 
         private const string NestedParamsKey = "nested.params";
         private const string NestedClearKey = "nested.clearEmpty";
         private const string GroupingTableKey = "grouping.table";
+        private const string KitsTableKey = "kits.table";
+        private const string KitsWordsKey = "kits.words";
 
         public SpecProjectSettings()
         {
@@ -48,6 +51,20 @@ namespace VKTools.Core.Spec
         {
             get => Get(GroupingTableKey);
             set => Set(GroupingTableKey, value);
+        }
+
+        /// <summary>Комплекты проекта (составы и номера K, формат <see cref="KitSettings.Format"/>); null — комплектов нет.</summary>
+        public string? KitsTable
+        {
+            get => Get(KitsTableKey);
+            set => Set(KitsTableKey, value);
+        }
+
+        /// <summary>Слова поиска кандидатов в комплекты; null — по умолчанию.</summary>
+        public string? KitsWords
+        {
+            get => Get(KitsWordsKey);
+            set => Set(KitsWordsKey, value);
         }
 
         /// <summary>Кто и когда сохранил раздел — в окно и отчёт.</summary>

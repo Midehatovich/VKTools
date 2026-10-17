@@ -17,6 +17,9 @@ namespace VKTools.Revit.UI
         Trial,
         Apply,
         Save,
+
+        /// <summary>«+ Из выделения» во вкладке «Комплекты»: прочитать выделение Revit.</summary>
+        ReadSelection,
     }
 
     /// <summary>
@@ -59,6 +62,11 @@ namespace VKTools.Revit.UI
                     window.ShowMessage($"Окно построено по модели «{doc.Title}». Перейдите в её окно и повторите.");
                     return;
                 }
+                if (_request == SpecRequest.ReadSelection)
+                {
+                    window.ShowSelectedFamilies(SelectedTopFamilies(app.ActiveUIDocument));
+                    return;
+                }
                 SpecParamsHost.RememberScope(options.Module, options.Scope);
                 (SpecOptions stored, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, options.Module);
 
@@ -98,15 +106,23 @@ namespace VKTools.Revit.UI
                 }
 
                 SpecRunMode mode = _request == SpecRequest.Apply ? SpecRunMode.Apply : SpecRunMode.Trial;
-                bool saveSettings = mode == SpecRunMode.Apply && options.SettingsSignature() != stored.SettingsSignature();
-                Host.Log.Info($"{title} «{doc.Title}»: {(mode == SpecRunMode.Apply ? "запись" : "пробный прогон")}, область: {scopeLabel}"
-                    + (saveSettings ? ", с сохранением настройки в модели." : "."));
                 ParamPlan plan;
                 ParamPlan? after = null;
                 SpecRunResult run;
+                SpecOptions used = options;
                 using (var progress = new ProgressScope(app, (mode == SpecRunMode.Apply ? "запись: " : "пробный прогон: ") + title, window))
                 {
                     plan = SpecPlanner.Build(doc, options, defaults, scope, progress, timings);
+                    // Номера K новых типоразмеров комплектов сохраняются вместе с первой записью значений: дальше они не меняются (D-039)
+                    SpecOptions toStore = options;
+                    if (plan.NewKitNumbers.Count > 0)
+                    {
+                        toStore = options.Clone();
+                        toStore.Kits = options.Kits.WithNumbers(plan.NewKitNumbers);
+                    }
+                    bool saveSettings = mode == SpecRunMode.Apply && toStore.SettingsSignature() != stored.SettingsSignature();
+                    Host.Log.Info($"{title} «{doc.Title}»: {(mode == SpecRunMode.Apply ? "запись" : "пробный прогон")}, область: {scopeLabel}"
+                        + (saveSettings ? ", с сохранением настройки в модели" + (plan.NewKitNumbers.Count > 0 ? $" (новых номеров K: {plan.NewKitNumbers.Count})." : ".") : "."));
                     LogPlan(doc, plan, timings);
                     if (mode == SpecRunMode.Apply && plan.WriteBlockedReason != null)
                     {
@@ -114,8 +130,9 @@ namespace VKTools.Revit.UI
                         window.ShowMessage("Запись запрещена: " + plan.WriteBlockedReason);
                         return;
                     }
-                    Func<Document, string?>? save = saveSettings ? d => SpecSettingsStore.Store(d, options, defaults) : (Func<Document, string?>?)null;
+                    Func<Document, string?>? save = saveSettings ? d => SpecSettingsStore.Store(d, toStore, defaults) : (Func<Document, string?>?)null;
                     run = SpecExecutor.Run(doc, plan, mode, progress, timings, Host.Log, save);
+                    if (run.SettingsSaved) used = toStore;
                     if (run.Failed.Any(f => f.Reason.StartsWith(FamilyDiagnostics.SilentFailure, StringComparison.Ordinal)))
                     {
                         progress.Report("Проверка семейств, где Revit не сохранил значение…");
@@ -125,7 +142,7 @@ namespace VKTools.Revit.UI
                     {
                         try
                         {
-                            after = SpecPlanner.Build(doc, options, defaults, scope, progress, timings);
+                            after = SpecPlanner.Build(doc, used, defaults, scope, progress, timings);
                         }
                         catch (OperationCanceledException)
                         {
@@ -140,7 +157,7 @@ namespace VKTools.Revit.UI
                     (SpecOptions saved, SpecDefaults savedDefaults) = SpecSettingsLoader.Load(doc, options.Module);
                     window.ShowSettingsState(saved, savedDefaults);
                 }
-                window.ShowPlan(plan, run, after, SpecReportBuilder.Build(doc.Title, plan, run), options, scope, scopeLabel);
+                window.ShowPlan(plan, run, after, SpecReportBuilder.Build(doc.Title, plan, run), used, scope, scopeLabel);
             }
             catch (OperationCanceledException)
             {
@@ -155,6 +172,20 @@ namespace VKTools.Revit.UI
         }
 
         public string GetName() => "VK Tools: параметры спецификации";
+
+        /// <summary>Семейства верхних родителей выделенных элементов (выделили вложенное — берётся его родитель).</summary>
+        private static List<string> SelectedTopFamilies(UIDocument uidoc)
+        {
+            var result = new List<string>();
+            foreach (ElementId id in uidoc.Selection.GetElementIds())
+            {
+                var fi = uidoc.Document.GetElement(id) as FamilyInstance;
+                for (int depth = 0; depth < 20 && fi?.SuperComponent is FamilyInstance super; depth++) fi = super;
+                string? family = fi?.Symbol?.FamilyName;
+                if (!string.IsNullOrEmpty(family) && !result.Contains(family!, StringComparer.OrdinalIgnoreCase)) result.Add(family!);
+            }
+            return result;
+        }
 
         private static void Save(Document doc, SpecParamsWindow window, SpecOptions options, SpecDefaults defaults)
         {
@@ -181,14 +212,18 @@ namespace VKTools.Revit.UI
                 window.ShowMessage("Настройка не сохранена: " + problem);
                 return;
             }
+            int kits = options.Kits.Rules.Select(r => r.Family).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            bool removed = toDefault && (options.Module == SpecModule.Nested || kits == 0);
             string what = options.Module == SpecModule.Nested
                 ? "параметры: " + string.Join(", ", options.NestedParams.Select(k => k.Name)) + (options.NestedClearEmpty ? "; пустое очищает вложенное" : string.Empty)
-                : $"строк таблицы групп: {options.GroupRules.Count}, «не трогать»: {options.GroupRules.Count(r => r.Skip)}";
-            Host.Log.Info($"{options.Module.Title()} «{doc.Title}»: настройка {(toDefault ? "сброшена на умолчание (удалена из модели)" : "сохранена в модели")}; {what}.");
+                : $"строк таблицы групп: {options.GroupRules.Count}{(toDefault ? " (по умолчанию)" : string.Empty)}, «не трогать»: {options.GroupRules.Count(r => r.Skip)}; "
+                    + $"комплектов: {kits}" + (kits > 0 ? " (" + string.Join(", ", options.Kits.Rules.Select(r => r.Label)) + $"), номеров K: {options.Kits.Numbers.Count}" : string.Empty);
+            Host.Log.Info($"{options.Module.Title()} «{doc.Title}»: настройка {(removed ? "сброшена на умолчание (удалена из модели)" : "сохранена в модели")}; {what}.");
             string sync = doc.IsWorkshared ? " Синхронизируйте модель, чтобы коллеги увидели её." : string.Empty;
-            window.ShowMessage((toDefault
+            window.ShowMessage((removed
                 ? "Настройка проекта удалена: работают правила по умолчанию."
-                : $"Настройка сохранена в модели (в журнале отмены — «{SpecSettingsStore.TransactionName}»).") + sync, error: false);
+                : $"Настройка сохранена в модели (в журнале отмены — «{SpecSettingsStore.TransactionName}»)."
+                    + (toDefault && options.Module == SpecModule.Grouping ? " Таблица групп — по умолчанию." : string.Empty)) + sync, error: false);
         }
 
         internal static void LogPlan(Document doc, ParamPlan plan, OperationTimings timings)

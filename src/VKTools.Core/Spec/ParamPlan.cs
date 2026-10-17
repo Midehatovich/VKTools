@@ -161,6 +161,15 @@ namespace VKTools.Core.Spec
         /// <summary>«Группирование»: категории (имя BuiltInCategory → название в Revit) — для таблицы групп.</summary>
         public SortedDictionary<string, string> Categories { get; } = new SortedDictionary<string, string>(StringComparer.Ordinal);
 
+        /// <summary>«Группирование»: семейства верхнего уровня с общими вложенными — для вкладки «Комплекты».</summary>
+        public List<KitFamilyInfo> KitFamilies { get; } = new List<KitFamilyInfo>();
+
+        /// <summary>«Группирование»: K типоразмеров комплектов проекта в модели (сохранённые и новые).</summary>
+        public List<KitNumber> KitNumbers { get; } = new List<KitNumber>();
+
+        /// <summary>«Группирование»: новые K — «Применить» сохранит их в модели той же операцией.</summary>
+        public List<KitNumber> NewKitNumbers { get; } = new List<KitNumber>();
+
         public IReadOnlyList<PlanIssue> Issues => _issueOrder;
 
         /// <summary>Откуда взяты правила — в шапку отчёта.</summary>

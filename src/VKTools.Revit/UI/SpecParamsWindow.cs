@@ -40,8 +40,10 @@ namespace VKTools.Revit.UI
         private readonly ExternalEvent _selectEvent;
         private readonly NestedSettingsPanel? _nestedPanel;
         private readonly GroupSchemePanel? _groupPanel;
+        private readonly KitsPanel? _kitsPanel;
         private readonly TabControl _tabs;
         private readonly TabItem _settingsTab;
+        private readonly TabItem? _kitsTab;
         private readonly TabItem _reportTab;
         private readonly TextBlock _state;
         private readonly TextBlock _summary;
@@ -69,6 +71,7 @@ namespace VKTools.Revit.UI
         private List<ElementId>? _scopeIds;
         private bool _writeBlocked;
         private int _changes;
+        private int _newKitNumbers;
         private bool _busy;
 
         public SpecParamsWindow(Autodesk.Revit.DB.Document document, SpecOptions options, SpecDefaults defaults, SpecParamsHandler handler, ExternalEvent externalEvent,
@@ -101,7 +104,7 @@ namespace VKTools.Revit.UI
             {
                 Text = nested
                     ? "Значения верхнего родителя → его общие вложенные семейства (все уровни). Какие параметры — на вкладке «Параметры»."
-                    : "ADSK_Группирование по таблице групп: категории, семейства, «не трогать»; комплекты пожарных шкафов — «группа.ключ».",
+                    : "ADSK_Группирование по таблице групп: категории, семейства, «не трогать». Комплекты (вкладка «Комплекты») и шкафы ПК — «группа.K.ранг», подряд в спецификации.",
                 FontSize = 13,
                 TextWrapping = TextWrapping.Wrap,
             });
@@ -131,7 +134,7 @@ namespace VKTools.Revit.UI
             _defaults = ReportWindow.MakeButton("По умолчанию", (s, e) => ResetToDefaults());
             _defaults.ToolTip = nested
                 ? "Отметить параметры из nested_params.csv (папка отдела или встроенные). В модели — после «Сохранить»."
-                : "Таблица групп из grouping.csv (папка отдела или встроенная), как в 0.4.0. В модели — после «Сохранить»: настройка проекта удалится.";
+                : "Таблица групп из grouping.csv (папка отдела или встроенная), как в 0.4.0. Комплекты не меняются. В модели — после «Сохранить».";
             _save = ReportWindow.MakeButton("Сохранить", (s, e) => Send(SpecRequest.Save));
             _save.ToolTip = "Сохранить настройку в модели отдельной операцией. Значения элементов не меняются.";
             _refresh = ReportWindow.MakeButton("Обновить", (s, e) => Send(SpecRequest.Refresh));
@@ -166,6 +169,11 @@ namespace VKTools.Revit.UI
                 _groupPanel.Load(options.GroupRules);
                 _groupPanel.Changed += (s, e) => OnSettingsChanged();
                 _settingsTab = new TabItem { Header = "Таблица групп", Content = _groupPanel };
+                _kitsPanel = new KitsPanel(document.Title) { Margin = new Thickness(6) };
+                _kitsPanel.Load(options.Kits);
+                _kitsPanel.Changed += (s, e) => OnSettingsChanged();
+                _kitsPanel.SelectionRequested += (s, e) => SendSelection();
+                _kitsTab = new TabItem { Header = "Комплекты", Content = _kitsPanel };
             }
 
             var report = new DockPanel { Margin = new Thickness(6) };
@@ -214,6 +222,7 @@ namespace VKTools.Revit.UI
             _reportTab = new TabItem { Header = "Было → станет", Content = report };
 
             _tabs.Items.Add(_settingsTab);
+            if (_kitsTab != null) _tabs.Items.Add(_kitsTab);
             _tabs.Items.Add(_reportTab);
             _tabs.SelectedItem = nested ? _settingsTab : _reportTab;
             root.Children.Add(_tabs);
@@ -238,6 +247,7 @@ namespace VKTools.Revit.UI
             SpecOptions options = _base.Clone();
             _nestedPanel?.ApplyTo(options);
             if (_groupPanel != null) options.GroupRules = _groupPanel.Rules();
+            if (_kitsPanel != null) options.Kits = _kitsPanel.Settings();
             return options;
         }
 
@@ -248,6 +258,8 @@ namespace VKTools.Revit.UI
             _savedSignature = stored.SettingsSignature();
             _base.SavedInProject = stored.SavedInProject;
             _base.SavedStamp = stored.SavedStamp;
+            _base.KitsStamp = stored.KitsStamp;
+            _kitsPanel?.AcceptNumbers(stored.Kits.Numbers);
             UpdateState();
             UpdateButtons();
         }
@@ -264,9 +276,12 @@ namespace VKTools.Revit.UI
             _scopeIds = scopeIds;
             _writeBlocked = plan.WriteBlockedReason != null;
             _changes = (after ?? plan).Changes.Count;
+            _newKitNumbers = (after ?? plan).NewKitNumbers.Count;
 
             if (_nestedPanel != null && run == null) _nestedPanel.Load(used, plan.Candidates);
             _groupPanel?.UpdateLists(plan.FamilyNames, plan.Categories);
+            ParamPlan latest = after ?? plan;
+            _kitsPanel?.UpdateData(latest.KitFamilies, latest.KitNumbers, latest.NewKitNumbers);
 
             _severityFilter.Items.Clear();
             _severityFilter.Items.Add("Все строки");
@@ -328,6 +343,15 @@ namespace VKTools.Revit.UI
             UpdateButtons();
         }
 
+        /// <summary>«+ Из выделения» во вкладке «Комплекты»: семейства верхних родителей выделенных элементов.</summary>
+        public void ShowSelectedFamilies(IReadOnlyCollection<string> families)
+        {
+            if (_kitsPanel == null || _kitsTab == null) return;
+            string text = _kitsPanel.AddFromSelection(families);
+            _tabs.SelectedItem = _kitsTab;
+            ShowMessage(text, error: false);
+        }
+
         public void ShowMessage(string text, bool error = true)
         {
             _busy = false;
@@ -363,6 +387,11 @@ namespace VKTools.Revit.UI
                 text = _base.SavedInProject ? "Настройка проекта: " + (_base.SavedStamp ?? "сохранена в модели") : $"Настройки по умолчанию ({source}): в модели своей настройки нет.";
                 _state.Foreground = Brushes.DimGray;
             }
+            if (_kitsPanel != null)
+            {
+                int kits = CurrentOptions().Kits.Rules.Select(r => r.Family).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                text += kits == 0 && _base.KitsStamp == null ? " Комплектов проекта нет." : $" Комплектов: {kits}" + (_base.KitsStamp != null ? $" ({_base.KitsStamp})." : ".");
+            }
             if (dirty)
             {
                 text += " В окне изменено, в модели не сохранено.";
@@ -394,6 +423,7 @@ namespace VKTools.Revit.UI
             _export.IsEnabled = _report != null;
             if (_nestedPanel != null) _nestedPanel.IsEnabled = !_busy;
             if (_groupPanel != null) _groupPanel.IsEnabled = !_busy;
+            if (_kitsPanel != null) _kitsPanel.IsEnabled = !_busy;
         }
 
         private void ResetToDefaults()
@@ -408,14 +438,16 @@ namespace VKTools.Revit.UI
                 OnSettingsChanged();
             }
             _tabs.SelectedItem = _settingsTab;
+            string kits = _kitsPanel != null ? " Комплекты не изменились." : string.Empty;
             ShowMessage(SettingsDirty()
-                ? "В окне — настройки по умолчанию. «Обновить» покажет, что изменится; «Сохранить» уберёт настройку проекта из модели."
-                : "В окне уже настройки по умолчанию.", error: false);
+                ? "В окне — настройки по умолчанию." + kits + " «Обновить» покажет, что изменится; «Сохранить» запишет это в модель."
+                : "В окне уже настройки по умолчанию." + kits, error: false);
         }
 
         private void ConfirmApply()
         {
             string settings = SettingsDirty() ? "\n\nНастройка из окна сохранится в модели той же операцией." : string.Empty;
+            if (_newKitNumbers > 0) settings += $"\n\nНомера K новых типоразмеров комплектов ({_newKitNumbers}) сохранятся в модели той же операцией.";
             MessageBoxResult answer = MessageBox.Show(this,
                 $"Записать изменения ({_changes})?{settings}\n\nЭто одна запись в журнале отмены: Ctrl+Z отменит её целиком.",
                 "VK Tools", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
@@ -444,6 +476,17 @@ namespace VKTools.Revit.UI
             _status.Foreground = Brushes.DimGray;
             UpdateButtons();
             _handler.Set(this, request, options, request == SpecRequest.Refresh ? null : _scopeIds);
+            ExternalEventRequest raised = _event.Raise();
+            if (raised != ExternalEventRequest.Accepted)
+            {
+                ShowMessage($"Revit сейчас не может выполнить команду ({raised}). Завершите текущее действие в Revit и повторите.");
+            }
+        }
+
+        private void SendSelection()
+        {
+            if (_busy) return;
+            _handler.Set(this, SpecRequest.ReadSelection, CurrentOptions(), null);
             ExternalEventRequest raised = _event.Raise();
             if (raised != ExternalEventRequest.Accepted)
             {

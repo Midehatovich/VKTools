@@ -160,7 +160,7 @@ namespace VKTools.Core.Spec
         }
 
         /// <summary>Сравнение «как числа»: «2» &lt; «10», «4.1» &lt; «4.10».</summary>
-        internal static int NaturalCompare(string a, string b)
+        public static int NaturalCompare(string a, string b)
         {
             int i = 0, j = 0;
             while (i < a.Length && j < b.Length)

@@ -27,6 +27,12 @@ namespace VKTools.Revit.Spec
         /// <summary>Шкаф ищется не глубже 10 уровней (fire_cabinet_postprocess).</summary>
         private const int MaxKitDepth = 10;
 
+        /// <summary>Текстов одного семейства для поиска кандидатов в комплекты — не больше.</summary>
+        private const int MaxKitTexts = 300;
+
+        /// <summary>Экземпляров одного типоразмера, чьи параметры смотрит поиск кандидатов.</summary>
+        private const int KitTextSamples = 3;
+
         /// <summary>Служебные семейства расчётных позиций и запаса (_SYS_SpecCalcItem, _SYS_ClampReserve): группу 9.x им ставит их модуль.</summary>
         private const string ServiceFamilyPrefix = "_SYS_";
 
@@ -39,6 +45,8 @@ namespace VKTools.Revit.Spec
         private readonly ParamAccess _access;
         private readonly Dictionary<long, (string Family, string Type)> _typeLabels = new Dictionary<long, (string, string)>();
         private ParamPlan _plan = new ParamPlan(Array.Empty<SpecModule>());
+        private readonly HashSet<string> _cabinetFamilies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<(string Group, int K)> _cabinetKeys = new List<(string Group, int K)>();
 
         private SpecPlanner(Document doc, IOperationProgress progress)
         {
@@ -407,6 +415,8 @@ namespace VKTools.Revit.Spec
             const SpecModule M = SpecModule.Grouping;
             var target = ParamKey.Shared(KnownParameters.AdskGrouping.Name, KnownParameters.AdskGrouping.Guid);
             Source(options, defaults, "Таблица групп", defaults.GroupingSource, defaults.GroupingBlocked);
+            _plan.RuleSources.Add(options.Kits.Rules.Count == 0 ? "Комплекты проекта: нет (шкафы ПК — автоматически)"
+                : $"Комплекты проекта: правил {options.Kits.Rules.Count} ({options.KitsStamp ?? "в модели не сохранены"})");
             var groups = new GroupingTable(options.GroupRules);
             var tableIssues = new List<ConfigIssue>();
             foreach (GroupRule rule in groups.Rules.Where(r => r.Category.Length > 0 && r.Category != GroupingTable.AnyCategory))
@@ -432,12 +442,9 @@ namespace VKTools.Revit.Spec
             var tops = new Dictionary<long, (Element? Top, int Depth)>();
 
             KitPlan kits = kitNames != null ? PlanKits(elements, kitNames, groups, tops) : new KitPlan();
-            foreach (KitIssue issue in kits.Issues)
-            {
-                PlanIssue row = _plan.AddIssue(M, issue.Severity, target.Name, issue.Message, "Комплекты шкафов", null, issue.Ids.Count);
-                row.Ids.AddRange(issue.Ids);
-                row.Action = issue.Action;
-            }
+            foreach (KitIssue issue in kits.Issues) AddKitIssue(issue, "Комплекты шкафов");
+            ProjectKitPlan project = PlanProjectKits(elements, options.Kits, groups, tops);
+            foreach (KitIssue issue in project.Issues) AddKitIssue(issue, "Комплекты проекта");
 
             int service = 0;
             var skipped = new Dictionary<GroupRule, int>();
@@ -467,6 +474,13 @@ namespace VKTools.Revit.Spec
                     continue;
                 }
                 bool kit = kits.Values.TryGetValue(id, out string? value);
+                string? kitSource = kit ? "комплект шкафа" : null;
+                if (!kit && project.Values.TryGetValue(id, out string? projectValue))
+                {
+                    kit = true;
+                    value = projectValue;
+                    kitSource = project.Sources[id];
+                }
                 if (!kit) value = rule?.Group;
                 if (value == null) continue;
 
@@ -508,7 +522,7 @@ namespace VKTools.Revit.Spec
                     continue;
                 }
                 if (Guard(M, element, p, target.Name, FamilyLabel(element))) continue;
-                string source = kit ? "комплект шкафа" : rule!.IsFamilyRule ? $"семейство «{rule.Family}» → {value}" : $"категория → {value}";
+                string source = kitSource ?? (rule!.IsFamilyRule ? $"семейство «{rule.Family}» → {value}" : $"категория → {value}");
                 AddChange(M, element, target, old, ParamValue.OfText(value), source, null);
             }
 
@@ -522,6 +536,12 @@ namespace VKTools.Revit.Spec
             _plan.Notes.Add($"Группирование: элементов модели {elements.Count}; служебных позиций (_SYS_…, SYS_Ключ), которые не трогаются: {service}"
                 + skippedText + "; "
                 + (kitNames == null ? "комплекты шкафов не обработаны (kit_params.csv)." : $"шкафов {kits.Cabinets}, комплектующих {kits.Components}."));
+            if (options.Kits.Rules.Count > 0)
+            {
+                _plan.Notes.Add($"Комплекты проекта: правил {options.Kits.Rules.Count}, родителей {project.Parents}, вложенных из состава {project.Members}"
+                    + (project.NewNumbers.Count == 0 ? "." : "; новые номера K (сохранятся в модели при «Применить»): "
+                        + string.Join(", ", project.NewNumbers.Select(n => $"{n.Family} : {n.Type} → {n.K}")) + "."));
+            }
             if (groups.SortSurprises().Count > 0)
             {
                 (string first, string second) = groups.SortSurprises()[0];
@@ -577,6 +597,13 @@ namespace VKTools.Revit.Spec
                 if (depth == 0)
                 {
                     number = topNumber;
+                    if (number != null && number.Value >= 1)
+                    {
+                        // Номера шкафов заняты для комплектов проекта; семейство шкафа правилом проекта не собирается
+                        _cabinetFamilies.Add(FamilyLabel(fi));
+                        GroupRule? cabinetRow = TopRule(groups, fi);
+                        _cabinetKeys.Add((cabinetRow == null || cabinetRow.Skip ? string.Empty : cabinetRow.Group, (int)Math.Round(number.Value, MidpointRounding.AwayFromZero)));
+                    }
                     if ((number == null || number.Value < 1) && !isComponent) continue;
                 }
                 else
@@ -606,6 +633,142 @@ namespace VKTools.Revit.Spec
                 });
             }
             return KitGrouping.Plan(records, topId => topElements.TryGetValue(topId, out Element? top) ? TopRule(groups, top)?.Group : null);
+        }
+
+        private void AddKitIssue(KitIssue issue, string subject)
+        {
+            PlanIssue row = _plan.AddIssue(SpecModule.Grouping, issue.Severity, KnownParameters.AdskGrouping.Name, issue.Message, subject, null, Math.Max(1, issue.Ids.Count));
+            row.Ids.AddRange(issue.Ids);
+            row.Action = issue.Action;
+        }
+
+        /// <summary>
+        /// Комплекты проекта (D-039): семейства с общими вложенными для вкладки «Комплекты» (состав, сколько штук, тексты для поиска)
+        /// и значения «группа.K.ранг» по правилам из настройки.
+        /// </summary>
+        private ProjectKitPlan PlanProjectKits(List<Element> elements, KitSettings kits, GroupingTable groups, Dictionary<long, (Element? Top, int Depth)> tops)
+        {
+            _progress.Report("Группирование: комплекты проекта…");
+            var counts = new Dictionary<long, Dictionary<(string Family, string Type), int>>();
+            var nestedCategories = new Dictionary<(string Family, string Type), string>();
+            var topElements = new Dictionary<long, FamilyInstance>();
+            var records = new List<ProjectKitElement>();
+            KitSettings active = kits.Clone();
+            foreach (KitRule rule in kits.Rules.Where(r => _cabinetFamilies.Contains(r.Family)))
+            {
+                active.Rules.Remove(rule);
+                _plan.AddIssue(SpecModule.Grouping, Severity.Warning, KnownParameters.AdskGrouping.Name,
+                    $"«{rule.Label}» — шкаф ПК: его комплект собирается по Комплект_Номер, правило проекта не действует", "Комплекты проекта")
+                    .Action = "Удалите правило во вкладке «Комплекты».";
+            }
+
+            foreach (FamilyInstance fi in elements.OfType<FamilyInstance>())
+            {
+                (Element? top, int depth) = CachedTop(fi, tops);
+                if (!(top is FamilyInstance parent)) continue;
+                (string family, string type) = Labels(fi);
+                long id = fi.Id.ToLong();
+                if (depth == 0)
+                {
+                    if (active.HasRule(family))
+                    {
+                        records.Add(new ProjectKitElement { Id = id, TopId = id, Depth = 0, Family = family, Type = type });
+                        topElements[id] = fi;
+                    }
+                    continue;
+                }
+                long topId = parent.Id.ToLong();
+                if (!counts.TryGetValue(topId, out Dictionary<(string Family, string Type), int>? nested))
+                {
+                    nested = new Dictionary<(string Family, string Type), int>();
+                    counts[topId] = nested;
+                    topElements[topId] = parent;
+                }
+                nested[(family, type)] = nested.TryGetValue((family, type), out int n) ? n + 1 : 1;
+                if (!nestedCategories.ContainsKey((family, type))) nestedCategories[(family, type)] = fi.Category?.Name ?? string.Empty;
+                if (active.HasRule(FamilyLabel(parent))) records.Add(new ProjectKitElement { Id = id, TopId = topId, Depth = depth, Family = family, Type = type });
+            }
+
+            ProjectKitPlan project = ProjectKitGrouping.Plan(records, active,
+                topId => topElements.TryGetValue(topId, out FamilyInstance? top) ? TopRule(groups, top) : null, _cabinetKeys);
+            _plan.KitNumbers.AddRange(project.Numbers);
+            _plan.NewKitNumbers.AddRange(project.NewNumbers);
+            _plan.KitFamilies.AddRange(KitFamilies(counts, nestedCategories, topElements, groups));
+            return project;
+        }
+
+        /// <summary>Сводка для вкладки «Комплекты»: по семейству — типоразмеры, вложенные и сколько их в одном экземпляре, тексты для поиска.</summary>
+        private List<KitFamilyInfo> KitFamilies(Dictionary<long, Dictionary<(string Family, string Type), int>> counts,
+            Dictionary<(string Family, string Type), string> nestedCategories, Dictionary<long, FamilyInstance> topElements, GroupingTable groups)
+        {
+            var infos = new Dictionary<string, KitFamilyInfo>(StringComparer.OrdinalIgnoreCase);
+            var texts = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            var samples = new Dictionary<(string Family, string Type), int>();
+            var stats = new Dictionary<(string Family, string ParentType, string NestedFamily, string NestedType), (int Total, int Having, int Min, int Max)>();
+            foreach (KeyValuePair<long, Dictionary<(string Family, string Type), int>> pair in counts)
+            {
+                FamilyInstance parent = topElements[pair.Key];
+                (string family, string type) = Labels(parent);
+                if (!infos.TryGetValue(family, out KitFamilyInfo? info))
+                {
+                    GroupRule? row = TopRule(groups, parent);
+                    info = new KitFamilyInfo(family)
+                    {
+                        Category = parent.Category?.Name ?? string.Empty,
+                        IsCabinet = _cabinetFamilies.Contains(family),
+                        Group = row == null || row.Skip ? null : row.Group,
+                        Skipped = row?.Skip == true,
+                    };
+                    infos[family] = info;
+                    texts[family] = new HashSet<string>(StringComparer.Ordinal);
+                }
+                KitTypeInfo? typeInfo = info.Types.FirstOrDefault(t => string.Equals(t.Name, type, StringComparison.Ordinal));
+                if (typeInfo == null)
+                {
+                    typeInfo = new KitTypeInfo(type);
+                    info.Types.Add(typeInfo);
+                    if (TypeOf(parent) is ElementType symbol) AddTexts(info, texts[family], symbol, "тип");
+                }
+                typeInfo.Instances++;
+                int sampled = samples.TryGetValue((family, type), out int s) ? s : 0;
+                if (sampled < KitTextSamples)
+                {
+                    samples[(family, type)] = sampled + 1;
+                    AddTexts(info, texts[family], parent, "экземпляр");
+                }
+                foreach (KeyValuePair<(string Family, string Type), int> nested in pair.Value)
+                {
+                    var key = (family, type, nested.Key.Family, nested.Key.Type);
+                    (int total, int having, int min, int max) = stats.TryGetValue(key, out var st) ? st : (0, 0, int.MaxValue, 0);
+                    stats[key] = (total + nested.Value, having + 1, Math.Min(min, nested.Value), Math.Max(max, nested.Value));
+                }
+            }
+            foreach (KeyValuePair<(string Family, string ParentType, string NestedFamily, string NestedType), (int Total, int Having, int Min, int Max)> pair in stats)
+            {
+                KitFamilyInfo info = infos[pair.Key.Family];
+                int parents = info.Types.First(t => string.Equals(t.Name, pair.Key.ParentType, StringComparison.Ordinal)).Instances;
+                info.Nested.Add(new KitNestedInfo(pair.Key.ParentType, pair.Key.NestedFamily, pair.Key.NestedType,
+                    nestedCategories.TryGetValue((pair.Key.NestedFamily, pair.Key.NestedType), out string? category) ? category : string.Empty)
+                {
+                    Total = pair.Value.Total,
+                    MinPerParent = pair.Value.Having < parents ? 0 : pair.Value.Min,
+                    MaxPerParent = pair.Value.Max,
+                });
+            }
+            return infos.Values.OrderBy(i => i.Family, StringComparer.CurrentCultureIgnoreCase).ToList();
+        }
+
+        /// <summary>Непустые текстовые параметры элемента — для поиска кандидатов по словам.</summary>
+        private static void AddTexts(KitFamilyInfo info, HashSet<string> seen, Element element, string level)
+        {
+            foreach (Parameter p in element.Parameters)
+            {
+                if (seen.Count >= MaxKitTexts) return;
+                if (p.StorageType != StorageType.String || !p.HasValue) continue;
+                string? text = p.AsString();
+                if (ValueText.IsBlank(text) || !seen.Add(text!)) continue;
+                info.Texts.Add(new KitText($"{p.Definition?.Name ?? "?"} ({level})", text!));
+            }
         }
 
         private GroupRule? TopRule(GroupingTable groups, Element top)
