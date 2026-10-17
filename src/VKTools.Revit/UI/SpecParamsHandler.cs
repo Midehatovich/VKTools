@@ -181,7 +181,10 @@ namespace VKTools.Revit.UI
                 window.ShowMessage("Настройка не сохранена: " + problem);
                 return;
             }
-            Host.Log.Info($"{options.Module.Title()} «{doc.Title}»: настройка {(toDefault ? "сброшена на умолчание (удалена из модели)" : "сохранена в модели")}: {options.SettingsSignature()}");
+            string what = options.Module == SpecModule.Nested
+                ? "параметры: " + string.Join(", ", options.NestedParams.Select(k => k.Name)) + (options.NestedClearEmpty ? "; пустое очищает вложенное" : string.Empty)
+                : $"строк таблицы групп: {options.GroupRules.Count}, «не трогать»: {options.GroupRules.Count(r => r.Skip)}";
+            Host.Log.Info($"{options.Module.Title()} «{doc.Title}»: настройка {(toDefault ? "сброшена на умолчание (удалена из модели)" : "сохранена в модели")}; {what}.");
             string sync = doc.IsWorkshared ? " Синхронизируйте модель, чтобы коллеги увидели её." : string.Empty;
             window.ShowMessage((toDefault
                 ? "Настройка проекта удалена: работают правила по умолчанию."

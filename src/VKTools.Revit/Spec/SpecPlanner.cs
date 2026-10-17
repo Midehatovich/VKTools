@@ -411,11 +411,15 @@ namespace VKTools.Revit.Spec
             var tableIssues = new List<ConfigIssue>();
             foreach (GroupRule rule in groups.Rules.Where(r => r.Category.Length > 0 && r.Category != GroupingTable.AnyCategory))
             {
-                if (!Enum.TryParse(rule.Category, out BuiltInCategory _))
+                if (!Enum.TryParse(rule.Category, out BuiltInCategory bic))
                 {
                     _plan.AddIssue(M, Severity.Warning, target.Name, $"категория «{rule.Category}» не найдена в Revit — строка таблицы не действует", string.Empty)
                         .Action = "Исправьте категорию в таблице групп.";
+                    continue;
                 }
+                // Имя для окна и тем категориям таблицы, которых в модели нет (спринклеры) или у которых нет параметра (гибкие трубы)
+                string? label = CategoryLabel(bic);
+                if (label != null && !_plan.Categories.ContainsKey(rule.Category)) _plan.Categories[rule.Category] = label;
             }
 
             ConfigLoader loader = Host.CreateConfigLoader(Host.LoadSettings());
@@ -670,6 +674,18 @@ namespace VKTools.Revit.Spec
                 Source = source,
                 SourceId = sourceId,
             });
+        }
+
+        private string? CategoryLabel(BuiltInCategory bic)
+        {
+            try
+            {
+                return Category.GetCategory(_doc, bic)?.Name ?? LabelUtils.GetLabelFor(bic);
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                return null;
+            }
         }
 
         private static bool IsModel(Element e)

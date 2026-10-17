@@ -318,7 +318,9 @@ namespace VKTools.Revit.UI
             else
             {
                 _trialPassedFor = null;
-                _status.Text = $"Анализ модели: {DateTime.Now:HH:mm:ss}. Модель не изменялась.";
+                _status.Text = $"Анализ модели: {DateTime.Now:HH:mm:ss}. Модель не изменялась."
+                    + (_changes > 0 ? string.Empty
+                        : " Изменений нет: пробный прогон и «Применить» не нужны" + (SettingsDirty() ? ", настройку из окна сохраните кнопкой «Сохранить»." : "."));
                 _status.Foreground = Brushes.DimGray;
             }
             _busy = false;
@@ -381,9 +383,11 @@ namespace VKTools.Revit.UI
             _refresh.IsEnabled = !_busy && !errors;
             _refresh.FontWeight = _shownFor != null && !current && !errors ? FontWeights.SemiBold : FontWeights.Normal;
             _trial.IsEnabled = !_busy && current && _changes > 0;
-            _trial.ToolTip = current ? "Записать и откатить. Модель не меняется." : "Настройки изменились: сначала «Обновить»";
+            const string nothing = "Изменений нет: проверять и записывать нечего. Настройку сохраняет кнопка «Сохранить».";
+            _trial.ToolTip = !current ? "Настройки изменились: сначала «Обновить»" : _changes == 0 ? nothing : "Записать и откатить. Модель не меняется.";
             _apply.IsEnabled = !_busy && current && _changes > 0 && !_writeBlocked && _trialPassedFor == _shownFor;
             _apply.ToolTip = _writeBlocked ? "Запись запрещена: см. красную строку вверху"
+                : current && _changes == 0 ? nothing
                 : _apply.IsEnabled ? "Записать одной операцией" : "Сначала успешный «Пробный прогон» с этими настройками";
             _save.IsEnabled = !_busy && !errors && (dirty || _defaultsData.ProjectBlocked != null);
             _defaults.IsEnabled = !_busy;
