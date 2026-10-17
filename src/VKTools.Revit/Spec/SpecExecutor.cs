@@ -63,6 +63,12 @@ namespace VKTools.Revit.Spec
 
         public List<string> DisabledUpdaters { get; } = new List<string>();
 
+        /// <summary>Почему Revit «молча» не сохранил значение — по устройству параметра в семействе (после прогона).</summary>
+        public List<FamilyDiagnosis> Diagnoses { get; } = new List<FamilyDiagnosis>();
+
+        /// <summary>Настройки окна сохранены в модели той же операцией (только «Применить»).</summary>
+        public bool SettingsSaved { get; set; }
+
         public bool Committed { get; set; }
 
         public bool Cancelled { get; set; }
@@ -82,11 +88,15 @@ namespace VKTools.Revit.Spec
     /// </summary>
     internal static class SpecExecutor
     {
-        public const string OperationName = "VK Tools: параметры спецификации";
+        public static string OperationName(IReadOnlyList<SpecModule> modules) =>
+            modules.Count == 1 && modules[0] == SpecModule.Nested ? "VK Tools: перенос во вложенные" : "VK Tools: группирование";
 
-        public static SpecRunResult Run(Document doc, ParamPlan plan, SpecRunMode mode, IOperationProgress progress, OperationTimings timings, ILog log)
+        /// <param name="saveSettings">Для «Применить»: сохранить настройки окна в модели той же операцией (null — не нужно). Возвращает причину отказа.</param>
+        public static SpecRunResult Run(Document doc, ParamPlan plan, SpecRunMode mode, IOperationProgress progress, OperationTimings timings, ILog log,
+            Func<Document, string?>? saveSettings = null)
         {
             var result = new SpecRunResult(mode, plan.Modules) { Planned = plan.Changes.Count };
+            var access = new ParamAccess(doc);
             if (plan.Changes.Count == 0)
             {
                 result.Status = "Записывать нечего: все значения уже такие, как нужно.";
@@ -97,7 +107,8 @@ namespace VKTools.Revit.Spec
             var written = new List<ParamChange>();
             bool fatal = false;
 
-            using (var operation = new TransactionGroup(doc, OperationName))
+            string operationName = OperationName(plan.Modules);
+            using (var operation = new TransactionGroup(doc, operationName))
             {
                 operation.Start();
                 try
@@ -115,7 +126,7 @@ namespace VKTools.Revit.Spec
                                     progress.ThrowIfCancelled();
                                 }
                                 ParamChange change = changes[i];
-                                string? problem = Write(doc, change);
+                                string? problem = Write(doc, access, change);
                                 if (problem == null) written.Add(change);
                                 else result.Failed.Add(new ChangeProblem(change, problem));
                             }
@@ -140,9 +151,9 @@ namespace VKTools.Revit.Spec
                             progress.Report("Проверка: значения после фиксации…");
                             foreach (ParamChange change in written)
                             {
-                                string? actual = Read(doc, change);
-                                if (actual == change.New) result.Written++;
-                                else result.Overwritten.Add(new ChangeProblem(change, "после фиксации значение другое", actual ?? "(параметр пропал)"));
+                                ParamValue? actual = Read(doc, access, change);
+                                if (actual != null && actual.SameAs(change.Value)) result.Written++;
+                                else result.Overwritten.Add(new ChangeProblem(change, "после фиксации значение другое", actual?.Display ?? "(параметр пропал)"));
                             }
                         }
                     }
@@ -157,10 +168,35 @@ namespace VKTools.Revit.Spec
                     }
                     else
                     {
+                        if (saveSettings != null)
+                        {
+                            using (var settings = new Transaction(doc, SpecSettingsStore.TransactionName))
+                            {
+                                settings.Start();
+                                string? problem;
+                                try
+                                {
+                                    problem = saveSettings(doc);
+                                }
+                                catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+                                {
+                                    problem = ex.Message;
+                                }
+                                if (problem == null && settings.Commit() == TransactionStatus.Committed)
+                                {
+                                    result.SettingsSaved = true;
+                                }
+                                else
+                                {
+                                    if (settings.HasStarted() && !settings.HasEnded()) settings.RollBack();
+                                    result.Warnings.Add("Настройки окна в модели не сохранены" + (problem != null ? ": " + problem : ".") + " Значения записаны.");
+                                }
+                            }
+                        }
                         progress.Report("Запись в журнал отмены…");
                         using (timings.Measure("запись (Assimilate)")) operation.Assimilate();
                         result.Committed = true;
-                        result.Status = $"Записано {result.Written} из {result.Planned} одной операцией «{OperationName}»: Ctrl+Z отменяет её целиком.";
+                        result.Status = $"Записано {result.Written} из {result.Planned} одной операцией «{operationName}»: Ctrl+Z отменяет её целиком.";
                     }
                 }
                 catch (Exception ex)
@@ -169,7 +205,7 @@ namespace VKTools.Revit.Spec
                     bool wasCancel = ex is OperationCanceledException || progress.IsCancellationRequested;
                     if (!wasCancel)
                     {
-                        log.Error("Параметры спецификации: запись прервана, всё откачено.", ex);
+                        log.Error(operationName + ": запись прервана, всё откачено.", ex);
                         result.Errors.Add("прервано: " + ex.Message);
                     }
                     result.Cancelled = wasCancel;
@@ -188,29 +224,20 @@ namespace VKTools.Revit.Spec
         }
 
         /// <summary>null — записано; иначе причина.</summary>
-        private static string? Write(Document doc, ParamChange change)
+        private static string? Write(Document doc, ParamAccess access, ParamChange change)
         {
             Element? element = doc.GetElement(change.ElementId.ToElementId());
             if (element == null) return "элемента больше нет в модели";
-            Parameter? p = element.get_Parameter(change.Guid);
+            Parameter? p = access.Find(element, change.Key);
             if (p == null) return "параметра больше нет у элемента";
-            if (p.IsReadOnly) return "параметр стал только для чтения";
-            try
-            {
-                if (!p.Set(change.New)) return "Revit отклонил запись";
-            }
-            catch (Autodesk.Revit.Exceptions.ApplicationException ex)
-            {
-                return "Revit не дал записать: " + ex.Message;
-            }
-            return (p.AsString() ?? string.Empty) == change.New ? null : "Revit записал другое значение: «" + p.AsString() + "»";
+            return ParamAccess.Write(p, change.Value);
         }
 
-        private static string? Read(Document doc, ParamChange change)
+        private static ParamValue? Read(Document doc, ParamAccess access, ParamChange change)
         {
             Element? element = doc.GetElement(change.ElementId.ToElementId());
-            Parameter? p = element?.get_Parameter(change.Guid);
-            return p == null ? null : p.AsString() ?? string.Empty;
+            Parameter? p = element == null ? null : access.Find(element, change.Key);
+            return p == null ? null : ParamAccess.Read(p);
         }
     }
 }

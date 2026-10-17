@@ -6,15 +6,15 @@ using VKTools.Revit.Infrastructure;
 
 namespace VKTools.Revit.Spec
 {
-    /// <summary>Отчёт «Параметры спецификации» для общего окна отчёта и CSV: было → станет, пропуски, итог прогона.</summary>
+    /// <summary>Отчёт «Перенос во вложенные» / «Группирование» для окна и CSV: было → станет, пропуски, итог прогона.</summary>
     internal static class SpecReportBuilder
     {
         public const string CheckRun = "Запись";
 
         public static CheckReport Build(string documentTitle, ParamPlan plan, SpecRunResult? run)
         {
-            string title = run == null ? "Параметры спецификации: анализ"
-                : run.Mode == SpecRunMode.Trial ? "Параметры спецификации: пробный прогон" : "Параметры спецификации: запись";
+            string modules = string.Join(", ", plan.Modules.Select(m => m.Title()));
+            string title = modules + (run == null ? ": анализ" : run.Mode == SpecRunMode.Trial ? ": пробный прогон" : ": запись");
             var report = new CheckReport(title, documentTitle, DateTime.Now)
             {
                 PluginVersion = BuildInfo.PluginVersion,
@@ -31,6 +31,16 @@ namespace VKTools.Revit.Spec
                 {
                     report.Findings.Add(new CheckFinding(CheckRun, Severity.Warning,
                         $"До перезапуска Revit отключено обновление: {string.Join(", ", run.DisabledUpdaters)} — оно упало при фиксации (D-017)."));
+                }
+                foreach (FamilyDiagnosis d in run.Diagnoses)
+                {
+                    var finding = new CheckFinding(CheckRun, Severity.Error, d.Parameter + " — причина «Не записано»: " + d.Message)
+                    {
+                        Family = d.Family,
+                        Action = d.Action,
+                    };
+                    finding.RelatedElementIds.AddRange(d.Ids);
+                    report.Findings.Add(finding);
                 }
                 foreach (ChangeProblem f in run.Failed)
                 {

@@ -15,9 +15,9 @@ using VKTools.Revit.Infrastructure;
 namespace VKTools.Revit.Spec
 {
     /// <summary>
-    /// Анализ «Параметры спецификации» (Р2): что запишут модули «Вложенные» и «Группирование».
-    /// Модель не меняется. Поведение — как у Dynamo-эталонов: NestedParamSync v2.1 (шаг 3),
-    /// adsk_grouping v2 и fire_cabinet_postprocess v1.0.
+    /// Анализ «Перенос во вложенные» и «Группирование»: что запишется и что нет. Модель не меняется.
+    /// Поведение по умолчанию — как у Dynamo-эталонов: NestedParamSync v2.1 (шаг 3), adsk_grouping v2,
+    /// fire_cabinet_postprocess v1.0. Настройки (какие параметры, какая таблица групп) — <see cref="SpecOptions"/>.
     /// </summary>
     internal sealed class SpecPlanner
     {
@@ -36,6 +36,7 @@ namespace VKTools.Revit.Spec
         private readonly Document _doc;
         private readonly IOperationProgress _progress;
         private readonly EditGuard _guard;
+        private readonly ParamAccess _access;
         private readonly Dictionary<long, (string Family, string Type)> _typeLabels = new Dictionary<long, (string, string)>();
         private ParamPlan _plan = new ParamPlan(Array.Empty<SpecModule>());
 
@@ -44,85 +45,109 @@ namespace VKTools.Revit.Spec
             _doc = doc;
             _progress = progress;
             _guard = new EditGuard(doc);
+            _access = new ParamAccess(doc);
         }
 
-        public static ParamPlan Build(Document doc, IReadOnlyCollection<SpecModule> modules, IOperationProgress progress, OperationTimings timings)
+        /// <param name="scope">Для областей «Активный вид» и «Выделенные»: элементы области (из них берутся верхние родители).</param>
+        public static ParamPlan Build(Document doc, SpecOptions options, SpecDefaults defaults, ICollection<ElementId>? scope,
+            IOperationProgress progress, OperationTimings timings)
         {
             var planner = new SpecPlanner(doc, progress);
-            planner._plan = new ParamPlan(modules);
-            ConfigLoader loader = Host.CreateConfigLoader(Host.LoadSettings());
-            foreach (SpecModule module in planner._plan.Modules)
+            planner._plan = new ParamPlan(new[] { options.Module });
+            foreach (ConfigIssue issue in defaults.Issues) planner.AddConfigIssue(options.Module, issue);
+            if (options.Module == SpecModule.Nested)
             {
-                progress.ThrowIfCancelled();
-                if (module == SpecModule.Nested)
-                {
-                    using (timings.Measure("анализ вложенных")) planner.PlanNested(loader);
-                }
-                else
-                {
-                    using (timings.Measure("анализ группирования")) planner.PlanGrouping(loader);
-                }
+                using (timings.Measure("анализ переноса")) planner.PlanNested(options, defaults, scope);
+            }
+            else
+            {
+                using (timings.Measure("анализ группирования")) planner.PlanGrouping(options, defaults);
             }
             return planner._plan;
         }
 
         // ---------------------------------------------------------------- правила
 
+        private void Source(SpecOptions options, SpecDefaults defaults, string title, string defaultSource, string? defaultBlocked)
+        {
+            if (options.IsDefault(defaults))
+            {
+                _plan.RuleSources.Add(defaultSource);
+                if (defaultBlocked != null) Block(defaultBlocked);
+            }
+            else
+            {
+                string state = !options.SavedInProject ? "изменена в окне, в модели не сохранена" : options.SavedStamp ?? "сохранена в модели";
+                _plan.RuleSources.Add($"{title}: настройка проекта ({state})");
+            }
+            // Повреждённая настройка проекта запрещает запись, пока её не сохранят заново
+            if (defaults.ProjectBlocked != null) Block(defaults.ProjectBlocked);
+        }
+
+        private void Block(string reason) =>
+            _plan.WriteBlockedReason = _plan.WriteBlockedReason == null ? reason : _plan.WriteBlockedReason + " " + reason;
+
         private CsvTable? LoadTable(ConfigLoader loader, SpecModule module, RuleFileSpec spec)
         {
             LoadedTable loaded = loader.Load(spec);
-            string source = loaded.Source == ConfigSourceKind.Department ? "отдел" : "встроенные";
-            _plan.RuleSources.Add(loaded.Table != null
-                ? $"{spec.FileName}: {source}, {loaded.SourcePath} ({loaded.EncodingName})"
-                : $"{spec.FileName}: НЕ ЗАГРУЖЕН");
+            _plan.RuleSources.Add(SpecSettingsLoader.Source(loaded));
             foreach (ConfigIssue issue in loaded.Issues) AddConfigIssue(module, issue);
-            if (loaded.WriteBlocked)
-            {
-                string reason = $"{spec.FileName}: {loaded.WriteBlockedReason}";
-                _plan.WriteBlockedReason = _plan.WriteBlockedReason == null ? reason : _plan.WriteBlockedReason + " " + reason;
-            }
+            if (loaded.WriteBlocked) Block($"{spec.FileName}: {loaded.WriteBlockedReason}");
             return loaded.Table;
         }
 
         private void AddConfigIssue(SpecModule module, ConfigIssue issue)
         {
             _plan.AddIssue(module, issue.Severity, string.Empty, "Правила: " + issue, string.Empty).Action =
-                "Исправьте файл правил (VK Tools → Настройки → «Проверить»).";
+                "Исправьте файл правил (VK Tools → Настройки → «Проверить») или настройку проекта и сохраните её заново.";
             Host.Log.Warn("Правила: " + issue);
         }
 
-        // ---------------------------------------------------------------- вложенные
+        // ---------------------------------------------------------------- перенос во вложенные
 
-        private void PlanNested(ConfigLoader loader)
+        /// <summary>Параметр элемента: где взят (экземпляр или тип) и как узнан.</summary>
+        private sealed class ParamSlot
+        {
+            public ParamSlot(ParamKey key, Parameter parameter, bool fromType)
+            {
+                Key = key;
+                Parameter = parameter;
+                FromType = fromType;
+            }
+
+            public ParamKey Key { get; }
+
+            public Parameter Parameter { get; }
+
+            public bool FromType { get; }
+        }
+
+        private void PlanNested(SpecOptions options, SpecDefaults defaults, ICollection<ElementId>? scope)
         {
             const SpecModule M = SpecModule.Nested;
-            CsvTable? table = LoadTable(loader, M, SpecRuleTables.NestedParameters);
-            if (table == null)
+            Source(options, defaults, "Перенос во вложенные", defaults.NestedSource, defaults.NestedBlocked);
+            var selected = new HashSet<ParamKey>(options.NestedParams);
+            var candidates = new Dictionary<ParamKey, ParamCandidate>();
+            foreach (ParamKey key in options.NestedParams)
             {
-                _plan.AddIssue(M, Severity.Error, string.Empty, "nested_params.csv не загружен — вложенные не обрабатываются", string.Empty);
-                return;
-            }
-            ParsedRules<ParameterRef> parsed = SpecRuleTables.ParseNestedParameters(table);
-            foreach (ConfigIssue issue in parsed.Issues) AddConfigIssue(M, issue);
-            List<ParameterRef> rules = parsed.Items;
-            if (rules.Count == 0)
-            {
-                _plan.AddIssue(M, Severity.Error, string.Empty, "в nested_params.csv нет ни одного параметра", string.Empty);
-                return;
+                candidates[key] = new ParamCandidate(key, "—") { Selected = true };
             }
 
-            _progress.Report("Вложенные: ищу родителей с общими вложенными семействами…");
-            List<FamilyInstance> parents = new FilteredElementCollector(_doc).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>()
-                .Where(fi => fi.SuperComponent == null && IsModel(fi) && fi.GetSubComponentIds().Count > 0)
-                .ToList();
-
+            _progress.Report("Перенос: ищу родителей с общими вложенными семействами…");
+            List<FamilyInstance> parents = Parents(options.Scope, scope);
+            if (options.Scope != NestedScope.Model && parents.Count == 0)
+            {
+                _plan.AddIssue(M, Severity.Warning, string.Empty, "в выбранной области нет родителей с общими вложенными семействами", string.Empty)
+                    .Action = "Выделите в модели родителей или их вложенные (или выберите другую область) и нажмите «Обновить».";
+            }
             int withNested = 0;
             var byLevel = new SortedDictionary<int, int>();
+            var childKeysByFamily = new Dictionary<(long, long), List<ParamKey>>();
             for (int i = 0; i < parents.Count; i++)
             {
                 if (i % 200 == 0)
                 {
-                    _progress.Report($"Вложенные: родитель {i + 1} из {parents.Count}", i, parents.Count);
+                    _progress.Report($"Перенос: родитель {i + 1} из {parents.Count}", i, parents.Count);
                     _progress.ThrowIfCancelled();
                 }
                 FamilyInstance parent = parents[i];
@@ -130,11 +155,227 @@ namespace VKTools.Revit.Spec
                 if (nested.Count == 0) continue;
                 withNested++;
                 foreach ((FamilyInstance _, int level) in nested) byLevel[level] = byLevel.TryGetValue(level, out int n) ? n + 1 : 1;
-                foreach (ParameterRef rule in rules) PlanNestedRule(parent, nested, rule);
+
+                Dictionary<ParamKey, ParamSlot> source = ParentParams(parent);
+                string parentLabel = FamilyLabel(parent);
+                long parentId = parent.Id.ToLong();
+                foreach (ParamKey key in selected.Where(k => !source.ContainsKey(k)))
+                {
+                    MissingOnParent(parent, key, parentLabel, nested.Count);
+                }
+
+                foreach ((FamilyInstance child, int _) in nested)
+                {
+                    List<ParamKey> childKeys = ChildKeys(child, childKeysByFamily);
+                    var childSet = new HashSet<ParamKey>(childKeys);
+                    string subject = parentLabel + " → " + FamilyLabel(child);
+                    long childId = child.Id.ToLong();
+                    foreach (KeyValuePair<ParamKey, ParamSlot> pair in source)
+                    {
+                        ParamKey key = pair.Key;
+                        bool isSelected = selected.Contains(key);
+                        if (!childSet.Contains(key))
+                        {
+                            if (isSelected) MissingOnChild(child, key, subject, childId);
+                            continue;
+                        }
+                        Parameter? target = _access.Find(child, key);
+                        if (target == null) continue;
+                        if (!candidates.TryGetValue(key, out ParamCandidate? candidate))
+                        {
+                            candidate = new ParamCandidate(key, ParamAccess.DataTypeLabel(pair.Value.Parameter));
+                            candidates[key] = candidate;
+                        }
+                        else if (candidate.DataType == "—")
+                        {
+                            candidate.DataType = ParamAccess.DataTypeLabel(pair.Value.Parameter);
+                        }
+                        candidate.Nested++;
+                        EvaluatePair(pair.Value, target, child, options.NestedClearEmpty, isSelected, candidate, subject, childId, parentId, parentLabel);
+                    }
+                }
             }
-            _plan.Notes.Add($"Вложенные: родителей с общими вложенными {withNested}, вложенных {byLevel.Values.Sum()}"
+
+            _plan.Candidates.AddRange(candidates.Values
+                .OrderByDescending(c => c.Selected).ThenBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase));
+            string scopeText = options.Scope == NestedScope.Model ? "вся модель" : options.Scope == NestedScope.ActiveView ? "активный вид" : "выделенные";
+            _plan.Notes.Add($"Перенос: область — {scopeText}; родителей с общими вложенными {withNested}, вложенных {byLevel.Values.Sum()}"
                 + (byLevel.Count > 0 ? " (" + string.Join(", ", byLevel.Select(p => $"ур. {p.Key}: {p.Value}")) + ")" : string.Empty)
-                + "; параметры: " + string.Join(", ", rules.Select(r => r.Name)) + ".");
+                + "; параметры: " + (options.NestedParams.Count == 0 ? "не выбраны" : string.Join(", ", options.NestedParams.Select(k => k.Name)))
+                + (options.NestedClearEmpty ? "; пустое у родителя очищает вложенное." : "."));
+            if (options.NestedParams.Count == 0)
+            {
+                _plan.AddIssue(M, Severity.Warning, string.Empty, "не выбран ни один параметр — переносить нечего", string.Empty)
+                    .Action = "Отметьте параметры на вкладке «Параметры» и нажмите «Обновить».";
+            }
+        }
+
+        private List<FamilyInstance> Parents(NestedScope scopeKind, ICollection<ElementId>? scope)
+        {
+            // Элементы области окно берёт при «Обновить» и передаёт те же в пробный прогон и запись
+            IEnumerable<FamilyInstance> source = scope != null || scopeKind != NestedScope.Model
+                ? (scope ?? Array.Empty<ElementId>()).Select(id => _doc.GetElement(id)).OfType<FamilyInstance>()
+                : new FilteredElementCollector(_doc).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>();
+            var seen = new HashSet<long>();
+            var result = new List<FamilyInstance>();
+            foreach (FamilyInstance fi in source)
+            {
+                (Element? top, int _) = TopParent(fi);
+                if (!(top is FamilyInstance parent) || !seen.Add(parent.Id.ToLong())) continue;
+                if (IsModel(parent) && parent.GetSubComponentIds().Count > 0) result.Add(parent);
+            }
+            return result;
+        }
+
+        /// <summary>Параметры родителя, которые можно переносить: экземпляра, а если такого нет — типа.</summary>
+        private Dictionary<ParamKey, ParamSlot> ParentParams(FamilyInstance parent)
+        {
+            var result = new Dictionary<ParamKey, ParamSlot>();
+            foreach (Parameter p in parent.Parameters)
+            {
+                ParamKey? key = Transferable(p);
+                if (key != null && !result.ContainsKey(key)) result[key] = new ParamSlot(key, p, false);
+            }
+            Element? type = TypeOf(parent);
+            if (type != null)
+            {
+                foreach (Parameter p in type.Parameters)
+                {
+                    ParamKey? key = Transferable(p);
+                    if (key != null && !result.ContainsKey(key)) result[key] = new ParamSlot(key, p, true);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>Ключи параметров экземпляра вложенного. У экземпляров одного семейства набор одинаковый — кэш по семейству и категории.</summary>
+        private List<ParamKey> ChildKeys(FamilyInstance child, Dictionary<(long, long), List<ParamKey>> cache)
+        {
+            var cacheKey = (child.Symbol?.Family?.Id.ToLong() ?? child.Id.ToLong(), child.Category?.Id.ToLong() ?? 0);
+            if (cache.TryGetValue(cacheKey, out List<ParamKey>? keys)) return keys;
+            keys = new List<ParamKey>();
+            foreach (Parameter p in child.Parameters)
+            {
+                ParamKey? key = Transferable(p);
+                if (key != null && !keys.Contains(key)) keys.Add(key);
+            }
+            cache[cacheKey] = keys;
+            return keys;
+        }
+
+        /// <summary>Ключ переносимого параметра; ADSK_Группирование не переносится: им управляет группирование.</summary>
+        private ParamKey? Transferable(Parameter p)
+        {
+            if (!ParamAccess.IsTransferable(p)) return null;
+            ParamKey? key = _access.KeyOf(p);
+            if (key == null) return null;
+            return key.Kind == ParamKeyKind.Shared && key.Guid == KnownParameters.AdskGrouping.Guid ? null : key;
+        }
+
+        private void EvaluatePair(ParamSlot source, Parameter target, FamilyInstance child, bool clearEmpty, bool isSelected,
+            ParamCandidate candidate, string subject, long childId, long parentId, string parentLabel)
+        {
+            const SpecModule M = SpecModule.Nested;
+            ParamKey key = source.Key;
+            if (target.StorageType != source.Parameter.StorageType)
+            {
+                candidate.Problems++;
+                if (isSelected)
+                {
+                    _plan.AddIssue(M, Severity.Error, key.Name,
+                        $"несовместимый тип: у родителя {ParamAccess.DataTypeLabel(source.Parameter)}, у вложенного {ParamAccess.DataTypeLabel(target)}", subject, childId)
+                        .Action = "Замените параметр в одном из семейств на тот же параметр из ФОП.";
+                }
+                return;
+            }
+            ParamValue? value = ParamAccess.Read(source.Parameter);
+            if (ParamAccess.IsEmpty(value))
+            {
+                if (!clearEmpty || source.Parameter.StorageType != StorageType.String)
+                {
+                    candidate.ParentEmpty++;
+                    if (isSelected)
+                    {
+                        _plan.AddIssue(M, Severity.Info, key.Name, "у родителя значение пустое — вложенные не трогаем", parentLabel, parentId)
+                            .Action = "Заполните параметр у родителя (или модулем, который его заполняет) и обновите.";
+                    }
+                    return;
+                }
+                value = ParamValue.OfText(string.Empty);
+            }
+
+            ParamValue? current = ParamAccess.Read(target);
+            if (current != null && current.SameAs(value!))
+            {
+                // Совпадение — до проверки «только чтение»: параметр, связанный в семействе с родителем, уже получает значение средствами Revit
+                if (isSelected) _plan.CountUnchanged(M);
+                return;
+            }
+            if (target.IsReadOnly)
+            {
+                candidate.Problems++;
+                if (isSelected)
+                {
+                    _plan.AddIssue(M, Severity.Error, key.Name,
+                        "у вложенного параметр только для чтения, и значение отличается от родителя: он связан в семействе с другим параметром или задан формулой", subject, childId)
+                        .Action = "Правьте семейство: свяжите параметр вложенного с тем же параметром родителя или уберите формулу.";
+                }
+                return;
+            }
+            (Severity Severity, string Reason)? blocked = _guard.Check(child, target);
+            if (blocked != null)
+            {
+                candidate.Problems++;
+                if (isSelected) Guard(M, child, target, key.Name, subject);
+                return;
+            }
+            candidate.WouldChange++;
+            if (!isSelected) return;
+            string from = source.FromType ? "тип родителя" : "родитель";
+            AddChange(M, child, key, current?.Display ?? string.Empty, value!, $"{from} {parentId} ({parentLabel})", parentId);
+        }
+
+        private void MissingOnParent(FamilyInstance parent, ParamKey key, string parentLabel, int nestedCount)
+        {
+            const SpecModule M = SpecModule.Nested;
+            long parentId = parent.Id.ToLong();
+            Parameter? any = _access.Find(parent, key) ?? (TypeOf(parent) is Element type ? _access.Find(type, key) : null);
+            if (any != null && !ParamAccess.IsTransferable(any))
+            {
+                _plan.AddIssue(M, Severity.Warning, key.Name, "параметр — ссылка на элемент, такие не переносятся", parentLabel, parentId, nestedCount);
+            }
+            else if (key.Kind == ParamKeyKind.Shared && parent.GetParameters(key.Name).Count > 0)
+            {
+                _plan.AddIssue(M, Severity.Error, key.Name, "у родителя параметр с этим именем, но другим GUID — не из ФОП отдела", parentLabel, parentId, nestedCount)
+                    .Action = "Замените параметр в семействе на параметр из ФОП отдела.";
+            }
+            else
+            {
+                _plan.AddIssue(M, Severity.Info, key.Name, "у родителя нет параметра — вложенные не трогаем", parentLabel, parentId, nestedCount);
+            }
+        }
+
+        private void MissingOnChild(FamilyInstance child, ParamKey key, string subject, long childId)
+        {
+            const SpecModule M = SpecModule.Nested;
+            if (TypeOf(child) is Element type && _access.Find(type, key) != null)
+            {
+                _plan.AddIssue(M, Severity.Warning, key.Name, "у вложенного — параметр ТИПА: запись изменила бы все экземпляры типа", subject, childId)
+                    .Action = "Сделайте параметр параметром экземпляра во вложенном семействе.";
+            }
+            else if (key.Kind == ParamKeyKind.Shared && child.GetParameters(key.Name).Count > 0)
+            {
+                _plan.AddIssue(M, Severity.Error, key.Name, "у вложенного параметр с этим именем, но другим GUID — не из ФОП отдела", subject, childId)
+                    .Action = "Замените параметр во вложенном семействе на параметр из ФОП отдела.";
+            }
+            else
+            {
+                string category = child.Category?.Name ?? "?";
+                _plan.AddIssue(M, Severity.Info, key.Name, $"у вложенного нет параметра (категория «{category}»)", subject, childId)
+                    .Action = key.Kind == ParamKeyKind.Shared || key.Kind == ParamKeyKind.Project
+                        ? $"Если нужен в спецификации: Управление → Параметры проекта → {key.Name} → категория «{category}»."
+                        : string.Empty;
+            }
         }
 
         /// <summary>Общие вложенные модельных категорий, обход в ширину (марки и УГО внутри семейств не трогаем).</summary>
@@ -159,113 +400,34 @@ namespace VKTools.Revit.Spec
             return result;
         }
 
-        private void PlanNestedRule(FamilyInstance parent, List<(FamilyInstance Element, int Level)> nested, ParameterRef rule)
-        {
-            const SpecModule M = SpecModule.Nested;
-            string parentLabel = FamilyLabel(parent);
-            long parentId = parent.Id.ToLong();
-
-            Parameter? source = parent.get_Parameter(rule.Guid);
-            if (source == null)
-            {
-                if (TypeOf(parent)?.get_Parameter(rule.Guid) != null)
-                {
-                    _plan.AddIssue(M, Severity.Warning, rule.Name, "у родителя — параметр ТИПА, перенос идёт из экземпляра", parentLabel, parentId, nested.Count)
-                        .Action = "Сделайте параметр параметром экземпляра в проекте или заполните вложенные вручную.";
-                }
-                else if (parent.GetParameters(rule.Name).Count > 0)
-                {
-                    _plan.AddIssue(M, Severity.Error, rule.Name, "у родителя параметр с этим именем, но другим GUID — не из ФОП отдела", parentLabel, parentId, nested.Count)
-                        .Action = "Замените параметр в семействе на параметр из ФОП отдела.";
-                }
-                else
-                {
-                    _plan.AddIssue(M, Severity.Info, rule.Name, "у родителя нет параметра — вложенные не трогаем", parentLabel, parentId, nested.Count);
-                }
-                return;
-            }
-            if (source.StorageType != StorageType.String)
-            {
-                _plan.AddIssue(M, Severity.Error, rule.Name, "у родителя параметр не текстовый — переносится только текст", parentLabel, parentId, nested.Count);
-                return;
-            }
-            string? value = source.AsString();
-            if (ValueText.IsBlank(value))
-            {
-                _plan.AddIssue(M, Severity.Info, rule.Name, "у родителя значение пустое — вложенные не трогаем", parentLabel, parentId, nested.Count)
-                    .Action = "Заполните параметр у родителя (или модулем, который его заполняет) и обновите.";
-                return;
-            }
-
-            foreach ((FamilyInstance child, int _) in nested)
-            {
-                string subject = parentLabel + " → " + FamilyLabel(child);
-                long childId = child.Id.ToLong();
-                Parameter? target = child.get_Parameter(rule.Guid);
-                if (target == null)
-                {
-                    if (TypeOf(child)?.get_Parameter(rule.Guid) != null)
-                    {
-                        _plan.AddIssue(M, Severity.Warning, rule.Name, "у вложенного — параметр ТИПА: запись изменила бы все экземпляры типа", subject, childId)
-                            .Action = "Сделайте параметр параметром экземпляра во вложенном семействе.";
-                    }
-                    else if (child.GetParameters(rule.Name).Count > 0)
-                    {
-                        _plan.AddIssue(M, Severity.Error, rule.Name, "у вложенного параметр с этим именем, но другим GUID — не из ФОП отдела", subject, childId)
-                            .Action = "Замените параметр во вложенном семействе на параметр из ФОП отдела.";
-                    }
-                    else
-                    {
-                        _plan.AddIssue(M, Severity.Info, rule.Name, "у вложенного нет параметра", subject, childId);
-                    }
-                    continue;
-                }
-                if (target.StorageType != StorageType.String)
-                {
-                    _plan.AddIssue(M, Severity.Error, rule.Name, "у вложенного параметр не текстовый", subject, childId);
-                    continue;
-                }
-                string old = target.AsString() ?? string.Empty;
-                if (old == value)
-                {
-                    // Совпадение — до проверки «только чтение»: параметр, связанный в семействе с родителем, уже получает значение средствами Revit
-                    _plan.CountUnchanged(M);
-                    continue;
-                }
-                if (target.IsReadOnly)
-                {
-                    _plan.AddIssue(M, Severity.Error, rule.Name,
-                        "у вложенного параметр только для чтения, и значение отличается от родителя: он связан в семействе с другим параметром или формулой", subject, childId)
-                        .Action = "Правьте семейство: свяжите параметр вложенного с тем же параметром родителя или уберите формулу.";
-                    continue;
-                }
-                if (Guard(M, child, target, rule.Name, subject)) continue;
-                AddChange(M, child, rule.Name, rule.Guid, old, value!, $"родитель {parentId} ({parentLabel})", parentId);
-            }
-        }
-
         // ---------------------------------------------------------------- группирование
 
-        private void PlanGrouping(ConfigLoader loader)
+        private void PlanGrouping(SpecOptions options, SpecDefaults defaults)
         {
             const SpecModule M = SpecModule.Grouping;
-            ParameterRef target = KnownParameters.AdskGrouping;
-            CsvTable? groupingTable = LoadTable(loader, M, SpecRuleTables.Grouping);
-            if (groupingTable == null)
+            var target = ParamKey.Shared(KnownParameters.AdskGrouping.Name, KnownParameters.AdskGrouping.Guid);
+            Source(options, defaults, "Таблица групп", defaults.GroupingSource, defaults.GroupingBlocked);
+            var groups = new GroupingTable(options.GroupRules);
+            var tableIssues = new List<ConfigIssue>();
+            foreach (GroupRule rule in groups.Rules.Where(r => r.Category.Length > 0 && r.Category != GroupingTable.AnyCategory))
             {
-                _plan.AddIssue(M, Severity.Error, string.Empty, "grouping.csv не загружен — группирование не выполняется", string.Empty);
-                return;
+                if (!Enum.TryParse(rule.Category, out BuiltInCategory _))
+                {
+                    _plan.AddIssue(M, Severity.Warning, target.Name, $"категория «{rule.Category}» не найдена в Revit — строка таблицы не действует", string.Empty)
+                        .Action = "Исправьте категорию в таблице групп.";
+                }
             }
-            var configIssues = new List<ConfigIssue>();
-            GroupingTable groups = SpecRuleTables.ParseGrouping(groupingTable, configIssues);
+
+            ConfigLoader loader = Host.CreateConfigLoader(Host.LoadSettings());
             CsvTable? kitTable = LoadTable(loader, M, SpecRuleTables.KitParameters);
-            KitParameterNames? kitNames = kitTable != null ? SpecRuleTables.ParseKitParameters(kitTable, configIssues) : null;
-            foreach (ConfigIssue issue in configIssues) AddConfigIssue(M, issue);
+            KitParameterNames? kitNames = kitTable != null ? SpecRuleTables.ParseKitParameters(kitTable, tableIssues) : null;
+            foreach (ConfigIssue issue in tableIssues) AddConfigIssue(M, issue);
 
             _progress.Report("Группирование: собираю элементы…");
             List<Element> elements = new FilteredElementCollector(_doc).WhereElementIsNotElementType().Where(IsModel).ToList();
+            var tops = new Dictionary<long, (Element? Top, int Depth)>();
 
-            KitPlan kits = kitNames != null ? PlanKits(elements, kitNames, groups) : new KitPlan();
+            KitPlan kits = kitNames != null ? PlanKits(elements, kitNames, groups, tops) : new KitPlan();
             foreach (KitIssue issue in kits.Issues)
             {
                 PlanIssue row = _plan.AddIssue(M, issue.Severity, target.Name, issue.Message, "Комплекты шкафов", null, issue.Ids.Count);
@@ -274,6 +436,8 @@ namespace VKTools.Revit.Spec
             }
 
             int service = 0;
+            var skipped = new Dictionary<GroupRule, int>();
+            var used = new HashSet<GroupRule>();
             for (int i = 0; i < elements.Count; i++)
             {
                 if (i % 2000 == 0)
@@ -283,12 +447,25 @@ namespace VKTools.Revit.Spec
                 }
                 Element element = elements[i];
                 long id = element.Id.ToLong();
+                Parameter? p = element.get_Parameter(target.Guid);
                 string? category = element.Category.ToBuiltInCategory()?.ToString();
+                string? family = (TypeOf(element) as ElementType)?.FamilyName;
+                if (p != null)
+                {
+                    if (!string.IsNullOrEmpty(family)) _plan.FamilyNames.Add(family!);
+                    if (category != null && !_plan.Categories.ContainsKey(category)) _plan.Categories[category] = element.Category?.Name ?? category;
+                }
+                GroupRule? rule = Resolve(groups, element, category, family, tops);
+                if (rule != null) used.Add(rule);
+                if (rule?.Skip == true)
+                {
+                    if (p != null) skipped[rule] = skipped.TryGetValue(rule, out int n) ? n + 1 : 1;
+                    continue;
+                }
                 bool kit = kits.Values.TryGetValue(id, out string? value);
-                if (!kit) value = groups.GroupFor(category);
+                if (!kit) value = rule?.Group;
                 if (value == null) continue;
 
-                Parameter? p = element.get_Parameter(target.Guid);
                 if (p == null)
                 {
                     if (TypeOf(element)?.get_Parameter(target.Guid) != null)
@@ -323,25 +500,67 @@ namespace VKTools.Revit.Spec
                 {
                     // Как в adsk_grouping v2: значение задано в семействе намеренно или формулой — не ошибка модели, но в спецификации будет своё
                     _plan.AddIssue(M, Severity.Warning, target.Name, "только для чтения (задан формулой или связан в семействе)", FamilyLabel(element), id)
-                        .Action = "Уберите формулу или связь у ADSK_Группирование в семействе.";
+                        .Action = "Уберите формулу или связь у ADSK_Группирование в семействе — или поставьте семейству «не трогать» в таблице групп.";
                     continue;
                 }
                 if (Guard(M, element, p, target.Name, FamilyLabel(element))) continue;
-                AddChange(M, element, target.Name, target.Guid, old, value!, kit ? "комплект шкафа" : $"категория → {value}", null);
+                string source = kit ? "комплект шкафа" : rule!.IsFamilyRule ? $"семейство «{rule.Family}» → {value}" : $"категория → {value}";
+                AddChange(M, element, target, old, ParamValue.OfText(value), source, null);
             }
-            _plan.Notes.Add($"Группирование: элементов модели {elements.Count}; служебных позиций (_SYS_…, SYS_Ключ), которые не трогаются: {service}; "
+
+            foreach (GroupRule rule in groups.Rules.Where(r => r.IsFamilyRule && !used.Contains(r)))
+            {
+                _plan.AddIssue(M, Severity.Info, target.Name, $"строка таблицы «{rule.Family}» не совпала ни с одним семейством модели", string.Empty)
+                    .Action = "Проверьте маску имени семейства (* — любые символы).";
+            }
+            string skippedText = skipped.Count == 0 ? string.Empty
+                : "; «не трогать»: " + string.Join(", ", skipped.Select(p => $"{(p.Key.Family.Length > 0 ? p.Key.Family : p.Key.Category)} — {p.Value}"));
+            _plan.Notes.Add($"Группирование: элементов модели {elements.Count}; служебных позиций (_SYS_…, SYS_Ключ), которые не трогаются: {service}"
+                + skippedText + "; "
                 + (kitNames == null ? "комплекты шкафов не обработаны (kit_params.csv)." : $"шкафов {kits.Cabinets}, комплектующих {kits.Components}."));
+            if (groups.SortSurprises().Count > 0)
+            {
+                (string first, string second) = groups.SortSurprises()[0];
+                _plan.AddIssue(M, Severity.Warning, target.Name, $"номер «{first}» встанет в спецификации перед «{second}»: Revit сортирует текст посимвольно", string.Empty)
+                    .Action = "Поставьте ведущий ноль (02, 10) в таблице групп.";
+            }
         }
 
-        private KitPlan PlanKits(List<Element> elements, KitParameterNames names, GroupingTable groups)
+        /// <summary>Правило таблицы групп для элемента: семейство верхнего родителя, своё семейство, категория, «*».</summary>
+        private GroupRule? Resolve(GroupingTable groups, Element element, string? category, string? family, Dictionary<long, (Element? Top, int Depth)> tops)
+        {
+            string? topFamily = null;
+            string? topCategory = null;
+            if (element is FamilyInstance fi && fi.SuperComponent != null)
+            {
+                (Element? top, int _) = CachedTop(fi, tops);
+                if (top != null)
+                {
+                    topFamily = (TypeOf(top) as ElementType)?.FamilyName;
+                    topCategory = top.Category.ToBuiltInCategory()?.ToString();
+                }
+            }
+            return groups.Resolve(category, family, topCategory, topFamily);
+        }
+
+        private static (Element? Top, int Depth) CachedTop(FamilyInstance fi, Dictionary<long, (Element? Top, int Depth)> tops)
+        {
+            long id = fi.Id.ToLong();
+            if (tops.TryGetValue(id, out (Element? Top, int Depth) cached)) return cached;
+            (Element? Top, int Depth) top = TopParent(fi);
+            tops[id] = top;
+            return top;
+        }
+
+        private KitPlan PlanKits(List<Element> elements, KitParameterNames names, GroupingTable groups, Dictionary<long, (Element? Top, int Depth)> tops)
         {
             const SpecModule M = SpecModule.Grouping;
             _progress.Report("Группирование: комплекты пожарных шкафов…");
             var records = new List<KitElement>();
-            var tops = new Dictionary<long, Element>();
+            var topElements = new Dictionary<long, Element>();
             foreach (FamilyInstance fi in elements.OfType<FamilyInstance>())
             {
-                (Element? top, int depth) = TopParent(fi);
+                (Element? top, int depth) = CachedTop(fi, tops);
                 bool isComponent = fi.LookupParameter(names.ComponentFlag) != null;
                 long id = fi.Id.ToLong();
                 if (top == null)
@@ -368,7 +587,9 @@ namespace VKTools.Revit.Spec
                     }
                     number = keys.Count == 1 ? Number(keys[0]) : null;
                 }
-                tops[top.Id.ToLong()] = top;
+                // «Не трогать» у шкафа в таблице групп — весь комплект не трогаем
+                if (TopRule(groups, top)?.Skip == true) continue;
+                topElements[top.Id.ToLong()] = top;
                 records.Add(new KitElement
                 {
                     Id = id,
@@ -380,7 +601,13 @@ namespace VKTools.Revit.Spec
                     TypeLabel = TypeLabel(fi),
                 });
             }
-            return KitGrouping.Plan(records, topId => tops.TryGetValue(topId, out Element? top) ? groups.GroupFor(top.Category.ToBuiltInCategory()?.ToString()) : null);
+            return KitGrouping.Plan(records, topId => topElements.TryGetValue(topId, out Element? top) ? TopRule(groups, top)?.Group : null);
+        }
+
+        private GroupRule? TopRule(GroupingTable groups, Element top)
+        {
+            GroupRule? rule = groups.Resolve(top.Category.ToBuiltInCategory()?.ToString(), (TypeOf(top) as ElementType)?.FamilyName, null, null);
+            return rule;
         }
 
         private static (Element? Top, int Depth) TopParent(FamilyInstance fi)
@@ -432,10 +659,10 @@ namespace VKTools.Revit.Spec
             return true;
         }
 
-        private void AddChange(SpecModule module, Element element, string name, Guid guid, string old, string value, string source, long? sourceId)
+        private void AddChange(SpecModule module, Element element, ParamKey key, string old, ParamValue value, string source, long? sourceId)
         {
             (string family, string type) = Labels(element);
-            _plan.AddChange(new ParamChange(module, element.Id.ToLong(), name, guid, old, value)
+            _plan.AddChange(new ParamChange(module, element.Id.ToLong(), key, old, value)
             {
                 Category = element.Category?.Name ?? string.Empty,
                 Family = family,

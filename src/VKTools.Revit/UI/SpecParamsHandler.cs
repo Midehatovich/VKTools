@@ -16,28 +16,37 @@ namespace VKTools.Revit.UI
         Refresh,
         Trial,
         Apply,
+        Save,
     }
 
-    /// <summary>Действия окна «Параметры спецификации» в контексте Revit API. Анализ — заново перед каждым действием.</summary>
+    /// <summary>
+    /// Действия окна модуля Р2 в контексте Revit API. Анализ — заново перед каждым действием, с настройками,
+    /// которые были в окне при нажатии кнопки; правила по умолчанию и настройка проекта перечитываются каждый раз.
+    /// </summary>
     internal sealed class SpecParamsHandler : IExternalEventHandler
     {
         private SpecParamsWindow? _window;
         private SpecRequest _request;
-        private List<SpecModule> _modules = new List<SpecModule>();
+        private SpecOptions? _options;
+        private List<ElementId>? _scope;
 
-        public void Set(SpecParamsWindow window, SpecRequest request, IEnumerable<SpecModule> modules)
+        /// <param name="scope">Элементы области из последнего «Обновить» (для пробного прогона и записи); null — взять заново.</param>
+        public void Set(SpecParamsWindow window, SpecRequest request, SpecOptions options, List<ElementId>? scope)
         {
             _window = window;
             _request = request;
-            _modules = modules.ToList();
+            _options = options;
+            _scope = scope;
         }
 
         public void Execute(UIApplication app)
         {
             SpecParamsWindow? window = _window;
-            if (window == null) return;
+            SpecOptions? options = _options;
+            if (window == null || options == null) return;
             Document doc = window.Document;
             var timings = new OperationTimings { Trace = line => Host.Log.Info("  этап " + line) };
+            string title = options.Module.Title();
             try
             {
                 if (!doc.IsValidObject)
@@ -50,17 +59,36 @@ namespace VKTools.Revit.UI
                     window.ShowMessage($"Окно построено по модели «{doc.Title}». Перейдите в её окно и повторите.");
                     return;
                 }
-                SpecParamsHost.LastModules = _modules;
+                SpecParamsHost.RememberScope(options.Module, options.Scope);
+                (SpecOptions stored, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, options.Module);
+
+                if (_request == SpecRequest.Save)
+                {
+                    Save(doc, window, options, defaults);
+                    return;
+                }
+
+                List<ElementId>? scope = _scope;
+                string scopeLabel;
+                if (_request == SpecRequest.Refresh || (scope == null && options.Scope != NestedScope.Model))
+                {
+                    scope = SpecScope.Resolve(app.ActiveUIDocument, options, out scopeLabel);
+                }
+                else
+                {
+                    scopeLabel = SpecScope.Label(options, scope);
+                }
+                window.ShowSettingsState(stored, defaults);
 
                 if (_request == SpecRequest.Refresh)
                 {
                     ParamPlan fresh;
-                    using (var progress = new ProgressScope(app, "анализ параметров", window))
+                    using (var progress = new ProgressScope(app, "анализ: " + title, window))
                     {
-                        fresh = SpecPlanner.Build(doc, _modules, progress, timings);
+                        fresh = SpecPlanner.Build(doc, options, defaults, scope, progress, timings);
                     }
                     LogPlan(doc, fresh, timings);
-                    window.ShowPlan(fresh, null, null, SpecReportBuilder.Build(doc.Title, fresh, null));
+                    window.ShowPlan(fresh, null, null, SpecReportBuilder.Build(doc.Title, fresh, null), options, scope, scopeLabel);
                     return;
                 }
                 if (doc.IsReadOnly)
@@ -70,26 +98,34 @@ namespace VKTools.Revit.UI
                 }
 
                 SpecRunMode mode = _request == SpecRequest.Apply ? SpecRunMode.Apply : SpecRunMode.Trial;
-                Host.Log.Info($"Параметры спецификации «{doc.Title}»: {(mode == SpecRunMode.Apply ? "запись" : "пробный прогон")}, модули: {string.Join(", ", _modules.Select(m => m.Title()))}.");
+                bool saveSettings = mode == SpecRunMode.Apply && options.SettingsSignature() != stored.SettingsSignature();
+                Host.Log.Info($"{title} «{doc.Title}»: {(mode == SpecRunMode.Apply ? "запись" : "пробный прогон")}, область: {scopeLabel}"
+                    + (saveSettings ? ", с сохранением настройки в модели." : "."));
                 ParamPlan plan;
                 ParamPlan? after = null;
                 SpecRunResult run;
-                using (var progress = new ProgressScope(app, mode == SpecRunMode.Apply ? "запись параметров" : "пробный прогон", window))
+                using (var progress = new ProgressScope(app, (mode == SpecRunMode.Apply ? "запись: " : "пробный прогон: ") + title, window))
                 {
-                    plan = SpecPlanner.Build(doc, _modules, progress, timings);
+                    plan = SpecPlanner.Build(doc, options, defaults, scope, progress, timings);
                     LogPlan(doc, plan, timings);
                     if (mode == SpecRunMode.Apply && plan.WriteBlockedReason != null)
                     {
-                        window.ShowPlan(plan, null, null, SpecReportBuilder.Build(doc.Title, plan, null));
+                        window.ShowPlan(plan, null, null, SpecReportBuilder.Build(doc.Title, plan, null), options, scope, scopeLabel);
                         window.ShowMessage("Запись запрещена: " + plan.WriteBlockedReason);
                         return;
                     }
-                    run = SpecExecutor.Run(doc, plan, mode, progress, timings, Host.Log);
+                    Func<Document, string?>? save = saveSettings ? d => SpecSettingsStore.Store(d, options, defaults) : (Func<Document, string?>?)null;
+                    run = SpecExecutor.Run(doc, plan, mode, progress, timings, Host.Log, save);
+                    if (run.Failed.Any(f => f.Reason.StartsWith(FamilyDiagnostics.SilentFailure, StringComparison.Ordinal)))
+                    {
+                        progress.Report("Проверка семейств, где Revit не сохранил значение…");
+                        using (timings.Measure("проверка семейств")) run.Diagnoses.AddRange(FamilyDiagnostics.Explain(doc, run.Failed, Host.Log));
+                    }
                     if (run.Committed)
                     {
                         try
                         {
-                            after = SpecPlanner.Build(doc, _modules, progress, timings);
+                            after = SpecPlanner.Build(doc, options, defaults, scope, progress, timings);
                         }
                         catch (OperationCanceledException)
                         {
@@ -99,25 +135,62 @@ namespace VKTools.Revit.UI
                 }
                 run.Timings = timings.Summary();
                 LogRun(run, after);
-                window.ShowPlan(plan, run, after, SpecReportBuilder.Build(doc.Title, plan, run));
+                if (run.SettingsSaved)
+                {
+                    (SpecOptions saved, SpecDefaults savedDefaults) = SpecSettingsLoader.Load(doc, options.Module);
+                    window.ShowSettingsState(saved, savedDefaults);
+                }
+                window.ShowPlan(plan, run, after, SpecReportBuilder.Build(doc.Title, plan, run), options, scope, scopeLabel);
             }
             catch (OperationCanceledException)
             {
-                Host.Log.Info($"Параметры спецификации: отменено пользователем на этапе анализа. Время: {timings.Summary()}");
+                Host.Log.Info($"{title}: отменено пользователем на этапе анализа. Время: {timings.Summary()}");
                 window.ShowMessage("Отменено на этапе анализа: модель не изменялась.", error: false);
             }
             catch (Exception ex)
             {
-                Host.Log.Error($"Параметры спецификации: ошибка. Время: {timings.Summary()}", ex);
+                Host.Log.Error($"{title}: ошибка. Время: {timings.Summary()}", ex);
                 window.ShowMessage("Ошибка: " + ex.Message + " Модель не изменена, если запись не была подтверждена сообщением. Подробности в логе.");
             }
         }
 
         public string GetName() => "VK Tools: параметры спецификации";
 
+        private static void Save(Document doc, SpecParamsWindow window, SpecOptions options, SpecDefaults defaults)
+        {
+            if (doc.IsReadOnly)
+            {
+                window.ShowMessage("Документ сейчас только для чтения: сохранить настройку нельзя.");
+                return;
+            }
+            bool toDefault = options.IsDefault(defaults);
+            string? problem;
+            try
+            {
+                problem = SpecSettingsStore.Save(doc, options, defaults);
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+            {
+                problem = ex.Message;
+            }
+            (SpecOptions stored, SpecDefaults fresh) = SpecSettingsLoader.Load(doc, options.Module);
+            window.ShowSettingsState(stored, fresh);
+            if (problem != null)
+            {
+                Host.Log.Warn($"{options.Module.Title()} «{doc.Title}»: настройка не сохранена — {problem}");
+                window.ShowMessage("Настройка не сохранена: " + problem);
+                return;
+            }
+            Host.Log.Info($"{options.Module.Title()} «{doc.Title}»: настройка {(toDefault ? "сброшена на умолчание (удалена из модели)" : "сохранена в модели")}: {options.SettingsSignature()}");
+            string sync = doc.IsWorkshared ? " Синхронизируйте модель, чтобы коллеги увидели её." : string.Empty;
+            window.ShowMessage((toDefault
+                ? "Настройка проекта удалена: работают правила по умолчанию."
+                : $"Настройка сохранена в модели (в журнале отмены — «{SpecSettingsStore.TransactionName}»).") + sync, error: false);
+        }
+
         internal static void LogPlan(Document doc, ParamPlan plan, OperationTimings timings)
         {
-            Host.Log.Info($"Анализ параметров «{doc.Title}»: " + string.Join("; ", plan.Modules.Select(m =>
+            Host.Log.Info($"Анализ «{doc.Title}»: " + string.Join("; ", plan.Modules.Select(m =>
                 $"{m.Title()}: изменений {plan.ChangeCount(m)}, без изменений {plan.Unchanged(m)}, ошибок {plan.IssueCount(m, Severity.Error)}, "
                 + $"предупреждений {plan.IssueCount(m, Severity.Warning)}")) + $". Время: {timings.Summary()}");
             foreach (string note in plan.Notes) Host.Log.Info("  " + note);
@@ -134,32 +207,79 @@ namespace VKTools.Revit.UI
         {
             foreach (ChangeProblem f in run.Failed.Take(100)) Host.Log.Warn($"  не записано: Id {f.Change.ElementId} {f.Change.Parameter} «{f.Change.New}»: {f.Reason}");
             foreach (ChangeProblem o in run.Overwritten.Take(100)) Host.Log.Warn($"  перезаписано после фиксации: Id {o.Change.ElementId} {o.Change.Parameter} «{o.Change.New}» → «{o.Actual}»");
+            foreach (FamilyDiagnosis d in run.Diagnoses) Host.Log.Warn($"  причина в семействе «{d.Family}» ({d.Parameter}, {d.Ids.Count} шт.): {d.Message} → {d.Action}");
             foreach (string w in run.Warnings) Host.Log.Warn("  " + w);
             foreach (string e in run.Errors) Host.Log.Warn("  ошибка: " + e);
+            if (run.SettingsSaved) Host.Log.Info("  настройка сохранена в модели той же операцией");
             if (after != null) Host.Log.Info($"  повторный анализ после записи: изменений {after.Changes.Count}");
             Host.Log.Info("  итог: " + run.Status);
             Host.Log.Info("  время: " + run.Timings);
         }
     }
 
-    /// <summary>Одно окно на сессию; события создаются командой (контекст Revit API).</summary>
+    /// <summary>Элементы области переноса: берутся при «Обновить», те же идут в пробный прогон и запись.</summary>
+    internal static class SpecScope
+    {
+        /// <summary>null — вся модель.</summary>
+        public static List<ElementId>? Resolve(UIDocument uidoc, SpecOptions options, out string label)
+        {
+            Document doc = uidoc.Document;
+            if (options.Module != SpecModule.Nested || options.Scope == NestedScope.Model)
+            {
+                label = "вся модель";
+                return null;
+            }
+            if (options.Scope == NestedScope.Selection)
+            {
+                List<ElementId> selected = uidoc.Selection.GetElementIds().ToList();
+                label = Label(options, selected);
+                return selected;
+            }
+            View? view = doc.ActiveView;
+            if (view == null)
+            {
+                label = "активный вид (его нет)";
+                return new List<ElementId>();
+            }
+            try
+            {
+                List<ElementId> visible = new FilteredElementCollector(doc, view.Id).OfClass(typeof(FamilyInstance)).ToElementIds().ToList();
+                label = $"вид «{view.Name}», элементов {visible.Count}";
+                return visible;
+            }
+            catch (Autodesk.Revit.Exceptions.ArgumentException)
+            {
+                label = $"вид «{view.Name}» не показывает элементы модели";
+                return new List<ElementId>();
+            }
+        }
+
+        public static string Label(SpecOptions options, ICollection<ElementId>? scope) =>
+            scope == null ? "вся модель"
+            : options.Scope == NestedScope.Selection ? $"выделенные, элементов {scope.Count}"
+            : $"активный вид, элементов {scope.Count}";
+    }
+
+    /// <summary>По окну на модуль; события создаются командой (контекст Revit API).</summary>
     internal static class SpecParamsHost
     {
-        private static SpecParamsWindow? _current;
-        private static SpecParamsHandler? _handler;
-        private static ExternalEvent? _event;
+        private static readonly Dictionary<SpecModule, Slot> Slots = new Dictionary<SpecModule, Slot>();
+        private static readonly Dictionary<SpecModule, NestedScope> Scopes = new Dictionary<SpecModule, NestedScope>();
         private static SelectElementsHandler? _selectHandler;
         private static ExternalEvent? _selectEvent;
 
-        /// <summary>Модули последнего запуска в этом сеансе Revit: окно открывается с ними.</summary>
-        public static List<SpecModule> LastModules { get; set; } = new List<SpecModule> { SpecModule.Nested, SpecModule.Grouping };
+        /// <summary>Область последнего запуска в этом сеансе Revit (в модели не хранится).</summary>
+        public static NestedScope LastScope(SpecModule module) => Scopes.TryGetValue(module, out NestedScope scope) ? scope : NestedScope.Model;
 
-        public static void Show(UIApplication app, Document doc, ParamPlan plan)
+        public static void RememberScope(SpecModule module, NestedScope scope) => Scopes[module] = scope;
+
+        public static void Show(UIApplication app, Document doc, SpecOptions options, SpecDefaults defaults, ParamPlan plan, List<ElementId>? scope, string scopeLabel)
         {
-            if (_handler == null || _event == null)
+            if (!Slots.TryGetValue(options.Module, out Slot? slot))
             {
-                _handler = new SpecParamsHandler();
-                _event = ExternalEvent.Create(_handler);
+                var handler = new SpecParamsHandler();
+                slot = new Slot(handler, ExternalEvent.Create(handler));
+                Slots[options.Module] = slot;
             }
             if (_selectHandler == null || _selectEvent == null)
             {
@@ -167,26 +287,45 @@ namespace VKTools.Revit.UI
                 _selectEvent = ExternalEvent.Create(_selectHandler);
             }
 
-            _current?.Close();
-            var window = new SpecParamsWindow(doc, _handler, _event, _selectHandler, _selectEvent, plan.Modules);
+            slot.Window?.Close();
+            var window = new SpecParamsWindow(doc, options, defaults, slot.Handler, slot.Event, _selectHandler, _selectEvent);
             window.AttachTo(app.MainWindowHandle);
             window.Closed += (s, e) =>
             {
-                if (ReferenceEquals(_current, s)) _current = null;
+                if (ReferenceEquals(slot.Window, s)) slot.Window = null;
             };
-            _current = window;
-            window.ShowPlan(plan, null, null, SpecReportBuilder.Build(doc.Title, plan, null));
+            slot.Window = window;
+            window.ShowPlan(plan, null, null, SpecReportBuilder.Build(doc.Title, plan, null), options, scope, scopeLabel);
             window.Show();
         }
 
         public static void CloseAll()
         {
-            _current?.Close();
-            _current = null;
-            _event?.Dispose();
-            _event = null;
+            foreach (Slot slot in Slots.Values)
+            {
+                slot.Window?.Close();
+                slot.Window = null;
+                slot.Event.Dispose();
+            }
+            Slots.Clear();
             _selectEvent?.Dispose();
             _selectEvent = null;
+            _selectHandler = null;
+        }
+
+        private sealed class Slot
+        {
+            public Slot(SpecParamsHandler handler, ExternalEvent externalEvent)
+            {
+                Handler = handler;
+                Event = externalEvent;
+            }
+
+            public SpecParamsHandler Handler { get; }
+
+            public ExternalEvent Event { get; }
+
+            public SpecParamsWindow? Window { get; set; }
         }
     }
 }

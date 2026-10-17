@@ -8,7 +8,7 @@ namespace VKTools.Core.Spec
     /// <summary>Модули записи параметров спецификации (Р2). Порядок значений — порядок записи.</summary>
     public enum SpecModule
     {
-        /// <summary>Родитель → общие вложенные (NestedParamSync v2.1, шаг 3).</summary>
+        /// <summary>Родитель → общие вложенные: выбранные параметры (NestedParamSync v2.1, шаг 3, — частный случай).</summary>
         Nested = 0,
 
         /// <summary>ADSK_Группирование по категории, спринклеры, комплекты шкафов.</summary>
@@ -17,33 +17,38 @@ namespace VKTools.Core.Spec
 
     public static class SpecModuleText
     {
-        public static string Title(this SpecModule module) => module == SpecModule.Nested ? "Вложенные" : "Группирование";
+        public static string Title(this SpecModule module) => module == SpecModule.Nested ? "Перенос во вложенные" : "Группирование";
     }
 
-    /// <summary>Одно изменение: элемент, параметр (по GUID), было → станет. Только данные, без объектов Revit.</summary>
+    /// <summary>Одно изменение: элемент, параметр, было → станет. Только данные, без объектов Revit.</summary>
     public sealed class ParamChange
     {
-        public ParamChange(SpecModule module, long elementId, string parameter, Guid guid, string oldValue, string newValue)
+        public ParamChange(SpecModule module, long elementId, ParamKey key, string oldValue, ParamValue value)
         {
             Module = module;
             ElementId = elementId;
-            Parameter = parameter;
-            Guid = guid;
+            Key = key;
             Old = oldValue;
-            New = newValue;
+            Value = value;
         }
 
         public SpecModule Module { get; }
 
         public long ElementId { get; }
 
-        public string Parameter { get; }
+        public ParamKey Key { get; }
 
-        public Guid Guid { get; }
+        /// <summary>Имя параметра для отчёта.</summary>
+        public string Parameter => Key.Name;
 
+        /// <summary>Было — как показывает Revit.</summary>
         public string Old { get; }
 
-        public string New { get; }
+        /// <summary>Что записать.</summary>
+        public ParamValue Value { get; }
+
+        /// <summary>Станет — как показывает Revit.</summary>
+        public string New => Value.Display;
 
         public string Category { get; set; } = string.Empty;
 
@@ -56,6 +61,42 @@ namespace VKTools.Core.Spec
 
         /// <summary>Элемент-источник (родитель) — выделяется вместе с элементом.</summary>
         public long? SourceId { get; set; }
+    }
+
+    /// <summary>
+    /// Параметр, который можно переносить из родителя во вложенные: есть у родителя и хотя бы у одного вложенного
+    /// (или выбран раньше). Счётчики — для окна выбора: сколько вложенных изменится и сколько с замечаниями.
+    /// </summary>
+    public sealed class ParamCandidate
+    {
+        public ParamCandidate(ParamKey key, string dataType)
+        {
+            Key = key;
+            DataType = dataType;
+        }
+
+        public ParamKey Key { get; }
+
+        public string Name => Key.Name;
+
+        public string KindText => Key.KindText;
+
+        /// <summary>Тип данных Revit: «Текст», «Длина», «Да/Нет»…</summary>
+        public string DataType { get; set; }
+
+        /// <summary>Вложенных, у которых параметр есть (пар родитель → вложенное).</summary>
+        public int Nested { get; set; }
+
+        /// <summary>Сколько вложенных получили бы новое значение, если параметр отмечен.</summary>
+        public int WouldChange { get; set; }
+
+        /// <summary>Вложенных, которым значение не перенести (тип, только чтение, занят…), без «у родителя пусто».</summary>
+        public int Problems { get; set; }
+
+        /// <summary>У родителя пусто — вложенные не трогаем.</summary>
+        public int ParentEmpty { get; set; }
+
+        public bool Selected { get; set; }
     }
 
     /// <summary>
@@ -96,7 +137,7 @@ namespace VKTools.Core.Spec
     /// <summary>Что будет записано и что пропущено. Строится заново перед каждым пробным прогоном и записью.</summary>
     public sealed class ParamPlan
     {
-        private readonly Dictionary<(long, Guid), ParamChange> _byKey = new Dictionary<(long, Guid), ParamChange>();
+        private readonly Dictionary<(long, string), ParamChange> _byKey = new Dictionary<(long, string), ParamChange>();
         private readonly Dictionary<(SpecModule, Severity, string, string, string), PlanIssue> _issues =
             new Dictionary<(SpecModule, Severity, string, string, string), PlanIssue>();
         private readonly List<PlanIssue> _issueOrder = new List<PlanIssue>();
@@ -110,6 +151,15 @@ namespace VKTools.Core.Spec
         public IReadOnlyList<SpecModule> Modules { get; }
 
         public List<ParamChange> Changes { get; } = new List<ParamChange>();
+
+        /// <summary>«Перенос во вложенные»: параметры для выбора в окне.</summary>
+        public List<ParamCandidate> Candidates { get; } = new List<ParamCandidate>();
+
+        /// <summary>«Группирование»: семейства элементов с ADSK_Группирование — подсказки для таблицы групп.</summary>
+        public SortedSet<string> FamilyNames { get; } = new SortedSet<string>(StringComparer.CurrentCultureIgnoreCase);
+
+        /// <summary>«Группирование»: категории (имя BuiltInCategory → название в Revit) — для таблицы групп.</summary>
+        public SortedDictionary<string, string> Categories { get; } = new SortedDictionary<string, string>(StringComparer.Ordinal);
 
         public IReadOnlyList<PlanIssue> Issues => _issueOrder;
 
@@ -136,14 +186,14 @@ namespace VKTools.Core.Spec
         /// </summary>
         public bool AddChange(ParamChange change)
         {
-            var key = (change.ElementId, change.Guid);
+            var key = (change.ElementId, change.Key.Id);
             if (_byKey.TryGetValue(key, out ParamChange? existing))
             {
                 if (existing.New == change.New) return false;
                 PlanIssue issue = AddIssue(change.Module, Severity.Error, change.Parameter,
                     $"конфликт правил: уже получает «{existing.New}» ({existing.Module.Title()}), второе значение «{change.New}» не пишется",
                     change.Family, change.ElementId);
-                issue.Action = "Уберите параметр из одного из модулей (nested_params.csv или ADSK_Группирование).";
+                issue.Action = "Уберите параметр из одного из правил.";
                 return false;
             }
             _byKey[key] = change;

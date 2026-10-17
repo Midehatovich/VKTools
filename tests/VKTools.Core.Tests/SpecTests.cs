@@ -176,11 +176,11 @@ namespace VKTools.Core.Tests
         {
             var plan = new ParamPlan(new[] { SpecModule.Grouping, SpecModule.Nested });
             Assert.Equal(new[] { SpecModule.Nested, SpecModule.Grouping }, plan.Modules);
-            Guid g = KnownParameters.AdskGrouping.Guid;
-            Assert.True(plan.AddChange(new ParamChange(SpecModule.Nested, 1, "ADSK_Группирование", g, "", "5")));
-            Assert.False(plan.AddChange(new ParamChange(SpecModule.Grouping, 1, "ADSK_Группирование", g, "", "5")));
+            ParamKey g = ParamKey.Shared("ADSK_Группирование", KnownParameters.AdskGrouping.Guid);
+            Assert.True(plan.AddChange(new ParamChange(SpecModule.Nested, 1, g, "", ParamValue.OfText("5"))));
+            Assert.False(plan.AddChange(new ParamChange(SpecModule.Grouping, 1, g, "", ParamValue.OfText("5"))));
             Assert.Empty(plan.Issues);
-            Assert.False(plan.AddChange(new ParamChange(SpecModule.Grouping, 1, "ADSK_Группирование", g, "", "7")));
+            Assert.False(plan.AddChange(new ParamChange(SpecModule.Grouping, 1, g, "", ParamValue.OfText("7"))));
             PlanIssue issue = Assert.Single(plan.Issues);
             Assert.Equal(Severity.Error, issue.Severity);
             Assert.Single(plan.Changes);
