@@ -126,11 +126,12 @@ namespace VKTools.Core.Config
         public static readonly RuleFileSpec LookalikeValues =
             new RuleFileSpec("lookalike_values.csv", 1, "Параметр", "GUID");
 
-        /// <summary>Все файлы правил: проверка в настройках и тест встроенных правил. Файлы Р2 описаны в <see cref="Spec.SpecRuleTables"/>.</summary>
+        /// <summary>Все файлы правил: проверка в настройках и тест встроенных правил. Файлы Р2 описаны в <see cref="Spec.SpecRuleTables"/>, Р3 — в <see cref="Calc.CalcTables"/>.</summary>
         public static IReadOnlyList<RuleFileSpec> All { get; } = new[]
         {
             Parameters, VkCategories, Updaters, InsulationFromHost, LookalikeValues,
             Spec.SpecRuleTables.NestedParameters, Spec.SpecRuleTables.Grouping, Spec.SpecRuleTables.KitParameters,
+            Calc.CalcTables.Resources, Calc.CalcTables.PipeRules, Calc.CalcTables.Supports,
         };
 
         public static ParsedRules<RequiredParameter> ParseParameters(CsvTable table, string fileName)

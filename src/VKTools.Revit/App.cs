@@ -38,6 +38,7 @@ namespace VKTools.Revit
         {
             MergeWindowHost.CloseAll();
             SpecParamsHost.CloseAll();
+            CalcHost.CloseAll();
             ReportWindowHost.CloseAll();
             Host.Log.Info("VK Tools выгружен.");
             return Result.Succeeded;
@@ -116,8 +117,20 @@ namespace VKTools.Revit
                 LargeImage = RibbonIcons.SpecParams(32),
                 Image = RibbonIcons.SpecParams(16),
             };
+            var calc = new PushButtonData("VKTools.CalcItems", "Расчётные\nпозиции", assembly, typeof(CalcItemsCommand).FullName)
+            {
+                ToolTip = "Грунтовка, краска и металл для креплений по трубам: служебные позиции в спецификациях по каждой системе (группа 9.x).",
+                LongDescription =
+                    "Площадь труб π·Dнар·L и число креплений по шагу из таблиц проекта (ресурсы, правила для труб, крепления — в окне, хранятся в модели). " +
+                    "Позиции — экземпляры служебного семейства _SYS_SpecCalcItem; его нет — плагин создаст его сам. «SYS_Кол-во вручную» перекрывает расчёт. " +
+                    "Пробный прогон проверяет, что позиции попадают в свои спецификации; запись — одна операция в журнале отмены.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.Calc(32),
+                Image = RibbonIcons.Calc(16),
+            };
             spec.AddItem(nested);
             spec.AddItem(grouping);
+            spec.AddItem(calc);
 
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)

@@ -88,9 +88,11 @@ namespace VKTools.Core.Spec
             Set(section + ".savedAt", null);
         }
 
-        private string? Get(string key) => Values.TryGetValue(key, out string? value) ? value : null;
+        /// <summary>Значение по ключу; null — ключа нет (по умолчанию). Разделы других модулей (calc.*) — через него.</summary>
+        public string? Get(string key) => Values.TryGetValue(key, out string? value) ? value : null;
 
-        private void Set(string key, string? value)
+        /// <summary>null удаляет ключ.</summary>
+        public void Set(string key, string? value)
         {
             if (value == null) Values.Remove(key);
             else Values[key] = value;

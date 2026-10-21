@@ -38,5 +38,25 @@ namespace VKTools.Revit.Compat
             return value < 0 ? (BuiltInCategory)value : (BuiltInCategory?)null;
 #endif
         }
+
+        /// <summary>Общий параметр в семейство, группа «Данные». С 2022 группа — ForgeTypeId, в 2025 BuiltInParameterGroup удалён.</summary>
+        public static FamilyParameter AddDataParameter(this FamilyManager manager, ExternalDefinition definition, bool instance)
+        {
+#if REVIT2022_OR_GREATER
+            return manager.AddParameter(definition, GroupTypeId.Data, instance);
+#else
+            return manager.AddParameter(definition, BuiltInParameterGroup.PG_DATA, instance);
+#endif
+        }
+
+        /// <summary>Перепривязать параметр проекта к другому набору категорий, не меняя группу параметра.</summary>
+        public static bool ReInsertKeepingGroup(this BindingMap map, Definition definition, ElementBinding binding)
+        {
+#if REVIT2022_OR_GREATER
+            return map.ReInsert(definition, binding, definition.GetGroupTypeId());
+#else
+            return map.ReInsert(definition, binding, definition.ParameterGroup);
+#endif
+        }
     }
 }

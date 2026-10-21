@@ -34,6 +34,10 @@ namespace VKTools.Revit.UI
         public static ImageSource NestedTransfer(int size) =>
             Draw(size, Green, "M 6,6 L 17,6 L 17,14 L 6,14 Z M 11.5,14 L 11.5,21.5 L 17.5,21.5 M 15,19 L 17.5,21.5 L 15,24 M 20,17.5 L 26,17.5 L 26,25.5 L 20,25.5 Z");
 
+        /// <summary>Знак суммы: расчётные позиции.</summary>
+        public static ImageSource Calc(int size) =>
+            Draw(size, Green, "M 23,8 L 9,8 L 16,16 L 9,24 L 23,24");
+
         public static ImageSource Settings(int size) =>
             Draw(size, Gray, "M 7,10 L 25,10 M 7,16 L 25,16 M 7,22 L 25,22 M 12,7.5 L 12,12.5 M 20,13.5 L 20,18.5 M 14,19.5 L 14,24.5");
 
