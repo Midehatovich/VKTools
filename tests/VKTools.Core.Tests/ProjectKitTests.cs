@@ -183,6 +183,35 @@ namespace VKTools.Core.Tests
         }
 
         [Fact]
+        public void Экспорт_пересохранённый_в_Excel_читается()
+        {
+            // Файл с проверки 0.6.0 (КрМа3): Excel дописал «;» в конец каждой строки, разнёс комментарии по ячейкам
+            string text = "# VK Tools: комплекты проекта для ADSK_Группирование.;;;;;;;;;\r\n"
+                + "# Строка состава: Семейство; Тип (пусто — все типоразмеры); Вложенное семейство; Вложенный тип (пусто — любой). Порядок строк — ранг .01, .02…;;;;;;\r\n"
+                + "#schema=1;;;;;;;;;\r\n"
+                + "Семейство;Тип;Вложенное семейство;Вложенный тип;K;;;;;\r\n"
+                + Crane + ";;469_В_Кран шаровой муфтовый_Общий;;;;;;;\r\n"
+                + Crane + ";;469_В_Рукаф резино тканевый_Общий;;;;;;;\r\n"
+                + Crane + ";;469_В_Штуцер с резьбой и накидной гайкой_Общий;;;;;;;\r\n"
+                + Crane + ";Бабочка (DN 15-25);;;1;;;;;\r\n";
+
+            var issues = new List<ConfigIssue>();
+            KitSettings? kits = KitSettings.Parse(text, "тест", issues);
+            Assert.Empty(issues);
+            Assert.NotNull(kits);
+            KitRule rule = Assert.Single(kits!.Rules);
+            Assert.Equal(3, rule.Members.Count);
+            Assert.Equal("469_В_Штуцер с резьбой и накидной гайкой_Общий", rule.Members[2].Family);
+            Assert.Equal(1, kits.NumberFor(Crane, "Бабочка (DN 15-25)"));
+        }
+
+        [Fact]
+        public void Комментарии_экспорта_без_разделителя()
+        {
+            Assert.All(KitSettings.FileComments, c => Assert.DoesNotContain(";", c, StringComparison.Ordinal));
+        }
+
+        [Fact]
         public void Комплекты_битые_строки_ошибки()
         {
             var issues = new List<ConfigIssue>();
