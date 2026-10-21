@@ -61,6 +61,17 @@ namespace VKTools.Core.Calc
             Auto = CalcEngine.RoundUp(Quantity, resource.Round);
         }
 
+        /// <summary>Количество задано заранее (запас строки: итог − N), а не расход × база.</summary>
+        public CalcTarget(string scope, string system, CalcResource resource, double baseValue, double quantity)
+        {
+            Scope = scope;
+            System = system;
+            Resource = resource;
+            Base = baseValue;
+            Quantity = quantity;
+            Auto = Math.Round(quantity, 6);
+        }
+
         public string Scope { get; }
 
         public string System { get; }

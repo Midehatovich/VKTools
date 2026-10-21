@@ -24,6 +24,9 @@ namespace VKTools.Core.Calc
         /// <summary>sup_kg — масса креплений по таблице креплений, кг (калькулятор ведущего).</summary>
         SupportMass,
 
+        /// <summary>Запас на штучные позиции строки спецификации (не из таблицы ресурсов: позиции строит плагин).</summary>
+        Reserve,
+
         /// <summary>cord — шнур в гильзах, м в один слой: π·(Dнар + добавка)·Lгильз / шаг витка («Расчет гильз и шнура.xlsx»).</summary>
         Cord,
     }
@@ -107,6 +110,45 @@ namespace VKTools.Core.Calc
 
         /// <summary>Количество до округления: база × расход × слоёв × запас.</summary>
         public double Quantity(double baseValue) => baseValue * Rate * Layers * Reserve;
+
+        /// <summary>
+        /// Типоразмер позиции запаса строки спецификации: наименование, единица и группа — со штучных позиций строки,
+        /// <paramref name="extras"/> — их поля сортировки, которые в проекте параметры типа.
+        /// </summary>
+        public static CalcResource ForReserve(string code, string name, string unit, string group, IReadOnlyList<KeyValuePair<string, string>> extras) =>
+            new CalcResource(0, code, name, unit, CalcBase.Reserve, 1, 1, 1, int.MaxValue, 0, string.Empty, extras) { Group = group };
+    }
+
+    /// <summary>Строка calc_reserve.csv: запас на штучные позиции семейства (и типоразмера) с округлением вверх по строке спецификации.</summary>
+    public sealed class ReserveRow
+    {
+        public ReserveRow(int line, string familyMask, string typeMask, double percent, double round, string note)
+        {
+            Line = line;
+            FamilyMask = familyMask;
+            TypeMask = typeMask;
+            Percent = percent;
+            Round = round;
+            Note = note;
+        }
+
+        public int Line { get; }
+
+        public string FamilyMask { get; }
+
+        /// <summary>Маска типоразмера; «*» — любой.</summary>
+        public string TypeMask { get; }
+
+        public double Percent { get; }
+
+        public double Round { get; }
+
+        public string Note { get; }
+
+        public bool Matches(string family, string type) => Spec.FamilyMask.Matches(FamilyMask, family) && (TypeMask == "*" || Spec.FamilyMask.Matches(TypeMask, type));
+
+        /// <summary>Итог строки: ⌈N × (1 + %/100)⌉ до шага; запас = итог − N (REQ-CALC-010).</summary>
+        public double Total(double n) => CalcEngine.RoundUp(n * (1 + Percent / 100.0), Round);
     }
 
     /// <summary>Признак изоляции в правиле трубы.</summary>
@@ -214,16 +256,19 @@ namespace VKTools.Core.Calc
         public const string PipeRulesFile = "calc_pipe_rules.csv";
         public const string SupportsFile = "calc_supports.csv";
         public const string CordFile = "calc_cord.csv";
+        public const string ReserveFile = "calc_reserve.csv";
 
         public static readonly string[] ResourceColumns = { "Код", "Наименование", "Ед_изм", "База", "Расход", "Слоёв", "Запас", "Порядок", "Округление", "Основание" };
         public static readonly string[] PipeRuleColumns = { "Сегмент", "Наименование", "DN_от", "DN_до", "Изоляция", "Шаг_гор_м", "Шаг_верт_м", "Ресурсы", "Примечание" };
         public static readonly string[] SupportColumns = { "DN", "Шаг_изол_м", "Шаг_неизол_м", "Масса_изол_кг", "Масса_неизол_кг", "Примечание" };
         public static readonly string[] CordColumns = { "DN_от", "DN_до", "Ресурс", "Примечание" };
+        public static readonly string[] ReserveColumns = { "Семейство", "Тип", "Запас_%", "Округление", "Примечание" };
 
         public static readonly RuleFileSpec Resources = new RuleFileSpec(ResourcesFile, 1, "Код", "Наименование", "Ед_изм", "База", "Расход", "Порядок");
         public static readonly RuleFileSpec PipeRules = new RuleFileSpec(PipeRulesFile, 1, "Ресурсы");
         public static readonly RuleFileSpec Supports = new RuleFileSpec(SupportsFile, 1, "DN", "Шаг_изол_м", "Шаг_неизол_м", "Масса_изол_кг", "Масса_неизол_кг");
         public static readonly RuleFileSpec Cord = new RuleFileSpec(CordFile, 1, "DN_от", "DN_до", "Ресурс");
+        public static readonly RuleFileSpec Reserve = new RuleFileSpec(ReserveFile, 1, "Семейство", "Запас_%");
 
         private static readonly char[] CodeSeparators = { '+', ';', ',', ' ' };
 
@@ -242,6 +287,7 @@ namespace VKTools.Core.Calc
             CalcBase.Length => "m",
             CalcBase.Supports => "pcs",
             CalcBase.Cord => "cord",
+            CalcBase.Reserve => "reserve",
             _ => "sup_kg",
         };
 
@@ -251,6 +297,7 @@ namespace VKTools.Core.Calc
             CalcBase.Length => "м",
             CalcBase.Supports => "опор",
             CalcBase.Cord => "м шнура в 1 слой",
+            CalcBase.Reserve => "в строке",
             _ => "кг креплений",
         };
 
@@ -429,6 +476,31 @@ namespace VKTools.Core.Calc
                 }
             }
             return result.OrderBy(r => r.DnFrom).ToList();
+        }
+
+        /// <summary>Запас на штучные: первая подходящая строка сверху.</summary>
+        public static List<ReserveRow> ParseReserve(CsvTable table, string source, List<ConfigIssue> issues)
+        {
+            var result = new List<ReserveRow>();
+            foreach (CsvRow row in table.Rows)
+            {
+                try
+                {
+                    string family = Get(row, "Семейство");
+                    if (family.Length == 0) throw new FormatException("пустое Семейство (имя или маска)");
+                    double? percent = Number(row, "Запас_%", null);
+                    if (!percent.HasValue || percent.Value <= 0 || percent.Value > 1000) throw new FormatException("Запас_% — число больше 0 (20 = +20 %)");
+                    double round = Number(row, "Округление", 1.0) ?? 1.0;
+                    if (round <= 0) throw new FormatException("Округление — число больше 0 (1 = целые штуки)");
+                    string type = Get(row, "Тип");
+                    result.Add(new ReserveRow(row.LineNumber, family, type.Length == 0 ? "*" : type, percent.Value, round, Get(row, "Примечание")));
+                }
+                catch (FormatException ex)
+                {
+                    issues.Add(new ConfigIssue(Severity.Error, source, row.LineNumber, ex.Message));
+                }
+            }
+            return result;
         }
 
         public static CordRow? FindCord(IEnumerable<CordRow> rows, double dnMm) => rows.FirstOrDefault(r => r.Matches(dnMm));

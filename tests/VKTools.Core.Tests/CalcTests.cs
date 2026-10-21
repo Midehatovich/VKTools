@@ -23,6 +23,7 @@ namespace VKTools.Core.Tests
                 PipeRulesText = File.ReadAllText(Path.Combine(dir, CalcTables.PipeRulesFile)),
                 SupportsText = File.ReadAllText(Path.Combine(dir, CalcTables.SupportsFile)),
                 CordText = File.ReadAllText(Path.Combine(dir, CalcTables.CordFile)),
+                ReserveText = File.ReadAllText(Path.Combine(dir, CalcTables.ReserveFile)),
             };
         }
 
@@ -304,6 +305,37 @@ namespace VKTools.Core.Tests
             Assert.Contains(errors, e => e.FileName == CalcOptions.SleevesTab && e.Message.Contains("пересекается", StringComparison.Ordinal));
             Assert.Contains(errors, e => e.FileName == CalcOptions.SleevesTab && e.Message.Contains("нужна cord", StringComparison.Ordinal));
             Assert.Contains(errors, e => e.FileName == CalcOptions.SleevesTab && e.Message.Contains("шаг витка", StringComparison.Ordinal));
+        }
+        [Theory]
+        [InlineData(1, 2)]
+        [InlineData(2, 3)]
+        [InlineData(4, 5)]
+        [InlineData(5, 6)]
+        [InlineData(7, 9)]
+        [InlineData(10, 12)]
+        public void Запас_20_процентов_вверх_по_строке_как_в_ClampReserve(double n, double total)
+        {
+            CalcRuleSet set = Rules();
+            ReserveRow row = set.Reserve.First(r => r.Matches("Влж_Чугунные безраструбные_Хомуты", "Rapid"));
+            Assert.Equal(total, row.Total(n), 6);
+        }
+
+        [Fact]
+        public void Запас_только_на_Rapid_Kralle_CV_и_ошибки_таблицы()
+        {
+            CalcRuleSet set = Rules();
+            Assert.Equal(3, set.Reserve.Count);
+            Assert.Contains(set.Reserve, r => r.Matches("Влж_Чугунные безраструбные_Хомуты", "CV"));
+            Assert.DoesNotContain(set.Reserve, r => r.Matches("Влж_Чугунные безраструбные_Хомуты", "Хомут-переход"));
+            Assert.DoesNotContain(set.Reserve, r => r.Matches("Влж_Отвод", "Rapid"));
+
+            CalcOptions options = CalcOptions.FromDefaults(BuiltIn());
+            options.ReserveText = "#schema=1\nСемейство;Тип;Запас_%;Округление\n;Rapid;20;1\n*Хомут*;;0;1\n*Хомут*;;20;0\n*Муфта*;;10;\n";
+            CalcRuleSet parsed = options.Parse();
+            Assert.Equal(3, parsed.Issues.Count(i => i.Severity == Severity.Error && i.FileName == CalcOptions.ReserveTab));
+            ReserveRow muff = Assert.Single(parsed.Reserve);
+            Assert.Equal(1, muff.Round);
+            Assert.True(muff.Matches("Влж_Муфта ремонтная", "DN100"));
         }
     }
 }

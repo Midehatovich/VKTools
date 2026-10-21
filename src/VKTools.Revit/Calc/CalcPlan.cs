@@ -207,6 +207,9 @@ namespace VKTools.Revit.Calc
         /// <summary>Текстовые параметры труб — подсказки для «Параметр системы».</summary>
         public SortedSet<string> SystemCandidates { get; } = new SortedSet<string>(StringComparer.CurrentCultureIgnoreCase);
 
+        /// <summary>Поля строк спецификаций, которые копируются в позиции запаса (им нужна категория позиций).</summary>
+        public HashSet<string> ReserveFields { get; } = new HashSet<string>(StringComparer.Ordinal);
+
         /// <summary>Семейства, похожие на гильзы (подсказки для маски), и параметры длины первой гильзы.</summary>
         public SortedSet<string> SleeveFamilies { get; } = new SortedSet<string>(StringComparer.CurrentCultureIgnoreCase);
 

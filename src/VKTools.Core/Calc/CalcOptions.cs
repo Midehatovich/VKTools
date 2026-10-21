@@ -19,6 +19,8 @@ namespace VKTools.Core.Calc
 
         public string CordText { get; set; } = string.Empty;
 
+        public string ReserveText { get; set; } = string.Empty;
+
         /// <summary>«calc_resources.csv: встроенные, путь (UTF-8 BOM)» — в шапку отчёта.</summary>
         public List<string> Sources { get; } = new List<string>();
 
@@ -41,6 +43,9 @@ namespace VKTools.Core.Calc
         public List<SupportRow> Supports { get; } = new List<SupportRow>();
 
         public List<CordRow> Cord { get; } = new List<CordRow>();
+
+        /// <summary>Запас на штучные позиции (calc_reserve.csv).</summary>
+        public List<ReserveRow> Reserve { get; } = new List<ReserveRow>();
 
         /// <summary>Шнур: добавка к Dнар и шаг витка, мм.</summary>
         public double CordAddMm { get; set; } = 10;
@@ -72,6 +77,7 @@ namespace VKTools.Core.Calc
         public const string DefaultCordAdd = "10";
         public const string DefaultCordPitch = "10";
         public const string SleevesTab = "Гильзы и шнур";
+        public const string ReserveTab = "Запас на штучные";
 
         private const string SchedulesKey = "calc.schedules";
         private const string SystemKey = "calc.systemParam";
@@ -80,6 +86,7 @@ namespace VKTools.Core.Calc
         private const string PipeRulesKey = "calc.pipeRules";
         private const string SupportsKey = "calc.supports";
         private const string CordKey = "calc.cord";
+        private const string ReserveKey = "calc.reserve";
         private const string SleeveFamilyKey = "calc.sleeveFamily";
         private const string SleeveLengthKey = "calc.sleeveLength";
         private const string CordAddKey = "calc.cordAdd";
@@ -101,6 +108,8 @@ namespace VKTools.Core.Calc
         public string SupportsText { get; set; } = string.Empty;
 
         public string CordText { get; set; } = string.Empty;
+
+        public string ReserveText { get; set; } = string.Empty;
 
         /// <summary>Семейство гильз: маска имени (* — любые символы).</summary>
         public string SleeveFamily { get; set; } = DefaultSleeveFamily;
@@ -125,6 +134,7 @@ namespace VKTools.Core.Calc
             PipeRulesText = PipeRulesText,
             SupportsText = SupportsText,
             CordText = CordText,
+            ReserveText = ReserveText,
             SleeveFamily = SleeveFamily,
             SleeveLength = SleeveLength,
             CordAdd = CordAdd,
@@ -138,7 +148,7 @@ namespace VKTools.Core.Calc
         {
             string.Join("\u0002", Schedules), SystemParameter.Trim(), Group.Trim(),
             Canonical(ResourcesText), Canonical(PipeRulesText), Canonical(SupportsText),
-            Canonical(CordText), SleeveFamily.Trim(), SleeveLength.Trim(), CordAdd.Trim(), CordPitch.Trim(),
+            Canonical(CordText), Canonical(ReserveText), SleeveFamily.Trim(), SleeveLength.Trim(), CordAdd.Trim(), CordPitch.Trim(),
         });
 
         public bool IsDefault(CalcDefaults defaults) => Signature() == FromDefaults(defaults).Signature();
@@ -149,6 +159,7 @@ namespace VKTools.Core.Calc
             PipeRulesText = defaults.PipeRulesText,
             SupportsText = defaults.SupportsText,
             CordText = defaults.CordText,
+            ReserveText = defaults.ReserveText,
         };
 
         /// <summary>Разобрать таблицы. Ошибки — в <see cref="CalcRuleSet.Issues"/> с именем вкладки.</summary>
@@ -175,6 +186,11 @@ namespace VKTools.Core.Calc
                 set.CordAddMm = Positive(CordAdd, "добавка к Dнар", allowZero: true, set.Issues) ?? 10;
                 set.CordPitchMm = Positive(CordPitch, "шаг витка", allowZero: false, set.Issues) ?? 10;
                 if (SleeveFamily.Trim().Length == 0) set.Issues.Add(new ConfigIssue(Severity.Error, SleevesTab, null, "не задано семейство гильз"));
+            }
+            if (ReserveText.Trim().Length > 0)
+            {
+                CsvTable? reserve = CalcTables.ParseText(ReserveText, CalcTables.Reserve, ReserveTab, set.Issues);
+                if (reserve != null) set.Reserve.AddRange(CalcTables.ParseReserve(reserve, ReserveTab, set.Issues));
             }
             if (SystemParameter.Trim().Length == 0) set.Issues.Add(new ConfigIssue(Severity.Error, "Спецификации", null, "не задан параметр системы"));
             if (Group.IndexOf('|') >= 0) set.Issues.Add(new ConfigIssue(Severity.Error, "Спецификации", null, "в номере группы недопустим «|»"));
@@ -210,6 +226,7 @@ namespace VKTools.Core.Calc
             settings.Set(ResourcesKey, isDefault || Canonical(ResourcesText) == Canonical(defaults.ResourcesText) ? null : Normalize(ResourcesText, "ресурсы"));
             settings.Set(PipeRulesKey, isDefault || Canonical(PipeRulesText) == Canonical(defaults.PipeRulesText) ? null : Normalize(PipeRulesText, "правила для труб"));
             settings.Set(SupportsKey, isDefault || Canonical(SupportsText) == Canonical(defaults.SupportsText) ? null : Normalize(SupportsText, "крепления"));
+            settings.Set(ReserveKey, isDefault || Canonical(ReserveText) == Canonical(defaults.ReserveText) ? null : Normalize(ReserveText, "запас на штучные"));
             settings.Set(CordKey, isDefault || Canonical(CordText) == Canonical(defaults.CordText) ? null : Normalize(CordText, "шнур в гильзы"));
             settings.Set(SleeveFamilyKey, isDefault || SleeveFamily.Trim() == DefaultSleeveFamily ? null : SleeveFamily.Trim());
             settings.Set(SleeveLengthKey, isDefault || SleeveLength.Trim().Length == 0 ? null : SleeveLength.Trim());
@@ -239,6 +256,7 @@ namespace VKTools.Core.Calc
                 (PipeRulesKey, "правила для труб", v => options.PipeRulesText = v),
                 (SupportsKey, "крепления", v => options.SupportsText = v),
                 (CordKey, "шнур в гильзы", v => options.CordText = v),
+                (ReserveKey, "запас на штучные", v => options.ReserveText = v),
             })
             {
                 string? stored = settings.Get(key);

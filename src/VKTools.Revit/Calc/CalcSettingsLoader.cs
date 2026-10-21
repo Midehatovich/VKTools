@@ -24,6 +24,7 @@ namespace VKTools.Revit.Calc
             defaults.PipeRulesText = LoadText(loader, CalcTables.PipeRules, defaults);
             defaults.SupportsText = LoadText(loader, CalcTables.Supports, defaults);
             defaults.CordText = LoadText(loader, CalcTables.Cord, defaults);
+            defaults.ReserveText = LoadText(loader, CalcTables.Reserve, defaults);
             SpecProjectSettings stored = SpecSettingsStore.Read(doc, out int storages);
             var issues = new List<ConfigIssue>();
             CalcOptions options = CalcOptions.Load(stored, defaults, issues, out string? blocked);

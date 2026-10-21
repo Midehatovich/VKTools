@@ -84,6 +84,7 @@ namespace VKTools.Revit.UI
         private readonly CsvGridPanel _pipeRules;
         private readonly CsvGridPanel _supports;
         private readonly CsvGridPanel _cord;
+        private readonly CsvGridPanel _reserve;
         private readonly ComboBox _sleeveFamily;
         private readonly ComboBox _sleeveLength;
         private readonly TextBox _cordAdd;
@@ -149,7 +150,7 @@ namespace VKTools.Revit.UI
             DockPanel.SetDock(header, Dock.Top);
             header.Children.Add(new TextBlock
             {
-                Text = "Грунтовка, краска, металл для креплений и бентонитовый шнур в гильзы: служебные позиции «_SYS_SpecCalcItem» по каждой системе в каждой отмеченной спецификации (группа 9.x). "
+                Text = "Грунтовка, краска, металл для креплений, бентонитовый шнур в гильзы и запас на штучные (хомуты): служебные позиции «_SYS_SpecCalcItem» по каждой системе в каждой отмеченной спецификации (группа 9.x). "
                     + "Количество считается по таблицам проекта; «SYS_Кол-во вручную» в позиции перекрывает расчёт.",
                 FontSize = 13,
                 TextWrapping = TextWrapping.Wrap,
@@ -293,7 +294,12 @@ namespace VKTools.Revit.UI
             sleeveTop.Children.Add(_sleeveErrors);
             _sleevesPanel.Children.Add(sleeveTop);
             _sleevesPanel.Children.Add(_cord);
-            foreach (CsvGridPanel panel in new[] { _resources, _pipeRules, _supports, _cord }) panel.Changed += (s, e) => OnSettingsChanged();
+            _reserve = new CsvGridPanel(CalcTables.ReserveFile, document.Title,
+                "Запас на штучные позиции с округлением вверх по строке спецификации: итог строки = ⌈N × (1 + Запас_%/100)⌉. На каждую строку отмеченной спецификации — служебная позиция "
+                + "на разницу с теми же значениями полей сортировки, Revit сливает её со строкой (в «Кол.» сразу итог). Семейство и Тип — имя или маска, пустой Тип — все. "
+                + "Нужно: спецификация без «Для каждого экземпляра», сортировка по параметрам проекта, у ADSK_Количество — «Вычислять итоги».",
+                CalcTables.ReserveColumns, allowColumns: false) { Margin = new Thickness(6) };
+            foreach (CsvGridPanel panel in new[] { _resources, _pipeRules, _supports, _cord, _reserve }) panel.Changed += (s, e) => OnSettingsChanged();
 
             var report = new DockPanel { Margin = new Thickness(6) };
             var filters = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
@@ -346,6 +352,7 @@ namespace VKTools.Revit.UI
             _tabs.Items.Add(new TabItem { Header = "Правила для труб", Content = _pipeRules });
             _tabs.Items.Add(new TabItem { Header = "Крепления", Content = _supports });
             _tabs.Items.Add(new TabItem { Header = CalcOptions.SleevesTab, Content = _sleevesPanel });
+            _tabs.Items.Add(new TabItem { Header = CalcOptions.ReserveTab, Content = _reserve });
             _tabs.Items.Add(_reportTab);
             _tabs.SelectedItem = _reportTab;
             root.Children.Add(_tabs);
@@ -386,6 +393,7 @@ namespace VKTools.Revit.UI
             options.PipeRulesText = _pipeRules.Text();
             options.SupportsText = _supports.Text();
             options.CordText = _cord.Text();
+            options.ReserveText = _reserve.Text();
             options.SleeveFamily = (_sleeveFamily.Text ?? string.Empty).Trim();
             options.SleeveLength = (_sleeveLength.Text ?? string.Empty).Trim();
             options.CordAdd = _cordAdd.Text.Trim();
@@ -512,6 +520,7 @@ namespace VKTools.Revit.UI
 
         private void LoadSleeves(CalcOptions options)
         {
+            _reserve.Load(options.ReserveText);
             _cord.Load(options.CordText);
             _sleeveFamily.Text = options.SleeveFamily;
             _sleeveLength.Text = options.SleeveLength;
@@ -590,6 +599,7 @@ namespace VKTools.Revit.UI
             _pipeRules.ShowIssues(errors.Where(i => i.FileName == "Правила для труб"));
             _supports.ShowIssues(errors.Where(i => i.FileName == "Крепления"));
             _cord.ShowIssues(errors.Where(i => i.FileName == CalcOptions.SleevesTab && i.Line.HasValue));
+            _reserve.ShowIssues(errors.Where(i => i.FileName == CalcOptions.ReserveTab));
             List<string> sleeveErrors = errors.Where(i => i.FileName == CalcOptions.SleevesTab && !i.Line.HasValue).Select(i => i.Message).ToList();
             _sleeveErrors.Text = sleeveErrors.Count == 0 ? string.Empty : "Исправьте: " + string.Join("; ", sleeveErrors) + ".";
             _sleeveErrors.Visibility = sleeveErrors.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
@@ -638,7 +648,7 @@ namespace VKTools.Revit.UI
             _save.IsEnabled = !_busy && !_hasTableErrors && (dirty || _defaultsData.ProjectBlocked != null);
             _defaults.IsEnabled = !_busy;
             _export.IsEnabled = _report != null;
-            foreach (UIElement panel in new UIElement[] { _resources, _pipeRules, _supports, _sleevesPanel, (UIElement)_schedulesTab.Content }) panel.IsEnabled = !_busy;
+            foreach (UIElement panel in new UIElement[] { _resources, _pipeRules, _supports, _sleevesPanel, _reserve, (UIElement)_schedulesTab.Content }) panel.IsEnabled = !_busy;
         }
 
         private void ResetToDefaults()
@@ -677,7 +687,7 @@ namespace VKTools.Revit.UI
         private void Send(CalcRequest request)
         {
             if (_busy) return;
-            foreach (CsvGridPanel panel in new[] { _resources, _pipeRules, _supports, _cord }) panel.CommitEdits();
+            foreach (CsvGridPanel panel in new[] { _resources, _pipeRules, _supports, _cord, _reserve }) panel.CommitEdits();
             CalcOptions options = CurrentOptions();
             if ((request == CalcRequest.Trial || request == CalcRequest.Apply) && options.Signature() != _shownFor)
             {

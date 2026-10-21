@@ -96,6 +96,15 @@ namespace VKTools.Revit.Calc
                 }
             }
 
+            if (rules.Reserve.Count > 0)
+            {
+                using (timings.Measure("запас на штучные"))
+                {
+                    progress.Report("Запас на штучные: строки спецификаций…");
+                    CalcReserve.Add(doc, plan, rules);
+                }
+            }
+
             using (timings.Measure("позиции"))
             {
                 progress.Report("Служебные позиции…");
@@ -278,6 +287,7 @@ namespace VKTools.Revit.Calc
             string system = options.SystemParameter.Trim();
             var anyNames = new List<string> { CalcParams.Name, CalcParams.Unit, CalcParams.Group };
             anyNames.AddRange(plan.Rules.ExtraParameters.Where(n => !anyNames.Contains(n)));
+            anyNames.AddRange(plan.Result.Targets.SelectMany(t => t.Resource.Extras.Select(e => e.Key)).Distinct().Where(n => !anyNames.Contains(n)).ToList());
             FamilySymbol? baseSymbol = symbols.FirstOrDefault();
             foreach (string name in anyNames)
             {
@@ -288,7 +298,7 @@ namespace VKTools.Revit.Calc
             // Привязки параметров проекта к категории позиций
             var needed = new List<(string Name, bool Required)> { (system, true), (CalcParams.Quantity, true) };
             needed.AddRange(anyNames.Select(n => (n, n == CalcParams.Name || n == CalcParams.Unit || n == CalcParams.Group)));
-            needed.AddRange(plan.Scopes.SelectMany(s => s.CopyNames).Distinct().Select(n => (n, true)));
+            needed.AddRange(plan.Scopes.SelectMany(s => s.CopyNames).Concat(plan.ReserveFields).Distinct().Select(n => (n, true)));
             Element? sampleItem = null;
             foreach ((string name, bool required) in needed.Distinct())
             {
