@@ -4,7 +4,7 @@
     <Product>VK Tools</Product>
     <Company>VK Tools</Company>
     <Copyright>© 2026 VK Tools</Copyright>
-    <Version>0.3.17</Version>
+    <Version>0.6.1</Version>
     <LangVersion>10.0</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>

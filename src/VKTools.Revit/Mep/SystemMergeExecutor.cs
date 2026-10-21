@@ -131,7 +131,10 @@ namespace VKTools.Revit.Mep
         /// <summary>Что уже отключено в этом сеансе Revit — напоминать при каждом прогоне.</summary>
         private static readonly List<string> SessionDisabledUpdaters = new List<string>();
 
-        /// <summary>Запомнить апдейтеры, отключённые другой операцией плагина («Разорвать стык»).</summary>
+        /// <summary>Отключённые в этом сеансе Revit (любой операцией плагина) — для напоминания в результате.</summary>
+        internal static IReadOnlyList<string> SessionDisabled => SessionDisabledUpdaters;
+
+        /// <summary>Запомнить апдейтеры, отключённые другой операцией плагина («Разорвать стык», «Параметры спецификации»).</summary>
         internal static void RememberDisabled(IEnumerable<string> names)
         {
             foreach (string name in names)

@@ -37,6 +37,7 @@ namespace VKTools.Revit
         public Result OnShutdown(UIControlledApplication application)
         {
             MergeWindowHost.CloseAll();
+            SpecParamsHost.CloseAll();
             ReportWindowHost.CloseAll();
             Host.Log.Info("VK Tools выгружен.");
             return Result.Succeeded;
@@ -91,6 +92,32 @@ namespace VKTools.Revit
             };
             systems.AddItem(merge);
             systems.AddItem(gaps);
+
+            RibbonPanel spec = application.CreateRibbonPanel(TabName, "Спецификация");
+            var nested = new PushButtonData("VKTools.NestedTransfer", "Перенос во\nвложенные", assembly, typeof(NestedTransferCommand).FullName)
+            {
+                ToolTip = "Значения верхнего родителя → его общие вложенные семейства. Какие параметры переносить — выбор в окне, сохраняется в модели.",
+                LongDescription =
+                    "По умолчанию ADSK_Этаж, LSR_Имя системы, LSR_Тип системы (nested_params.csv); можно отметить любые общие параметры и параметры проекта, " +
+                    "которые есть и у родителя, и у вложенного. Тип данных должен совпадать; пустое у родителя не переносится. Область: вся модель, активный вид или выделенные. " +
+                    "Сначала окно «было → станет» и пробный прогон, запись — одна операция в журнале отмены.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.NestedTransfer(32),
+                Image = RibbonIcons.NestedTransfer(16),
+            };
+            var grouping = new PushButtonData("VKTools.Grouping", "Группирование", assembly, typeof(GroupingCommand).FullName)
+            {
+                ToolTip = "ADSK_Группирование по таблице групп проекта: категории, семейства, «не трогать». Комплекты пожарных шкафов — «группа.ключ».",
+                LongDescription =
+                    "Пока в модели нет своей таблицы, работает grouping.csv (0 спринклеры … 8 прочее). Строка семейства действует и на его вложенные; " +
+                    "«не трогать» оставляет значения, проставленные вручную. Служебные позиции _SYS_ не трогаются. " +
+                    "Пишутся только изменившиеся значения; запись — одна операция в журнале отмены.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.SpecParams(32),
+                Image = RibbonIcons.SpecParams(16),
+            };
+            spec.AddItem(nested);
+            spec.AddItem(grouping);
 
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)
