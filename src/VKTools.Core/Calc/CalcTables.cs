@@ -23,6 +23,34 @@ namespace VKTools.Core.Calc
 
         /// <summary>sup_kg — масса креплений по таблице креплений, кг (калькулятор ведущего).</summary>
         SupportMass,
+
+        /// <summary>cord — шнур в гильзах, м в один слой: π·(Dнар + добавка)·Lгильз / шаг витка («Расчет гильз и шнура.xlsx»).</summary>
+        Cord,
+    }
+
+    /// <summary>Строка calc_cord.csv: какой шнур идёт в гильзы трубы этого диапазона DN.</summary>
+    public sealed class CordRow
+    {
+        public CordRow(int line, double dnFrom, double dnTo, string code, string note)
+        {
+            Line = line;
+            DnFrom = dnFrom;
+            DnTo = dnTo;
+            Code = code;
+            Note = note;
+        }
+
+        public int Line { get; }
+
+        public double DnFrom { get; }
+
+        public double DnTo { get; }
+
+        public string Code { get; }
+
+        public string Note { get; }
+
+        public bool Matches(double dnMm) => dnMm >= DnFrom - 0.5 && dnMm <= DnTo + 0.5;
     }
 
     /// <summary>Ресурс: строка calc_resources.csv. Код = имя типоразмера служебного семейства.</summary>
@@ -185,14 +213,17 @@ namespace VKTools.Core.Calc
         public const string ResourcesFile = "calc_resources.csv";
         public const string PipeRulesFile = "calc_pipe_rules.csv";
         public const string SupportsFile = "calc_supports.csv";
+        public const string CordFile = "calc_cord.csv";
 
         public static readonly string[] ResourceColumns = { "Код", "Наименование", "Ед_изм", "База", "Расход", "Слоёв", "Запас", "Порядок", "Округление", "Основание" };
         public static readonly string[] PipeRuleColumns = { "Сегмент", "Наименование", "DN_от", "DN_до", "Изоляция", "Шаг_гор_м", "Шаг_верт_м", "Ресурсы", "Примечание" };
         public static readonly string[] SupportColumns = { "DN", "Шаг_изол_м", "Шаг_неизол_м", "Масса_изол_кг", "Масса_неизол_кг", "Примечание" };
+        public static readonly string[] CordColumns = { "DN_от", "DN_до", "Ресурс", "Примечание" };
 
         public static readonly RuleFileSpec Resources = new RuleFileSpec(ResourcesFile, 1, "Код", "Наименование", "Ед_изм", "База", "Расход", "Порядок");
         public static readonly RuleFileSpec PipeRules = new RuleFileSpec(PipeRulesFile, 1, "Ресурсы");
         public static readonly RuleFileSpec Supports = new RuleFileSpec(SupportsFile, 1, "DN", "Шаг_изол_м", "Шаг_неизол_м", "Масса_изол_кг", "Масса_неизол_кг");
+        public static readonly RuleFileSpec Cord = new RuleFileSpec(CordFile, 1, "DN_от", "DN_до", "Ресурс");
 
         private static readonly char[] CodeSeparators = { '+', ';', ',', ' ' };
 
@@ -202,6 +233,7 @@ namespace VKTools.Core.Calc
             ["m"] = CalcBase.Length, ["м"] = CalcBase.Length, ["длина"] = CalcBase.Length,
             ["pcs"] = CalcBase.Supports, ["шт"] = CalcBase.Supports, ["опоры"] = CalcBase.Supports,
             ["sup_kg"] = CalcBase.SupportMass, ["крепления_кг"] = CalcBase.SupportMass, ["крепления"] = CalcBase.SupportMass,
+            ["cord"] = CalcBase.Cord, ["шнур"] = CalcBase.Cord,
         };
 
         public static string BaseCode(CalcBase basis) => basis switch
@@ -209,6 +241,7 @@ namespace VKTools.Core.Calc
             CalcBase.Area => "m2",
             CalcBase.Length => "m",
             CalcBase.Supports => "pcs",
+            CalcBase.Cord => "cord",
             _ => "sup_kg",
         };
 
@@ -217,6 +250,7 @@ namespace VKTools.Core.Calc
             CalcBase.Area => "м²",
             CalcBase.Length => "м",
             CalcBase.Supports => "опор",
+            CalcBase.Cord => "м шнура в 1 слой",
             _ => "кг креплений",
         };
 
@@ -257,7 +291,7 @@ namespace VKTools.Core.Calc
                 {
                     if (code.Length == 0 || code.IndexOf('|') >= 0) throw new FormatException("пустой код или символ «|» в коде");
                     if (seen.TryGetValue(code, out int other)) throw new FormatException($"код {code} уже задан в строке {other}");
-                    if (!BaseAliases.TryGetValue(Get(row, "База"), out CalcBase basis)) throw new FormatException($"База «{Get(row, "База")}»: допустимо m2, m, pcs, sup_kg");
+                    if (!BaseAliases.TryGetValue(Get(row, "База"), out CalcBase basis)) throw new FormatException($"База «{Get(row, "База")}»: допустимо m2, m, pcs, sup_kg, cord");
                     double rate = Number(row, "Расход", null) ?? throw new FormatException("Расход должен быть числом ≥ 0");
                     double layers = Number(row, "Слоёв", 1.0) ?? 1.0;
                     double reserve = Number(row, "Запас", 1.0) ?? 1.0;
@@ -323,6 +357,8 @@ namespace VKTools.Core.Calc
                         : rawCodes.Split(CodeSeparators, StringSplitOptions.RemoveEmptyEntries).Select(c => c.Trim().ToUpperInvariant()).ToList();
                     List<string> unknown = codes.Where(c => !byCode.ContainsKey(c)).ToList();
                     if (unknown.Count > 0) throw new FormatException("нет в таблице ресурсов: " + string.Join(", ", unknown));
+                    List<string> cords = codes.Where(c => byCode[c].Base == CalcBase.Cord).ToList();
+                    if (cords.Count > 0) throw new FormatException($"{string.Join(", ", cords)} — шнур считается по гильзам (вкладка «Гильзы и шнур»), в правила труб не входит");
                     double? stepH = Number(row, "Шаг_гор_м", null);
                     double? stepV = Number(row, "Шаг_верт_м", null);
                     if (codes.Any(c => byCode[c].Base == CalcBase.Supports) && (!stepH.HasValue || stepH.Value <= 0))
@@ -367,6 +403,35 @@ namespace VKTools.Core.Calc
             }
             return result.OrderBy(r => r.Dn).ToList();
         }
+
+        /// <summary>Шнур по диапазонам DN. Ресурс — из таблицы ресурсов с базой cord; диапазоны не пересекаются.</summary>
+        public static List<CordRow> ParseCord(CsvTable table, string source, IReadOnlyCollection<CalcResource> resources, List<ConfigIssue> issues)
+        {
+            var result = new List<CordRow>();
+            var byCode = resources.ToDictionary(r => r.Code, StringComparer.OrdinalIgnoreCase);
+            foreach (CsvRow row in table.Rows)
+            {
+                try
+                {
+                    double? from = Number(row, "DN_от", null);
+                    double? to = Number(row, "DN_до", null);
+                    if (!from.HasValue || !to.HasValue || from.Value <= 0 || to.Value < from.Value) throw new FormatException("DN_от и DN_до — числа, DN_до не меньше DN_от");
+                    string code = Get(row, "Ресурс").ToUpperInvariant();
+                    if (!byCode.TryGetValue(code, out CalcResource? resource)) throw new FormatException($"ресурса «{code}» нет в таблице ресурсов");
+                    if (resource.Base != CalcBase.Cord) throw new FormatException($"у ресурса {code} База «{BaseCode(resource.Base)}», нужна cord");
+                    CordRow? overlap = result.FirstOrDefault(c => from.Value <= c.DnTo && to.Value >= c.DnFrom);
+                    if (overlap != null) throw new FormatException($"DN{Format(from.Value)}–{Format(to.Value)} пересекается со строкой {overlap.Line - 2}");
+                    result.Add(new CordRow(row.LineNumber, from.Value, to.Value, resource.Code, Get(row, "Примечание")));
+                }
+                catch (FormatException ex)
+                {
+                    issues.Add(new ConfigIssue(Severity.Error, source, row.LineNumber, ex.Message));
+                }
+            }
+            return result.OrderBy(r => r.DnFrom).ToList();
+        }
+
+        public static CordRow? FindCord(IEnumerable<CordRow> rows, double dnMm) => rows.FirstOrDefault(r => r.Matches(dnMm));
 
         /// <summary>Строка таблицы с тем же DN (±0,5 мм). Ближайшую не подбираем: нет строки — нет нормы.</summary>
         public static SupportRow? FindSupport(IEnumerable<SupportRow> rows, double dnMm) => rows.FirstOrDefault(r => Math.Abs(r.Dn - dnMm) <= 0.5);

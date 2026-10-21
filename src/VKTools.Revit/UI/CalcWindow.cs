@@ -83,6 +83,14 @@ namespace VKTools.Revit.UI
         private readonly CsvGridPanel _resources;
         private readonly CsvGridPanel _pipeRules;
         private readonly CsvGridPanel _supports;
+        private readonly CsvGridPanel _cord;
+        private readonly ComboBox _sleeveFamily;
+        private readonly ComboBox _sleeveLength;
+        private readonly TextBox _cordAdd;
+        private readonly TextBox _cordPitch;
+        private readonly TextBlock _sleeveState;
+        private readonly TextBlock _sleeveErrors;
+        private readonly DockPanel _sleevesPanel;
         private readonly TabControl _tabs;
         private readonly TabItem _schedulesTab;
         private readonly TabItem _reportTab;
@@ -141,7 +149,7 @@ namespace VKTools.Revit.UI
             DockPanel.SetDock(header, Dock.Top);
             header.Children.Add(new TextBlock
             {
-                Text = "Грунтовка, краска и металл для креплений по трубам: служебные позиции «_SYS_SpecCalcItem» по каждой системе в каждой отмеченной спецификации (группа 9.x). "
+                Text = "Грунтовка, краска, металл для креплений и бентонитовый шнур в гильзы: служебные позиции «_SYS_SpecCalcItem» по каждой системе в каждой отмеченной спецификации (группа 9.x). "
                     + "Количество считается по таблицам проекта; «SYS_Кол-во вручную» в позиции перекрывает расчёт.",
                 FontSize = 13,
                 TextWrapping = TextWrapping.Wrap,
@@ -248,7 +256,44 @@ namespace VKTools.Revit.UI
             _supports = new CsvGridPanel(CalcTables.SupportsFile, document.Title,
                 "Шаг креплений и масса одного крепления по DN (СП 73.13330.2016, табл. 2 — для металлических труб). Число креплений = ⌈длина участка системы / шаг⌉, участок короче 0,3 м — без крепления.",
                 CalcTables.SupportColumns, allowColumns: false) { Margin = new Thickness(6) };
-            foreach (CsvGridPanel panel in new[] { _resources, _pipeRules, _supports }) panel.Changed += (s, e) => OnSettingsChanged();
+            _cord = new CsvGridPanel(CalcTables.CordFile, document.Title,
+                "Какой шнур идёт в гильзы трубы по её DN (коды — ресурсы с базой cord на вкладке «Ресурсы»). Как в «Расчет гильз и шнура.xlsx»: Ф6 — DN15, Ф8 — DN20–25, Ф10 — DN32, Ф12 жёсткий — DN40, Ф12 мягкий — от DN50.",
+                CalcTables.CordColumns, allowColumns: false);
+
+            _sleevesPanel = new DockPanel { Margin = new Thickness(6) };
+            var sleeveTop = new StackPanel { Margin = new Thickness(0, 4, 0, 6) };
+            DockPanel.SetDock(sleeveTop, Dock.Top);
+            sleeveTop.Children.Add(new TextBlock
+            {
+                Text = "Шнур = Расход (4) × π·(Dнар трубы + добавка) × Lгильз / шаг витка, по гильзам на трубах каждой системы. Гильзы — отдельные элементы модели; "
+                    + "труба гильзы — та, чья ось проходит через центр гильзы. Гильзы без трубы и без длины — в отчёте.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brushes.DimGray,
+                Margin = new Thickness(0, 0, 0, 6),
+            });
+            var sleeveFields = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+            _sleeveFamily = new ComboBox { IsEditable = true, Width = 260, Margin = new Thickness(0, 0, 16, 0) };
+            _sleeveFamily.ToolTip = "Имя семейства гильз или маска (* — любые символы), например «PA_Гильза» или «*ильз*»";
+            _sleeveLength = new ComboBox { IsEditable = true, Width = 220, Margin = new Thickness(0, 0, 16, 0) };
+            _sleeveLength.ToolTip = "Параметр длины гильзы (экземпляра или типа). Пусто — плагин возьмёт «Длина» или единственный параметр со словом «длина».";
+            _cordAdd = new TextBox { Width = 50, Margin = new Thickness(0, 0, 16, 0), VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "Excel: Dнар трубы + 10 мм" };
+            _cordPitch = new TextBox { Width = 50, Margin = new Thickness(0, 0, 16, 0), VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "Excel: длина гильз / 10 мм = число витков" };
+            sleeveFields.Children.Add(NestedSettingsPanel.Label("Семейство гильз:"));
+            sleeveFields.Children.Add(_sleeveFamily);
+            sleeveFields.Children.Add(NestedSettingsPanel.Label("Длина гильзы:"));
+            sleeveFields.Children.Add(_sleeveLength);
+            sleeveFields.Children.Add(NestedSettingsPanel.Label("Добавка к Dнар, мм:"));
+            sleeveFields.Children.Add(_cordAdd);
+            sleeveFields.Children.Add(NestedSettingsPanel.Label("Шаг витка, мм:"));
+            sleeveFields.Children.Add(_cordPitch);
+            sleeveTop.Children.Add(sleeveFields);
+            _sleeveState = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray, Margin = new Thickness(0, 4, 0, 0) };
+            sleeveTop.Children.Add(_sleeveState);
+            _sleeveErrors = new TextBlock { Foreground = Brushes.DarkRed, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0), Visibility = Visibility.Collapsed };
+            sleeveTop.Children.Add(_sleeveErrors);
+            _sleevesPanel.Children.Add(sleeveTop);
+            _sleevesPanel.Children.Add(_cord);
+            foreach (CsvGridPanel panel in new[] { _resources, _pipeRules, _supports, _cord }) panel.Changed += (s, e) => OnSettingsChanged();
 
             var report = new DockPanel { Margin = new Thickness(6) };
             var filters = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
@@ -300,6 +345,7 @@ namespace VKTools.Revit.UI
             _tabs.Items.Add(new TabItem { Header = "Ресурсы", Content = _resources });
             _tabs.Items.Add(new TabItem { Header = "Правила для труб", Content = _pipeRules });
             _tabs.Items.Add(new TabItem { Header = "Крепления", Content = _supports });
+            _tabs.Items.Add(new TabItem { Header = CalcOptions.SleevesTab, Content = _sleevesPanel });
             _tabs.Items.Add(_reportTab);
             _tabs.SelectedItem = _reportTab;
             root.Children.Add(_tabs);
@@ -309,6 +355,13 @@ namespace VKTools.Revit.UI
             _systemParam.AddHandler(System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent, new TextChangedEventHandler((s, e) => OnSettingsChanged()));
             _systemParam.SelectionChanged += (s, e) => OnSettingsChanged();
             _group.TextChanged += (s, e) => OnSettingsChanged();
+            foreach (ComboBox box in new[] { _sleeveFamily, _sleeveLength })
+            {
+                box.AddHandler(System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent, new TextChangedEventHandler((s, e) => OnSettingsChanged()));
+                box.SelectionChanged += (s, e) => OnSettingsChanged();
+            }
+            _cordAdd.TextChanged += (s, e) => OnSettingsChanged();
+            _cordPitch.TextChanged += (s, e) => OnSettingsChanged();
             _severityFilter.SelectionChanged += (s, e) => RefreshView();
             _search.TextChanged += (s, e) => RefreshView();
             KeyDown += (s, e) =>
@@ -332,6 +385,11 @@ namespace VKTools.Revit.UI
             options.ResourcesText = _resources.Text();
             options.PipeRulesText = _pipeRules.Text();
             options.SupportsText = _supports.Text();
+            options.CordText = _cord.Text();
+            options.SleeveFamily = (_sleeveFamily.Text ?? string.Empty).Trim();
+            options.SleeveLength = (_sleeveLength.Text ?? string.Empty).Trim();
+            options.CordAdd = _cordAdd.Text.Trim();
+            options.CordPitch = _cordPitch.Text.Trim();
             return options;
         }
 
@@ -357,6 +415,11 @@ namespace VKTools.Revit.UI
 
             UpdateSchedules(plan.Schedules, used.Schedules);
             UpdateSystemCandidates(plan.SystemCandidates);
+            Fill(_sleeveFamily, plan.SleeveFamilies);
+            Fill(_sleeveLength, plan.SleeveLengthCandidates);
+            _sleeveState.Text = plan.SleeveCount < 0
+                ? "Шнура в ресурсах нет (база cord) — гильзы не ищутся."
+                : $"Гильз по маске: {plan.SleeveCount}; длина берётся из «{plan.SleeveLengthUsed ?? "не задано"}». Сколько гильз на трубах каждой системы — в «Сводке» внизу.";
             _familyState.Text = plan.FamilyId.HasValue
                 ? $"Служебное семейство «{plan.FamilyName}» загружено в проект."
                 : $"Служебного семейства «{plan.FamilyName}» в проекте нет — «Применить» создаст его (обобщённая модель с параметрами SYS_) и загрузит.";
@@ -437,6 +500,7 @@ namespace VKTools.Revit.UI
                 _resources.Load(options.ResourcesText);
                 _pipeRules.Load(options.PipeRulesText);
                 _supports.Load(options.SupportsText);
+                LoadSleeves(options);
                 UpdateSchedules(schedules, options.Schedules);
                 UpdateSystemCandidates(candidates);
             }
@@ -444,6 +508,15 @@ namespace VKTools.Revit.UI
             {
                 _loading = false;
             }
+        }
+
+        private void LoadSleeves(CalcOptions options)
+        {
+            _cord.Load(options.CordText);
+            _sleeveFamily.Text = options.SleeveFamily;
+            _sleeveLength.Text = options.SleeveLength;
+            _cordAdd.Text = options.CordAdd;
+            _cordPitch.Text = options.CordPitch;
         }
 
         /// <summary>Список спецификаций модели; отметки — из окна (если пользователь их уже менял) или из настройки.</summary>
@@ -472,18 +545,21 @@ namespace VKTools.Revit.UI
             }
         }
 
-        private void UpdateSystemCandidates(IEnumerable<string> candidates)
+        private void UpdateSystemCandidates(IEnumerable<string> candidates) => Fill(_systemParam, candidates);
+
+        /// <summary>Подсказки в выпадающем списке; введённый текст не меняется.</summary>
+        private void Fill(ComboBox box, IEnumerable<string> candidates)
         {
-            string text = _systemParam.Text;
+            string text = box.Text;
             bool wasLoading = _loading;
             _loading = true;
             try
             {
                 List<string> items = candidates.ToList();
                 if (items.Count == 0) return;
-                _systemParam.Items.Clear();
-                foreach (string item in items) _systemParam.Items.Add(item);
-                _systemParam.Text = text;
+                box.Items.Clear();
+                foreach (string item in items) box.Items.Add(item);
+                box.Text = text;
             }
             finally
             {
@@ -513,6 +589,10 @@ namespace VKTools.Revit.UI
             _resources.ShowIssues(errors.Where(i => i.FileName == "Ресурсы"));
             _pipeRules.ShowIssues(errors.Where(i => i.FileName == "Правила для труб"));
             _supports.ShowIssues(errors.Where(i => i.FileName == "Крепления"));
+            _cord.ShowIssues(errors.Where(i => i.FileName == CalcOptions.SleevesTab && i.Line.HasValue));
+            List<string> sleeveErrors = errors.Where(i => i.FileName == CalcOptions.SleevesTab && !i.Line.HasValue).Select(i => i.Message).ToList();
+            _sleeveErrors.Text = sleeveErrors.Count == 0 ? string.Empty : "Исправьте: " + string.Join("; ", sleeveErrors) + ".";
+            _sleeveErrors.Visibility = sleeveErrors.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
             List<string> other = errors.Where(i => i.FileName == SchedulesTab).Select(i => i.Message).ToList();
             _scheduleErrors.Text = other.Count == 0 ? string.Empty : "Исправьте: " + string.Join("; ", other) + ".";
             _scheduleErrors.Visibility = other.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
@@ -558,7 +638,7 @@ namespace VKTools.Revit.UI
             _save.IsEnabled = !_busy && !_hasTableErrors && (dirty || _defaultsData.ProjectBlocked != null);
             _defaults.IsEnabled = !_busy;
             _export.IsEnabled = _report != null;
-            foreach (UIElement panel in new UIElement[] { _resources, _pipeRules, _supports, (UIElement)_schedulesTab.Content }) panel.IsEnabled = !_busy;
+            foreach (UIElement panel in new UIElement[] { _resources, _pipeRules, _supports, _sleevesPanel, (UIElement)_schedulesTab.Content }) panel.IsEnabled = !_busy;
         }
 
         private void ResetToDefaults()
@@ -573,6 +653,7 @@ namespace VKTools.Revit.UI
                 _resources.Load(defaults.ResourcesText);
                 _pipeRules.Load(defaults.PipeRulesText);
                 _supports.Load(defaults.SupportsText);
+                LoadSleeves(defaults);
             }
             finally
             {
@@ -596,7 +677,7 @@ namespace VKTools.Revit.UI
         private void Send(CalcRequest request)
         {
             if (_busy) return;
-            foreach (CsvGridPanel panel in new[] { _resources, _pipeRules, _supports }) panel.CommitEdits();
+            foreach (CsvGridPanel panel in new[] { _resources, _pipeRules, _supports, _cord }) panel.CommitEdits();
             CalcOptions options = CurrentOptions();
             if ((request == CalcRequest.Trial || request == CalcRequest.Apply) && options.Signature() != _shownFor)
             {

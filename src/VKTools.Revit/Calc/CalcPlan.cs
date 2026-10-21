@@ -207,6 +207,17 @@ namespace VKTools.Revit.Calc
         /// <summary>Текстовые параметры труб — подсказки для «Параметр системы».</summary>
         public SortedSet<string> SystemCandidates { get; } = new SortedSet<string>(StringComparer.CurrentCultureIgnoreCase);
 
+        /// <summary>Семейства, похожие на гильзы (подсказки для маски), и параметры длины первой гильзы.</summary>
+        public SortedSet<string> SleeveFamilies { get; } = new SortedSet<string>(StringComparer.CurrentCultureIgnoreCase);
+
+        public SortedSet<string> SleeveLengthCandidates { get; } = new SortedSet<string>(StringComparer.CurrentCultureIgnoreCase);
+
+        /// <summary>Гильз по маске; -1 — шнура в ресурсах нет, гильзы не искали.</summary>
+        public int SleeveCount { get; set; } = -1;
+
+        /// <summary>Каким параметром взята длина гильз (выбран или угадан).</summary>
+        public string? SleeveLengthUsed { get; set; }
+
         public string FamilyName { get; set; } = CalcFamilyBuilder.DefaultFamily;
 
         public long? FamilyId { get; set; }

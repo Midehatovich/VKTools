@@ -90,6 +90,25 @@ namespace VKTools.Revit.Calc
             }
         }
 
+        /// <summary>Длина (футы внутри Revit)? Тем же TypeId без версии: «autodesk.spec.aec:length».</summary>
+        public static bool IsLength(Parameter p)
+        {
+            if (p.StorageType != StorageType.Double) return false;
+            try
+            {
+#if REVIT2022_OR_GREATER
+                string id = p.Definition.GetDataType().TypeId ?? string.Empty;
+#else
+                string id = p.Definition.GetSpecTypeId().TypeId ?? string.Empty;
+#endif
+                return Regex.IsMatch(id, @"[:.]length(-|$)");
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                return false;
+            }
+        }
+
         /// <summary>Значение для записи в параметр этого типа хранения; null — не подходит (и причина).</summary>
         public static ParamValue? Convert(Parameter p, object value, out string? problem)
         {

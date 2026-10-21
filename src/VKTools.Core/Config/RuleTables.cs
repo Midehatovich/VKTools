@@ -131,7 +131,7 @@ namespace VKTools.Core.Config
         {
             Parameters, VkCategories, Updaters, InsulationFromHost, LookalikeValues,
             Spec.SpecRuleTables.NestedParameters, Spec.SpecRuleTables.Grouping, Spec.SpecRuleTables.KitParameters,
-            Calc.CalcTables.Resources, Calc.CalcTables.PipeRules, Calc.CalcTables.Supports,
+            Calc.CalcTables.Resources, Calc.CalcTables.PipeRules, Calc.CalcTables.Supports, Calc.CalcTables.Cord,
         };
 
         public static ParsedRules<RequiredParameter> ParseParameters(CsvTable table, string fileName)

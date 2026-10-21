@@ -35,6 +35,12 @@ namespace VKTools.Core.Calc
         /// <summary>Уровень (Id), -1 — нет.</summary>
         public long Level { get; set; } = -1;
 
+        /// <summary>Сумма длин гильз на трубе, мм (для шнура); 0 — гильз нет.</summary>
+        public double SleeveMm { get; set; }
+
+        /// <summary>Сколько гильз на трубе.</summary>
+        public int Sleeves { get; set; }
+
         /// <summary>ADSK_Количество трубы, м — для сверки с длиной; null — не заполнено.</summary>
         public double? Quantity { get; set; }
 
@@ -109,6 +115,11 @@ namespace VKTools.Core.Calc
 
         public int Supports { get; set; }
 
+        public int Sleeves { get; set; }
+
+        /// <summary>Расшифровка шнура: «CORD8 DN25 Ø33,7: π·(33,7+10)·2000/10 = 274,6 м».</summary>
+        public List<string> CordLines { get; } = new List<string>();
+
         /// <summary>Расшифровка креплений: «DN50 изол.: ΣL = 12,3 м / шаг 3 м = 5 шт × 2,43 кг = 12,15 кг».</summary>
         public List<string> SupportLines { get; } = new List<string>();
     }
@@ -165,6 +176,15 @@ namespace VKTools.Core.Calc
         public bool CheckQuantity { get; set; } = true;
 
         public string QuantityParameter { get; set; } = "ADSK_Количество";
+
+        /// <summary>Шнур: добавка к Dнар трубы, мм (Excel: Dнар + 10).</summary>
+        public double CordAddMm { get; set; } = 10;
+
+        /// <summary>Шнур: шаг витка, мм (Excel: длина гильз / 10 = число витков).</summary>
+        public double CordPitchMm { get; set; } = 10;
+
+        /// <summary>Какой шнур в гильзы по DN трубы (calc_cord.csv).</summary>
+        public IReadOnlyList<CordRow> Cord { get; set; } = Array.Empty<CordRow>();
     }
 
     /// <summary>Результат расчёта по всем областям.</summary>
@@ -259,6 +279,8 @@ namespace VKTools.Core.Calc
                     Count(values, copy.Value);
                 }
 
+                if (pipe.SleeveMm > 0) AddSleeves(pipe, acc, options, result);
+
                 PipeRule? rule = rules.FirstOrDefault(r => r.Matches(pipe.Segment, pipe.Name, pipe.DnMm, pipe.Insulated));
                 if (rule == null)
                 {
@@ -345,6 +367,22 @@ namespace VKTools.Core.Calc
                     parts.Add($"{tag}: ⌈{CalcTables.Format(length, 2)}/{CalcTables.Format(step, 2)}⌉={n}×{CalcTables.Format(mass1)}");
                 }
 
+                foreach (KeyValuePair<(string Code, double Dn, double Od), double> group in acc.CordLength.OrderBy(g => g.Key.Code, StringComparer.Ordinal)
+                    .ThenBy(g => g.Key.Dn).ThenBy(g => g.Key.Od))
+                {
+                    double meters = Math.PI * (group.Key.Od + options.CordAddMm) / 1000.0 * group.Value / options.CordPitchMm;
+                    Add(acc.Base, group.Key.Code, meters);
+                    string text = $"DN{CalcTables.Format(group.Key.Dn, 0)} Ø{CalcTables.Format(group.Key.Od, 1)}: π·({CalcTables.Format(group.Key.Od, 1)}+{CalcTables.Format(options.CordAddMm, 1)})"
+                        + $"·{CalcTables.Format(group.Value, 0)}/{CalcTables.Format(options.CordPitchMm, 1)}/1000 = {CalcTables.Format(meters, 2)} м";
+                    acc.Summary.CordLines.Add(group.Key.Code + " " + text);
+                    if (!basisParts.TryGetValue(group.Key.Code, out List<string>? parts))
+                    {
+                        parts = new List<string>();
+                        basisParts[group.Key.Code] = parts;
+                    }
+                    parts.Add(text);
+                }
+
                 if (options.CheckQuantity && acc.QuantityCount == acc.Summary.Pipes && acc.Summary.Pipes > 0
                     && Math.Abs(acc.QuantitySum - acc.Summary.Length) > Math.Max(0.01, 0.005 * acc.Summary.Length))
                 {
@@ -389,15 +427,32 @@ namespace VKTools.Core.Calc
         {
             CalcResource r = t.Resource;
             string tail = r.BasisText.Length > 0 ? "; " + r.BasisText : string.Empty;
-            if (r.Base == CalcBase.SupportMass)
+            if (r.Base == CalcBase.SupportMass || r.Base == CalcBase.Cord)
             {
-                return $"{string.Join("; ", supportParts ?? new List<string>())} = {CalcTables.Format(t.Base)} кг × {CalcTables.Format(r.Rate, 4)} × {CalcTables.Format(r.Reserve)} = "
+                string unit = r.Base == CalcBase.Cord ? "м" : "кг";
+                return $"{string.Join("; ", supportParts ?? new List<string>())} = {CalcTables.Format(t.Base)} {unit} × {CalcTables.Format(r.Rate, 4)} × {CalcTables.Format(r.Layers)} сл. × {CalcTables.Format(r.Reserve)} = "
                     + $"{CalcTables.Format(t.Quantity)} → {CalcTables.Format(t.Auto)} {r.Unit}{tail}";
             }
             string symbol = r.Base == CalcBase.Area ? "S" : r.Base == CalcBase.Length ? "L" : "N";
             string label = CalcTables.BaseLabel(r.Base);
             return $"{symbol}={CalcTables.Format(t.Base)} {label} × {CalcTables.Format(r.Rate, 4)} {r.Unit}/{label} × {CalcTables.Format(r.Layers)} сл. × {CalcTables.Format(r.Reserve)} = "
                 + $"{CalcTables.Format(t.Quantity)} → {CalcTables.Format(t.Auto)} {r.Unit}{tail}";
+        }
+
+        /// <summary>Гильзы трубы → длина гильз в группу «шнур · DN · Dнар»: метры считаются по группе (как в Excel — по строке диаметра).</summary>
+        private static void AddSleeves(PipeSample pipe, SystemAcc acc, CalcEngineOptions options, CalcResult result)
+        {
+            acc.Summary.Sleeves += pipe.Sleeves;
+            CordRow? row = CalcTables.FindCord(options.Cord, pipe.DnMm);
+            if (row == null)
+            {
+                result.Issues.Add(Severity.Warning, $"гильзы на трубе DN{CalcTables.Format(pipe.DnMm, 1)}: в таблице шнура нет такого DN — шнур не посчитан",
+                    "Добавьте строку на вкладке «Гильзы и шнур».", pipe.Id);
+                return;
+            }
+            var key = (row.Code, Math.Round(pipe.DnMm, 1), Math.Round(pipe.OdMm, 1));
+            acc.CordLength.TryGetValue(key, out double sum);
+            acc.CordLength[key] = sum + pipe.SleeveMm;
         }
 
         private static void Add(Dictionary<string, double> d, string key, double value)
@@ -444,6 +499,8 @@ namespace VKTools.Core.Calc
             public Dictionary<(string Code, double Dn, bool Insulated), double> SupportLength { get; } = new Dictionary<(string, double, bool), double>();
 
             public Dictionary<(string Code, double Dn, bool Insulated), SupportRow> SupportRows { get; } = new Dictionary<(string, double, bool), SupportRow>();
+
+            public Dictionary<(string Code, double Dn, double Od), double> CordLength { get; } = new Dictionary<(string, double, double), double>();
 
             public double QuantitySum { get; set; }
 

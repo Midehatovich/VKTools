@@ -22,6 +22,7 @@ namespace VKTools.Core.Tests
                 ResourcesText = File.ReadAllText(Path.Combine(dir, CalcTables.ResourcesFile)),
                 PipeRulesText = File.ReadAllText(Path.Combine(dir, CalcTables.PipeRulesFile)),
                 SupportsText = File.ReadAllText(Path.Combine(dir, CalcTables.SupportsFile)),
+                CordText = File.ReadAllText(Path.Combine(dir, CalcTables.CordFile)),
             };
         }
 
@@ -45,14 +46,17 @@ namespace VKTools.Core.Tests
         };
 
         private static CalcResult Run(CalcRuleSet set, params PipeSample[] pipes) =>
-            CalcEngine.Calculate(new[] { new KeyValuePair<string, IReadOnlyList<PipeSample>>("Спец", pipes) }, set.Resources, set.Rules, set.Supports, new CalcEngineOptions());
+            CalcEngine.Calculate(new[] { new KeyValuePair<string, IReadOnlyList<PipeSample>>("Спец", pipes) }, set.Resources, set.Rules, set.Supports, Options(set));
+
+        private static CalcEngineOptions Options(CalcRuleSet set) => new CalcEngineOptions { Cord = set.Cord, CordAddMm = set.CordAddMm, CordPitchMm = set.CordPitchMm };
 
         [Fact]
         public void Встроенные_таблицы_разбираются_и_группы_по_порядку()
         {
             CalcRuleSet set = Rules();
-            Assert.Equal(new[] { "PRIMER", "PAINT", "METAL" }, set.Resources.Select(r => r.Code));
-            Assert.Equal(new[] { "9.1", "9.2", "9.3" }, set.Resources.Select(r => r.Group));
+            Assert.Equal(new[] { "PRIMER", "PAINT", "METAL", "CORD6", "CORD8", "CORD10", "CORD12H", "CORD12S" }, set.Resources.Select(r => r.Code));
+            Assert.Equal(new[] { "9.1", "9.2", "9.3", "9.4", "9.5", "9.6", "9.7", "9.8" }, set.Resources.Select(r => r.Group));
+            Assert.Equal(5, set.Cord.Count);
             Assert.Equal(new[] { "ADSK_Марка", "ADSK_Техническая характеристика", "ADSK_Завод-изготовитель" }, set.ExtraParameters);
             Assert.Equal(12, set.Supports.Count);
             Assert.Equal(7, set.Rules.Count);
@@ -254,6 +258,52 @@ namespace VKTools.Core.Tests
             Assert.Equal("Спец|В1|PRIMER", CalcEngine.MakeKey("Спец", "В1", "PRIMER"));
             Assert.Equal("Спец", CalcEngine.KeyScope("Спец|В1|PRIMER"));
             Assert.Null(CalcEngine.KeyScope("ЗАПАС|Спец"));
+        }
+        [Fact]
+        public void Шнур_как_в_Excel_по_длине_гильз_и_DN()
+        {
+            CalcRuleSet set = Rules();
+            // Excel, строка ф25: Dнар 33,7, гильзы 20 000 мм → 4 × (33,7 + 10) · 3,14 / 1000 × 2000 = 1097,7 м (у нас π, а не 3,14: 1098,3)
+            PipeSample a = Pipe(1, "В1", "Труба стальная водогазопроводная ø25x3,2", 25, 33.7, 10);
+            a.SleeveMm = 12000;
+            a.Sleeves = 48;
+            PipeSample b = Pipe(2, "В1", "Труба стальная водогазопроводная ø25x3,2", 25, 33.7, 10);
+            b.SleeveMm = 8000;
+            b.Sleeves = 32;
+            PipeSample c = Pipe(3, "В1", "Труба стальная водогазопроводная ø50x3,5", 50, 60.3, 5);
+            c.SleeveMm = 3300;
+            CalcResult r = Run(set, a, b, c);
+            CalcTarget cord8 = r.Targets.Single(t => t.Code == "CORD8");
+            Assert.Equal(Math.PI * 43.7 / 1000 * 2000, cord8.Base, 6);
+            Assert.Equal(cord8.Base * 4, cord8.Quantity, 6);
+            Assert.Equal(1098.4, cord8.Auto, 6);                                 // 1098,30 → вверх до 0,1
+            Assert.Contains("Lгильз", set.Resources.Single(x => x.Code == "CORD8").BasisText);
+            CalcTarget soft = r.Targets.Single(t => t.Code == "CORD12S");
+            Assert.Equal(4 * Math.PI * 70.3 / 1000 * 330, soft.Quantity, 6);    // Excel ф50: 291,4 м при 3,14
+            Assert.Equal(80, r.Systems.Single().Sleeves);
+            Assert.Contains(r.Systems.Single().CordLines, l => l.StartsWith("CORD8 DN25", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void Шнур_DN_вне_таблицы_в_отчёт_и_шнур_в_правиле_трубы_ошибка()
+        {
+            CalcRuleSet set = Rules();
+            PipeSample p = Pipe(7, "К1", "Труба стальная", 10, 17, 3);
+            p.SleeveMm = 250;
+            CalcResult r = Run(set, p);
+            Assert.DoesNotContain(r.Targets, t => t.Resource.Base == CalcBase.Cord);
+            Assert.Contains(r.Issues.Items, i => i.Severity == Severity.Warning && i.Message.Contains("таблице шнура нет", StringComparison.Ordinal) && i.Ids.Contains(7));
+
+            CalcDefaults d = BuiltIn();
+            CalcOptions options = CalcOptions.FromDefaults(d);
+            options.PipeRulesText = "#schema=1\nСегмент;Ресурсы\n*;PRIMER,CORD8\n";
+            options.CordText = "#schema=1\nDN_от;DN_до;Ресурс\n15;25;CORD6\n20;32;CORD8\n40;50;PRIMER\n";
+            options.CordPitch = "0";
+            List<ConfigIssue> errors = options.Parse().Issues.Where(i => i.Severity == Severity.Error).ToList();
+            Assert.Contains(errors, e => e.FileName == "Правила для труб" && e.Message.Contains("по гильзам", StringComparison.Ordinal));
+            Assert.Contains(errors, e => e.FileName == CalcOptions.SleevesTab && e.Message.Contains("пересекается", StringComparison.Ordinal));
+            Assert.Contains(errors, e => e.FileName == CalcOptions.SleevesTab && e.Message.Contains("нужна cord", StringComparison.Ordinal));
+            Assert.Contains(errors, e => e.FileName == CalcOptions.SleevesTab && e.Message.Contains("шаг витка", StringComparison.Ordinal));
         }
     }
 }

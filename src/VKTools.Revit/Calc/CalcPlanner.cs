@@ -54,6 +54,15 @@ namespace VKTools.Revit.Calc
             if (rules.HasErrors) return plan;
 
             var access = new PipeReader(doc, options.SystemParameter.Trim(), plan);
+            Dictionary<long, (double Mm, int Count)> sleeves = new Dictionary<long, (double, int)>();
+            if (rules.NeedsSleeves)
+            {
+                using (timings.Measure("гильзы"))
+                {
+                    progress.Report("Гильзы…");
+                    sleeves = CalcSleeves.Read(doc, options, plan);
+                }
+            }
             using (timings.Measure("трубы"))
             {
                 BuildScopes(doc, plan, rules);
@@ -62,7 +71,7 @@ namespace VKTools.Revit.Calc
                 {
                     progress.Report($"Трубы: «{scope.Name}»…", ++n, plan.Scopes.Count);
                     progress.ThrowIfCancelled();
-                    ReadScope(doc, scope, access, plan);
+                    ReadScope(doc, scope, access, plan, sleeves);
                 }
                 plan.SystemCandidates.UnionWith(access.TextParameters);
             }
@@ -71,7 +80,7 @@ namespace VKTools.Revit.Calc
             using (timings.Measure("расчёт"))
             {
                 plan.Result = CalcEngine.Calculate(plan.Scopes.Select(s => new KeyValuePair<string, IReadOnlyList<PipeSample>>(s.Name, s.Pipes)),
-                    rules.Resources, rules.Rules, rules.Supports, new CalcEngineOptions { QuantityParameter = CalcParams.Quantity });
+                    rules.Resources, rules.Rules, rules.Supports, new CalcEngineOptions { QuantityParameter = CalcParams.Quantity, Cord = rules.Cord, CordAddMm = rules.CordAddMm, CordPitchMm = rules.CordPitchMm });
                 foreach (CalcIssue issue in plan.Result.Issues.Items)
                 {
                     CalcIssue copy = plan.Issues.Add(issue.Severity, issue.Message, issue.Action);
@@ -94,10 +103,18 @@ namespace VKTools.Revit.Calc
             }
             plan.Notes.Add($"Труб в областях: {access.Read}, пропущено: {access.Skipped}, без правила: {plan.Result.PipesWithoutRule}. "
                 + $"Позиций по расчёту: {plan.Result.Targets.Count}.");
+            if (plan.SleeveCount >= 0)
+            {
+                int inScopes = plan.Result.Systems.Sum(s => s.Sleeves);
+                int onPipes = sleeves.Values.Sum(v => v.Count);
+                plan.Notes.Add($"Гильз «{options.SleeveFamily.Trim()}»: {plan.SleeveCount}, длина — «{plan.SleeveLengthUsed ?? "не задана"}»; на трубах областей: {inScopes}"
+                    + (onPipes > inScopes ? $", на трубах вне отмеченных спецификаций (или пропущенных): {onPipes - inScopes}" : string.Empty) + ".");
+            }
             foreach (CalcSystemSummary s in plan.Result.Systems)
             {
                 plan.Notes.Add($"«{s.Scope}», {s.System}: труб {s.Pipes}, L = {CalcTables.Format(s.Length)} м, S = {CalcTables.Format(s.Area)} м² (по правилам {CalcTables.Format(s.AreaByRules)} м²)"
-                    + (s.SupportLines.Count > 0 ? "; крепления: " + string.Join("; ", s.SupportLines) : string.Empty));
+                    + (s.SupportLines.Count > 0 ? "; крепления: " + string.Join("; ", s.SupportLines) : string.Empty)
+                    + (s.CordLines.Count > 0 ? $"; гильз {s.Sleeves}, шнур: " + string.Join("; ", s.CordLines) : string.Empty));
             }
             return plan;
         }
@@ -195,7 +212,7 @@ namespace VKTools.Revit.Calc
             return names;
         }
 
-        private static void ReadScope(Document doc, CalcScope scope, PipeReader reader, CalcPlan plan)
+        private static void ReadScope(Document doc, CalcScope scope, PipeReader reader, CalcPlan plan, Dictionary<long, (double Mm, int Count)> sleeves)
         {
             FilteredElementCollector collector = scope.Schedule != null ? new FilteredElementCollector(doc, scope.Schedule.Id) : new FilteredElementCollector(doc);
             foreach (Pipe pipe in collector.OfCategory(BuiltInCategory.OST_PipeCurves).OfClass(typeof(Pipe)).WhereElementIsNotElementType().Cast<Pipe>())
@@ -207,6 +224,11 @@ namespace VKTools.Revit.Calc
                     Id = read.Id, System = read.System, Name = read.Name, Segment = read.Segment, DnMm = read.DnMm, OdMm = read.OdMm,
                     LengthM = read.LengthM, Insulated = read.Insulated, Vertical = read.Vertical, Phase = read.Phase, Level = read.Level, Quantity = read.Quantity,
                 };
+                if (sleeves.TryGetValue(read.Id, out (double Mm, int Count) onPipe))
+                {
+                    sample.SleeveMm = onPipe.Mm;
+                    sample.Sleeves = onPipe.Count;
+                }
                 foreach (string name in scope.CopyNames)
                 {
                     Parameter? p = CalcParams.Find(pipe, name, out _);
