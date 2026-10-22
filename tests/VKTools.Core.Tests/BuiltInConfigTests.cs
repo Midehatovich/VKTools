@@ -1,3 +1,4 @@
+using System.IO;
 using System.Linq;
 using VKTools.Core.Config;
 using Xunit;
@@ -33,6 +34,15 @@ namespace VKTools.Core.Tests
             ParsedRules<RequiredParameter> parsed = RuleTables.ParseParameters(loaded.Table!, "parameters.csv");
             Assert.Empty(parsed.Issues);
             Assert.Contains(parsed.Items, p => p.Name == "ADSK_Этаж" && p.Categories.Contains("OST_PipeInsulations"));
+        }
+
+        [Theory]
+        [MemberData(nameof(Files))]
+        public void Встроенный_файл_есть_в_установщике(string fileName)
+        {
+            // Установщик перечисляет файлы поимённо: без строки в RevitYear.wxi файл не попадёт в MSI
+            string wxi = Path.Combine(Path.GetDirectoryName(RepoPaths.ConfigDirectory())!, "installer", "RevitYear.wxi");
+            Assert.Contains("/config/" + fileName + "\"", File.ReadAllText(wxi));
         }
     }
 }
