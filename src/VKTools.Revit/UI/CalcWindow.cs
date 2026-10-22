@@ -678,8 +678,12 @@ namespace VKTools.Revit.UI
         private void ConfirmApply()
         {
             string settings = SettingsDirty() ? "\n\nНастройка из окна сохранится в модели той же операцией." : string.Empty;
+            string model = CurrentOptions().Schedules.Count == 0
+                ? $"\n\nВНИМАНИЕ: спецификации не отмечены. Позиции посчитаны по всей модели (область «{CalcOptions.ModelScope}») без фильтров спецификаций: "
+                    + "одна позиция на систему, без деления на подземную и надземную часть. Обычно сначала отмечают спецификации на вкладке «Спецификации»."
+                : string.Empty;
             MessageBoxResult answer = MessageBox.Show(this,
-                $"Записать изменения ({_changes})?{settings}\n\nЭто одна запись в журнале отмены: Ctrl+Z отменит её целиком.",
+                $"Записать изменения ({_changes})?{model}{settings}\n\nЭто одна запись в журнале отмены: Ctrl+Z отменит её целиком.",
                 "VK Tools", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
             if (answer == MessageBoxResult.OK) Send(CalcRequest.Apply);
         }

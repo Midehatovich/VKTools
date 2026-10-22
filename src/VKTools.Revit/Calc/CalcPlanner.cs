@@ -167,7 +167,7 @@ namespace VKTools.Revit.Calc
             if (plan.Options.Schedules.Count == 0)
             {
                 plan.Scopes.Add(new CalcScope(CalcOptions.ModelScope, null));
-                plan.Issues.Add(Severity.Info, "спецификации не отмечены — расчёт по всей модели (область «МОДЕЛЬ»)",
+                plan.Issues.Add(Severity.Warning, "спецификации не отмечены — расчёт по всей модели (область «МОДЕЛЬ»): фильтры спецификаций (подземная/надземная часть, этаж) не учитываются",
                     "Отметьте спецификации на вкладке «Спецификации», чтобы позиции считались по их фильтрам (этаж, система, часть здания).");
                 return;
             }
@@ -415,11 +415,19 @@ namespace VKTools.Revit.Calc
             }
 
             var scopeNames = new HashSet<string>(plan.Scopes.Select(s => s.Name), StringComparer.Ordinal);
+            int modelReplacedNoted = 0;
             var scheduleNames = new HashSet<string>(new FilteredElementCollector(doc).OfClass(typeof(ViewSchedule)).Cast<ViewSchedule>().Select(v => v.Name), StringComparer.Ordinal);
             foreach (KeyValuePair<string, List<Item>> pair in byKey.Where(p => !targets.ContainsKey(p.Key)).OrderBy(p => p.Key, StringComparer.Ordinal))
             {
                 string? scope = CalcEngine.KeyScope(pair.Key);
-                if (scope != null && scopeNames.Contains(scope))
+                // Расчёт по всей модели и по спецификациям взаимоисключающие: позиции «МОДЕЛЬ» при отмеченных спецификациях задвоили бы итог
+                bool replacedModel = scope == CalcOptions.ModelScope && !scopeNames.Contains(scope);
+                if (replacedModel && modelReplacedNoted++ == 0)
+                {
+                    plan.Issues.Add(Severity.Warning, $"позиции области «{CalcOptions.ModelScope}» (прошлый расчёт без отмеченных спецификаций) будут удалены: теперь позиции считаются по отмеченным спецификациям",
+                        "Ничего делать не нужно: иначе материалы попали бы в спецификации дважды.", pair.Value[0].Element.Id.ToLong());
+                }
+                if (scope != null && (scopeNames.Contains(scope) || replacedModel))
                 {
                     foreach (Item item in pair.Value)
                     {

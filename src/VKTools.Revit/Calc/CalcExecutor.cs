@@ -108,6 +108,8 @@ namespace VKTools.Revit.Calc
                 try
                 {
                     var failures = new FailureCollector(SystemMergeExecutor.RegisteredUpdaters(doc), SystemMergeExecutor.DisableOnFailureApplications);
+                    // Все позиции стоят в одной точке (в спецификации места нет): «идентичные экземпляры» — ожидаемо, не в отчёт
+                    failures.Quiet.Add(BuiltInFailures.OverlapFailures.DuplicateInstances.Guid);
                     var symbols = new Dictionary<string, FamilySymbol>(StringComparer.Ordinal);
                     using (Transaction prepare = FailureCollector.Start(doc, "VK Tools: служебное семейство и типоразмеры", failures))
                     {
@@ -194,6 +196,7 @@ namespace VKTools.Revit.Calc
                         }
                     }
 
+                    if (failures.QuietCount > 0) log.Info($"  снято предупреждений Revit «идентичные экземпляры в одном месте»: {failures.QuietCount}");
                     if (mode == SpecRunMode.Trial || fatal)
                     {
                         progress.Report("Откат всей операции…");

@@ -35,6 +35,11 @@ namespace VKTools.Revit.Infrastructure
 
         public List<string> Warnings { get; } = new List<string>();
 
+        /// <summary>Предупреждения, которые ожидаемы для этой операции: снимаются и только считаются (не в отчёт).</summary>
+        public ISet<Guid> Quiet { get; } = new HashSet<Guid>();
+
+        public int QuietCount { get; private set; }
+
         public List<string> Errors { get; } = new List<string>();
 
         /// <summary>Отключённые обновления: «Имя» (Надстройка).</summary>
@@ -58,7 +63,8 @@ namespace VKTools.Revit.Infrastructure
                 }
                 if (failure.GetSeverity() == FailureSeverity.Warning)
                 {
-                    Warnings.Add(text);
+                    if (Quiet.Contains(failure.GetFailureDefinitionId().Guid)) QuietCount++;
+                    else Warnings.Add(text);
                     failuresAccessor.DeleteWarning(failure);
                     continue;
                 }

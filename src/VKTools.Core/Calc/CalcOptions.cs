@@ -74,6 +74,9 @@ namespace VKTools.Core.Calc
         public const string DefaultGroup = "9";
         public const string ModelScope = "МОДЕЛЬ";
         public const string DefaultSleeveFamily = "*ильз*";
+
+        /// <summary>Длина гильзы — габарит её геометрии вдоль оси трубы (у семейства нет параметра длины).</summary>
+        public const string SleeveLengthGeometry = "(по геометрии вдоль трубы)";
         public const string DefaultCordAdd = "10";
         public const string DefaultCordPitch = "10";
         public const string SleevesTab = "Гильзы и шнур";
