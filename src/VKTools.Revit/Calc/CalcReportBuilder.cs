@@ -116,8 +116,14 @@ namespace VKTools.Revit.Calc
                 Type = parts[2],
                 Current = op.Kind == CalcOpKind.Create ? string.Empty : op.OldQuantity + (op.ManualText.Length > 0 ? $" (вручную {op.ManualText})" : string.Empty),
                 Expected = t == null || op.Kind == CalcOpKind.DeleteDuplicate ? "—" : CalcTables.Format(op.Final),
-                Action = op.Error ?? string.Join("; ", op.Changes.Where(c => c.Name != CalcParams.Basis && c.Name != CalcParams.Quantity).Select(c => $"{c.Name}: «{c.Old}» → «{c.New}»")),
+                Action = op.Error ?? Join(string.Join("; ", op.Changes.Where(c => c.Name != CalcParams.Basis && c.Name != CalcParams.Quantity).Select(c => $"{c.Name}: «{c.Old}» → «{c.New}»")),
+                    op.Kind == CalcOpKind.Update && op.ManualText.Length == 0 && op.Changes.Any(c => c.Name == CalcParams.Quantity) ? QuantityHint : string.Empty),
             };
         }
+
+        /// <summary>Кол. правят прямо в спецификации — «Применить» вернёт расчёт; закрепляют через параметр ручного значения.</summary>
+        private const string QuantityHint = "Если «Кол.» меняли руками в спецификации — «Применить» вернёт расчёт; своё значение впишите в «" + CalcParams.Manual + "».";
+
+        private static string Join(string a, string b) => a.Length == 0 ? b : b.Length == 0 ? a : a + "; " + b;
     }
 }
