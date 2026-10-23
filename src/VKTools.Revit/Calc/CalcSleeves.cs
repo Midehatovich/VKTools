@@ -44,12 +44,21 @@ namespace VKTools.Revit.Calc
             }
             foreach (Parameter p in sleeves[0].Parameters.Cast<Parameter>().Concat(sleeves[0].Symbol.Parameters.Cast<Parameter>()))
             {
-                if (p.Definition != null && CalcParams.IsLength(p)) plan.SleeveLengthCandidates.Add(p.Definition.Name);
+                // Отметка и смещение — тоже «длина» по типу данных, но не длина гильзы
+                if (p.Definition != null && CalcParams.IsLength(p) && !NotSleeveLength(p.Definition.Name)) plan.SleeveLengthCandidates.Add(p.Definition.Name);
             }
             // Параметра длины может не быть (длина гильзы задана геометрией): тогда габарит вдоль трубы
             string lengthName = options.SleeveLength.Trim().Length > 0 ? options.SleeveLength.Trim() : AutoLength(plan.SleeveLengthCandidates) ?? CalcOptions.SleeveLengthGeometry;
             bool byGeometry = lengthName == CalcOptions.SleeveLengthGeometry;
             plan.SleeveLengthCandidates.Add(CalcOptions.SleeveLengthGeometry);
+            if (!byGeometry && !sleeves.Any(sl => LengthOf(sl, lengthName) != null))
+            {
+                // Выбранный параметр пуст у всех гильз — это не длина гильзы; без шнура не оставляем
+                plan.Issues.Add(Severity.Warning, $"параметр «{lengthName}» не задаёт длину ни у одной гильзы — длина взята по геометрии вдоль трубы",
+                    $"На вкладке «{CalcOptions.SleevesTab}» выберите «{CalcOptions.SleeveLengthGeometry}» или параметр длины и сохраните настройку.");
+                lengthName = CalcOptions.SleeveLengthGeometry;
+                byGeometry = true;
+            }
             plan.SleeveLengthUsed = lengthName;
 
             var geometry = new Options { DetailLevel = ViewDetailLevel.Fine };
@@ -59,8 +68,8 @@ namespace VKTools.Revit.Calc
                 Parameter? length = null;
                 if (!byGeometry)
                 {
-                    length = CalcParams.Find(sleeve, lengthName, out _) ?? CalcParams.Find(sleeve.Symbol, lengthName, out _);
-                    if (length == null || !CalcParams.IsLength(length) || !length.HasValue || length.AsDouble() <= 0)
+                    length = LengthOf(sleeve, lengthName);
+                    if (length == null)
                     {
                         plan.Issues.Add(Severity.Warning, $"у гильзы нет длины в «{lengthName}» (или это не длина) — гильза не учтена",
                             $"Заполните длину или выберите другой параметр (или «{CalcOptions.SleeveLengthGeometry}»).", id);
@@ -86,6 +95,17 @@ namespace VKTools.Revit.Calc
             }
             return result;
         }
+
+        /// <summary>Параметр длины гильзы (экземпляр, затем тип) с положительным значением; иначе null.</summary>
+        private static Parameter? LengthOf(FamilyInstance sleeve, string name)
+        {
+            Parameter? p = CalcParams.Find(sleeve, name, out _) ?? CalcParams.Find(sleeve.Symbol, name, out _);
+            return p != null && CalcParams.IsLength(p) && p.HasValue && p.AsDouble() > 0 ? p : null;
+        }
+
+        private static bool NotSleeveLength(string name) =>
+            name.StartsWith("Отметка", StringComparison.OrdinalIgnoreCase) || name.StartsWith("Смещение", StringComparison.OrdinalIgnoreCase)
+            || name.IndexOf("Elevation", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("Offset", StringComparison.OrdinalIgnoreCase) >= 0;
 
         /// <summary>Габарит геометрии гильзы вдоль оси трубы, футы: разброс проекций вершин на направление трубы.</summary>
         private static double AlongAxis(FamilyInstance sleeve, XYZ direction, Options options)
