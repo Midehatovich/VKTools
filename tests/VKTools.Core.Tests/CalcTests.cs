@@ -57,11 +57,14 @@ namespace VKTools.Core.Tests
             CalcRuleSet set = Rules();
             Assert.Equal(new[] { "PRIMER", "PAINT", "METAL", "CORD6", "CORD8", "CORD10", "CORD12H", "CORD12S" }, set.Resources.Select(r => r.Code));
             Assert.Equal(new[] { "9.1", "9.2", "9.3", "9.4", "9.5", "9.6", "9.7", "9.8" }, set.Resources.Select(r => r.Group));
-            Assert.Equal(5, set.Cord.Count);
+            Assert.Equal(4, set.Cord.Count);
             Assert.Equal(new[] { "ADSK_Марка", "ADSK_Техническая характеристика", "ADSK_Завод-изготовитель" }, set.ExtraParameters);
             Assert.Equal(12, set.Supports.Count);
-            Assert.Equal(7, set.Rules.Count);
-            Assert.Empty(set.Rules.Single(r => r.NameMask == "*НПВХ*").Codes);
+            Assert.Equal(35, set.Rules.Count);
+            PipeRule pvc = set.Rules.Single(r => r.NameMask == "*НПВХ*" && r.Matches("Сталь", "Труба НПВХ 110", 110, false));
+            Assert.Equal(new[] { "METAL" }, pvc.Codes);
+            Assert.Equal(1.1, pvc.StepHorizontal);
+            Assert.Equal(2, pvc.StepVertical);
         }
 
         [Fact]
@@ -129,13 +132,28 @@ namespace VKTools.Core.Tests
         [Fact]
         public void Нет_правила_в_отчёт_правило_с_минусом_молча()
         {
-            CalcResult r = Run(Rules(),
+            CalcOptions options = CalcOptions.FromDefaults(BuiltIn());
+            options.PipeRulesText = "#schema=1\nСегмент;Наименование;Ресурсы\n*;*НПВХ*;-\n";
+            CalcResult r = Run(Rules(options),
                 Pipe(1, "К1", "Труба НПВХ 110", 100, 110, 5),
                 Pipe(2, "К1", "Труба медная 15", 15, 15, 5));
             Assert.Empty(r.Targets);
             Assert.Equal(1, r.PipesWithoutRule);
             CalcIssue issue = Assert.Single(r.Issues.Items, i => i.Message.StartsWith("нет правила", StringComparison.Ordinal));
             Assert.Equal(new long[] { 2 }, issue.Ids);
+        }
+
+        [Fact]
+        public void Пластик_шаг_по_правилу_масса_по_ближайшему_DN()
+        {
+            // PP Dн110 10 м гор. и 4 м верт.: шаг 1,1 и 2 м по правилу; масса — строка DN100 неизол. 2,23 кг
+            PipeSample h = Pipe(1, "К1", "Труба полипропиленовая канализационная 110", 110, 110, 10);
+            PipeSample v = Pipe(2, "К1", "Труба полипропиленовая канализационная 110", 110, 110, 4);
+            v.Vertical = true;
+            CalcResult r = Run(Rules(), h, v);
+            CalcTarget metal = r.Targets.Single(t => t.Code == "METAL");
+            Assert.Equal((10 + 2) * 2.23, metal.Base, 6);                      // ⌈10/1,1⌉ = 10, ⌈4/2⌉ = 2
+            Assert.Contains(r.Systems.Single().SupportLines, l => l.Contains("шаг по правилу", StringComparison.Ordinal));
         }
 
         [Fact]
@@ -264,7 +282,7 @@ namespace VKTools.Core.Tests
         public void Шнур_как_в_Excel_по_длине_гильз_и_DN()
         {
             CalcRuleSet set = Rules();
-            // Excel, строка ф25: Dнар 33,7, гильзы 20 000 мм → 4 × (33,7 + 10) · 3,14 / 1000 × 2000 = 1097,7 м (у нас π, а не 3,14: 1098,3)
+            // Excel, строка ф25: Dнар 33,7, гильзы 20 000 мм → (33,7 + 10) · 3,14 / 1000 × 2000 = 274,4 м (у нас π: 274,58); ×4 из Excel ведущий снял
             PipeSample a = Pipe(1, "В1", "Труба стальная водогазопроводная ø25x3,2", 25, 33.7, 10);
             a.SleeveMm = 12000;
             a.Sleeves = 48;
@@ -276,11 +294,11 @@ namespace VKTools.Core.Tests
             CalcResult r = Run(set, a, b, c);
             CalcTarget cord8 = r.Targets.Single(t => t.Code == "CORD8");
             Assert.Equal(Math.PI * 43.7 / 1000 * 2000, cord8.Base, 6);
-            Assert.Equal(cord8.Base * 4, cord8.Quantity, 6);
-            Assert.Equal(1098.4, cord8.Auto, 6);                                 // 1098,30 → вверх до 0,1
+            Assert.Equal(cord8.Base, cord8.Quantity, 6);
+            Assert.Equal(274.6, cord8.Auto, 6);                                  // 274,58 → вверх до 0,1
             Assert.Contains("Lгильз", set.Resources.Single(x => x.Code == "CORD8").BasisText);
             CalcTarget soft = r.Targets.Single(t => t.Code == "CORD12S");
-            Assert.Equal(4 * Math.PI * 70.3 / 1000 * 330, soft.Quantity, 6);    // Excel ф50: 291,4 м при 3,14
+            Assert.Equal(Math.PI * 70.3 / 1000 * 330, soft.Quantity, 6);        // Excel ф50: 72,8 м при 3,14 (без ×4)
             Assert.Equal(80, r.Systems.Single().Sleeves);
             Assert.Contains(r.Systems.Single().CordLines, l => l.StartsWith("CORD8 DN25", StringComparison.Ordinal));
         }

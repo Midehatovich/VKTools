@@ -508,6 +508,14 @@ namespace VKTools.Core.Calc
         /// <summary>Строка таблицы с тем же DN (±0,5 мм). Ближайшую не подбираем: нет строки — нет нормы.</summary>
         public static SupportRow? FindSupport(IEnumerable<SupportRow> rows, double dnMm) => rows.FirstOrDefault(r => Math.Abs(r.Dn - dnMm) <= 0.5);
 
+        /// <summary>Ближайшая по DN строка (масса для трубы не из стального ряда, Dн110 пластика → DN100); дальше 25 % за краем таблицы — нет.</summary>
+        public static SupportRow? NearestSupport(IEnumerable<SupportRow> rows, double dnMm)
+        {
+            List<SupportRow> list = rows.ToList();
+            if (list.Count == 0 || dnMm > list.Max(r => r.Dn) * 1.25 || dnMm < list.Min(r => r.Dn) * 0.75) return null;
+            return list.OrderBy(r => Math.Abs(r.Dn - dnMm)).ThenBy(r => r.Dn).First();
+        }
+
         /// <summary>Число из ячейки: запятая или точка, пробелы внутри. Пусто — <paramref name="empty"/>; не число — FormatException.</summary>
         public static double? ParseNumber(string text, double? empty)
         {

@@ -323,7 +323,10 @@ namespace VKTools.Core.Calc
                     switch (resource.Base)
                     {
                         case CalcBase.SupportMass:
-                            SupportRow? row = CalcTables.FindSupport(supports, pipe.DnMm);
+                            // Шаг в правиле (пластик, чугун — по рекомендациям изготовителя) важнее шага таблицы; масса — из таблицы,
+                            // для DN не из ряда стальных (Dн110 пластика) — ближайшая строка
+                            bool ruleStep = rule.StepHorizontal.HasValue;
+                            SupportRow? row = CalcTables.FindSupport(supports, pipe.DnMm) ?? (ruleStep ? CalcTables.NearestSupport(supports, pipe.DnMm) : null);
                             if (row == null)
                             {
                                 result.Issues.Add(Severity.Warning,
@@ -331,7 +334,8 @@ namespace VKTools.Core.Calc
                                     "Добавьте строку на вкладке «Крепления» или исключите такие трубы правилом.", pipe.Id);
                                 break;
                             }
-                            var groupKey = (code, row.Dn, pipe.Insulated);
+                            double step = !ruleStep ? 0 : pipe.Vertical && rule.StepVertical.HasValue ? rule.StepVertical!.Value : rule.StepHorizontal!.Value;
+                            var groupKey = (code, row.Dn, pipe.Insulated, step);
                             acc.SupportLength.TryGetValue(groupKey, out double sum);
                             acc.SupportLength[groupKey] = sum + pipe.LengthM;
                             acc.SupportRows[groupKey] = row;
@@ -352,19 +356,19 @@ namespace VKTools.Core.Calc
             foreach (SystemAcc acc in systems.Values)
             {
                 var basisParts = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-                foreach (KeyValuePair<(string Code, double Dn, bool Insulated), double> group in acc.SupportLength.OrderBy(g => g.Key.Code, StringComparer.Ordinal)
-                    .ThenBy(g => g.Key.Dn).ThenBy(g => g.Key.Insulated))
+                foreach (KeyValuePair<(string Code, double Dn, bool Insulated, double Step), double> group in acc.SupportLength.OrderBy(g => g.Key.Code, StringComparer.Ordinal)
+                    .ThenBy(g => g.Key.Dn).ThenBy(g => g.Key.Insulated).ThenBy(g => g.Key.Step))
                 {
                     SupportRow row = acc.SupportRows[group.Key];
                     double length = group.Value;
-                    string tag = $"DN{CalcTables.Format(group.Key.Dn, 0)} {(group.Key.Insulated ? "изол." : "неизол.")}";
+                    string tag = $"DN{CalcTables.Format(group.Key.Dn, 0)} {(group.Key.Insulated ? "изол." : "неизол.")}" + (group.Key.Step > 0 ? ", шаг по правилу" : string.Empty);
                     if (length < options.ShortPipeM)
                     {
                         result.Issues.Add(Severity.Info,
                             $"«{scope}», {acc.Summary.System}: {group.Key.Code} {tag} — всего {CalcTables.Format(length)} м, короче {CalcTables.Format(options.ShortPipeM)} м: крепление не начислено");
                         continue;
                     }
-                    double step = row.Step(group.Key.Insulated);
+                    double step = group.Key.Step > 0 ? group.Key.Step : row.Step(group.Key.Insulated);
                     double mass1 = row.Mass(group.Key.Insulated);
                     int n = (int)Math.Ceiling(length / step - Eps);
                     double mass = n * mass1;
@@ -507,9 +511,9 @@ namespace VKTools.Core.Calc
 
             public Dictionary<string, Dictionary<string, int>> Copy { get; } = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal);
 
-            public Dictionary<(string Code, double Dn, bool Insulated), double> SupportLength { get; } = new Dictionary<(string, double, bool), double>();
+            public Dictionary<(string Code, double Dn, bool Insulated, double Step), double> SupportLength { get; } = new Dictionary<(string, double, bool, double), double>();
 
-            public Dictionary<(string Code, double Dn, bool Insulated), SupportRow> SupportRows { get; } = new Dictionary<(string, double, bool), SupportRow>();
+            public Dictionary<(string Code, double Dn, bool Insulated, double Step), SupportRow> SupportRows { get; } = new Dictionary<(string, double, bool, double), SupportRow>();
 
             public Dictionary<(string Code, double Dn, double Od), double> CordLength { get; } = new Dictionary<(string, double, double), double>();
 
