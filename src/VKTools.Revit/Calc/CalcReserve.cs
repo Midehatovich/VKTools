@@ -42,14 +42,18 @@ namespace VKTools.Revit.Calc
                 List<FamilyInstance> pieces = new FilteredElementCollector(doc, schedule.Id).OfClass(typeof(FamilyInstance)).WhereElementIsNotElementType()
                     .Cast<FamilyInstance>().Where(fi => fi.Symbol != null && rules.Reserve.Any(r => r.Matches(fi.Symbol.FamilyName, fi.Symbol.Name))).ToList();
                 if (pieces.Count == 0) continue;
-                List<string>? fields = SortFields(scope, plan);
-                if (fields == null) continue;
+                List<(string Name, ElementId Id)>? sortFields = SortFields(scope, plan);
+                if (sortFields == null) continue;
+                List<string> fields = sortFields.Select(f => f.Name).ToList();
+                var ids = sortFields.ToDictionary(f => f.Name, f => f.Id, StringComparer.Ordinal);
                 plan.ReserveFields.UnionWith(fields.Where(f => f != systemName && !IsTypeOf(f)));
+                plan.Notes.Add($"Запас, «{scope.Name}»: строка спецификации — по полям {string.Join(", ", fields.Select(f => "«" + f + "»"))}; позиция запаса получает их значения.");
+                var unread = new HashSet<string>(StringComparer.Ordinal);
 
                 var groups = new Dictionary<string, List<FamilyInstance>>(StringComparer.Ordinal);
                 foreach (FamilyInstance piece in pieces)
                 {
-                    string key = string.Join("\u0001", fields.Select(f => Value(piece, f) is ParamValue v ? CalcParams.KeyOf(v) : string.Empty));
+                    string key = string.Join("\u0001", fields.Select(f => Value(piece, f, ids[f]) is ParamValue v ? CalcParams.KeyOf(v) : string.Empty));
                     if (!groups.TryGetValue(key, out List<FamilyInstance>? list))
                     {
                         list = new List<FamilyInstance>();
@@ -80,7 +84,16 @@ namespace VKTools.Revit.Calc
                     var copy = new Dictionary<string, ParamValue>(StringComparer.Ordinal);
                     foreach (string field in fields.Where(f => f != systemName && !IsTypeOf(f)))
                     {
-                        if (!(Value(first, field) is ParamValue value)) continue;
+                        if (!(Value(first, field, ids[field]) is ParamValue value))
+                        {
+                            // Пустое у позиции — пустое и у запаса; но «нет» или «два параметра с таким именем» — строки не сольются
+                            if (!Readable(first, field, ids[field]) && unread.Add(field))
+                            {
+                                plan.Issues.Add(Severity.Warning, $"«{scope.Name}»: поле сортировки «{field}» у «{first.Symbol.FamilyName}» не читается (нет параметра или два с таким именем) — запас может не слиться со строкой",
+                                    "Пришлите разработчику скрин свойств позиции и вкладки «Сортировка/группирование» спецификации.", first.Id.ToLong());
+                            }
+                            continue;
+                        }
                         bool typeBound = bindings.TryGetValue(field, out var list) && list.Count == 1 && list[0].Binding is TypeBinding;
                         if (typeBound) extras.Add(new KeyValuePair<string, string>(field, CalcParams.Display(value)));
                         else copy[field] = value;
@@ -112,7 +125,7 @@ namespace VKTools.Revit.Calc
         }
 
         /// <summary>Поля сортировки и группировки (и фильтров) спецификации — то, по чему Revit сливает строки. null — запас по ней невозможен.</summary>
-        private static List<string>? SortFields(CalcScope scope, CalcPlan plan)
+        private static List<(string Name, ElementId Id)>? SortFields(CalcScope scope, CalcPlan plan)
         {
             ScheduleDefinition definition = scope.Schedule!.Definition;
             if (definition.IsItemized)
@@ -128,7 +141,7 @@ namespace VKTools.Revit.Calc
                     $"Добавьте поле {CalcParams.Quantity} с «Вычислять итоги» (Формат поля).");
                 return null;
             }
-            var names = new List<string>();
+            var names = new List<(string Name, ElementId Id)>();
             foreach (ScheduleSortGroupField sort in definition.GetSortGroupFields())
             {
                 ScheduleField field = definition.GetField(sort.FieldId);
@@ -138,19 +151,39 @@ namespace VKTools.Revit.Calc
                         "Сортируйте и группируйте по параметрам проекта (LSR_Имя системы, ADSK_Группирование, ADSK_Наименование, ADSK_Марка).");
                     return null;
                 }
-                if (!names.Contains(field.GetName())) names.Add(field.GetName());
+                if (!names.Any(n => n.Name == field.GetName())) names.Add((field.GetName(), field.ParameterId));
             }
-            names.AddRange(scope.CopyNames.Where(n => !names.Contains(n)));
+            names.AddRange(scope.CopyNames.Where(n => !names.Any(x => x.Name == n)).Select(n => (n, ElementId.InvalidElementId)));
             return names;
         }
 
         /// <summary>Наименование, единица и группа уходят в тип позиции (как у ресурсов), остальное — копией с позиции строки.</summary>
         private static bool IsTypeOf(string field) => field == CalcParams.Name || field == CalcParams.Unit || field == CalcParams.Group;
 
-        private static ParamValue? Value(Element element, string name)
+        private static ParamValue? Value(Element element, string name) => Value(element, name, ElementId.InvalidElementId);
+
+        /// <summary>Значение поля спецификации: по параметру поля (общий — по GUID), иначе по имени у экземпляра, затем у типа.</summary>
+        private static ParamValue? Value(Element element, string name, ElementId id)
         {
-            Parameter? p = CalcParams.Find(element, name, out _) ?? CalcParams.Find(element.Document.GetElement(element.GetTypeId()), name, out _);
+            Parameter? p = ById(element, id) ?? ById(element.Document.GetElement(element.GetTypeId()), id)
+                ?? CalcParams.Find(element, name, out _) ?? CalcParams.Find(element.Document.GetElement(element.GetTypeId()), name, out _);
             return p == null ? null : CalcParams.Raw(p);
+        }
+
+        private static bool Readable(Element element, string name, ElementId id) =>
+            ById(element, id) != null || ById(element.Document.GetElement(element.GetTypeId()), id) != null
+            || CalcParams.Find(element, name, out _) != null || CalcParams.Find(element.Document.GetElement(element.GetTypeId()), name, out _) != null;
+
+        /// <summary>Параметр поля по его Id: у общих параметров (и во вложенных семействах) — по GUID, у параметров проекта — по Id.</summary>
+        private static Parameter? ById(Element? element, ElementId id)
+        {
+            if (element == null || id == ElementId.InvalidElementId || id.ToLong() < 0) return null;
+            if (element.Document.GetElement(id) is SharedParameterElement shared) return element.get_Parameter(shared.GuidValue);
+            foreach (Parameter p in element.Parameters)
+            {
+                if (p.Id == id) return p;
+            }
+            return null;
         }
 
         private static string Text(Element element, string name) => Value(element, name) is ParamValue v ? CalcParams.Display(v).Trim() : string.Empty;
