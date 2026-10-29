@@ -346,11 +346,12 @@ namespace VKTools.Core.Tests
         }
 
         [Fact]
-        public void Запас_только_на_Rapid_Kralle_CV_и_ошибки_таблицы()
+        public void Запас_на_Rapid_Kralle_CV_грувлок_и_ошибки_таблицы()
         {
             CalcRuleSet set = Rules();
-            Assert.Equal(3, set.Reserve.Count);
+            Assert.Equal(4, set.Reserve.Count);
             Assert.Contains(set.Reserve, r => r.Matches("Влж_Чугунные безраструбные_Хомуты", "CV"));
+            Assert.Contains(set.Reserve, r => r.Matches("Влж_Муфта грувлочная", "Жесткая Ду100"));
             Assert.DoesNotContain(set.Reserve, r => r.Matches("Влж_Чугунные безраструбные_Хомуты", "Хомут-переход"));
             Assert.DoesNotContain(set.Reserve, r => r.Matches("Влж_Отвод", "Rapid"));
 
