@@ -35,7 +35,15 @@ namespace VKTools.Revit.Calc
             Dictionary<string, List<(Definition Definition, ElementBinding Binding)>> bindings = CalcParams.ProjectBindings(doc);
             string systemName = plan.Options.SystemParameter.Trim();
             var resources = new Dictionary<string, CalcResource>(StringComparer.Ordinal);
-            int rows = 0;
+            int rows = 0, unmerged = 0;
+            // Уже записанные позиции запаса: сверить их поля строки с позицией (то, по чему Revit сливает строки)
+            var existing = new Dictionary<string, FamilyInstance>(StringComparer.Ordinal);
+            foreach (FamilyInstance item in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)).WhereElementIsNotElementType().Cast<FamilyInstance>()
+                .Where(fi => fi.Symbol != null && fi.Symbol.FamilyName == plan.FamilyName))
+            {
+                string itemKey = CalcParams.Find(item, CalcParams.Key, out _)?.AsString() ?? string.Empty;
+                if (itemKey.Length > 0 && !existing.ContainsKey(itemKey)) existing[itemKey] = item;
+            }
             foreach (CalcScope scope in scopes)
             {
                 ViewSchedule schedule = scope.Schedule!;
@@ -77,9 +85,10 @@ namespace VKTools.Revit.Calc
                     if (extra <= 0) continue;
 
                     string system = Value(first, systemName) is ParamValue sys ? CalcParams.Display(sys) : string.Empty;
-                    string name = Text(first, CalcParams.Name);
-                    string unit = Text(first, CalcParams.Unit);
-                    string groupValue = Text(first, CalcParams.Group);
+                    // Как есть, без Trim: «Rapid DN50 » с пробелом в конце (таблица поиска) — другая строка спецификации
+                    string name = Exact(first, CalcParams.Name, ids);
+                    string unit = Exact(first, CalcParams.Unit, ids);
+                    string groupValue = Exact(first, CalcParams.Group, ids);
                     var extras = new List<KeyValuePair<string, string>>();
                     var copy = new Dictionary<string, ParamValue>(StringComparer.Ordinal);
                     foreach (string field in fields.Where(f => f != systemName && !IsTypeOf(f)))
@@ -98,10 +107,10 @@ namespace VKTools.Revit.Calc
                         if (typeBound) extras.Add(new KeyValuePair<string, string>(field, CalcParams.Display(value)));
                         else copy[field] = value;
                     }
-                    string code = TypeName(name.Length > 0 ? name : first.Symbol.FamilyName + " " + first.Symbol.Name, group.Key);
+                    string code = TypeName(name.Trim().Length > 0 ? name : first.Symbol.FamilyName + " " + first.Symbol.Name, group.Key);
                     if (!resources.TryGetValue(code, out CalcResource? resource))
                     {
-                        resource = CalcResource.ForReserve(code, name, unit.Length > 0 ? unit : "шт", groupValue, extras);
+                        resource = CalcResource.ForReserve(code, name, unit.Trim().Length > 0 ? unit : "шт", groupValue, extras);
                         resources[code] = resource;
                     }
                     var target = new CalcTarget(scope.Name, system, resource, n, extra)
@@ -119,9 +128,23 @@ namespace VKTools.Revit.Calc
                     }
                     plan.Result.Targets.Add(target);
                     rows++;
+                    if (existing.TryGetValue(target.Key, out FamilyInstance? written))
+                    {
+                        List<string> diff = fields.Select(f => (f, piece: Describe(first, f, ids[f]), item: Describe(written, f, ids[f])))
+                            .Where(d => Bare(d.piece) != Bare(d.item)).Select(d => $"«{d.f}»: у позиции {d.piece}, у запаса {d.item}").ToList();
+                        if (diff.Count > 0)
+                        {
+                            unmerged++;
+                            if (unmerged <= 20)
+                            {
+                                plan.Issues.Add(Severity.Warning, $"«{scope.Name}», {system}: запас «{name}» не сольётся со строкой — " + string.Join("; ", diff),
+                                    "Пришлите разработчику эту строку отчёта (или CSV).", written.Id.ToLong());
+                            }
+                        }
+                    }
                 }
             }
-            if (rows > 0) plan.Notes.Add($"Запас на штучные: строк спецификаций с запасом {rows}.");
+            if (rows > 0) plan.Notes.Add($"Запас на штучные: строк спецификаций с запасом {rows}" + (unmerged > 0 ? $", из них записанный запас не совпадает со строкой по полям: {unmerged}" : string.Empty) + ".");
         }
 
         /// <summary>Поля сортировки и группировки (и фильтров) спецификации — то, по чему Revit сливает строки. null — запас по ней невозможен.</summary>
@@ -185,6 +208,38 @@ namespace VKTools.Revit.Calc
             }
             return null;
         }
+
+        /// <summary>Значение поля для сверки: «нет параметра», «(не задано)» или «текст» с типом хранения и местом (экземпляр/тип).</summary>
+        private static string Describe(Element element, string name, ElementId id)
+        {
+            Element? type = element.Document.GetElement(element.GetTypeId());
+            Parameter? p = ById(element, id);
+            string where = "экз.";
+            if (p == null && (p = ById(type, id)) != null) where = "тип";
+            if (p == null && id != ElementId.InvalidElementId && id.ToLong() >= 0)
+            {
+                Parameter? byName = CalcParams.Find(element, name, out _) ?? CalcParams.Find(type, name, out _);
+                return byName == null ? "нет параметра" : "нет параметра поля (есть одноимённый с другим GUID)";
+            }
+            if (p == null && (p = CalcParams.Find(element, name, out _)) == null && (p = CalcParams.Find(type, name, out _)) != null) where = "тип";
+            if (p == null) return "нет параметра";
+            if (!p.HasValue) return "(не задано)";
+            string text = p.StorageType == StorageType.String ? "«" + (p.AsString() ?? string.Empty) + "»"
+                : p.StorageType == StorageType.Double ? p.AsDouble().ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+                : p.StorageType == StorageType.Integer ? p.AsInteger().ToString(System.Globalization.CultureInfo.InvariantCulture) : "(ссылка)";
+            return $"{text} ({p.StorageType}, {where})";
+        }
+
+        /// <summary>Значение без пояснения «(тип хранения, экз./тип)» — им Revit строки не различает.</summary>
+        private static string Bare(string described)
+        {
+            int cut = described.LastIndexOf(" (", StringComparison.Ordinal);
+            return cut > 0 && described.EndsWith(")", StringComparison.Ordinal) && !described.StartsWith("(", StringComparison.Ordinal) ? described.Substring(0, cut) : described;
+        }
+
+        /// <summary>Текст поля строки без обрезки пробелов — по параметру поля спецификации, если оно в сортировке.</summary>
+        private static string Exact(Element element, string name, Dictionary<string, ElementId> ids) =>
+            Value(element, name, ids.TryGetValue(name, out ElementId? id) ? id : ElementId.InvalidElementId) is ParamValue v ? CalcParams.Display(v) : string.Empty;
 
         private static string Text(Element element, string name) => Value(element, name) is ParamValue v ? CalcParams.Display(v).Trim() : string.Empty;
 
