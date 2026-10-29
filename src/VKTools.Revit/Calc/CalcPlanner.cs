@@ -118,6 +118,11 @@ namespace VKTools.Revit.Calc
                 int onPipes = sleeves.Values.Sum(v => v.Count);
                 plan.Notes.Add($"Гильз «{options.SleeveFamily.Trim()}»: {plan.SleeveCount}, длина — «{plan.SleeveLengthUsed ?? "не задана"}»; на трубах областей: {inScopes}"
                     + (onPipes > inScopes ? $", на трубах вне отмеченных спецификаций (или пропущенных): {onPipes - inScopes}" : string.Empty) + ".");
+                if (plan.SleeveWalls.HasValue)
+                {
+                    plan.Notes.Add($"Шнур только в наружных стенах и фундаментах: гильз в них {plan.SleeveWalls.Value.Outer}, во внутренних (без шнура) {plan.SleeveWalls.Value.Inner}. "
+                        + "Стены и фундаменты: " + string.Join("; ", plan.SleeveWallSources) + ".");
+                }
             }
             foreach (CalcSystemSummary s in plan.Result.Systems)
             {

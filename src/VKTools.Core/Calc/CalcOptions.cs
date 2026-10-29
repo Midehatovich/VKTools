@@ -94,6 +94,7 @@ namespace VKTools.Core.Calc
         private const string SleeveLengthKey = "calc.sleeveLength";
         private const string CordAddKey = "calc.cordAdd";
         private const string CordPitchKey = "calc.cordPitch";
+        private const string SleeveAllKey = "calc.sleeveAll";
 
         /// <summary>Имена спецификаций — областей расчёта. Пусто — вся модель (область «МОДЕЛЬ»).</summary>
         public List<string> Schedules { get; set; } = new List<string>();
@@ -124,6 +125,9 @@ namespace VKTools.Core.Calc
 
         public string CordPitch { get; set; } = DefaultCordPitch;
 
+        /// <summary>Шнур только в гильзах наружных (подпорных) стен и фундаментов модели и связей; false — во всех гильзах.</summary>
+        public bool SleeveOuterOnly { get; set; } = true;
+
         public bool SavedInProject { get; set; }
 
         public string? SavedStamp { get; set; }
@@ -142,6 +146,7 @@ namespace VKTools.Core.Calc
             SleeveLength = SleeveLength,
             CordAdd = CordAdd,
             CordPitch = CordPitch,
+            SleeveOuterOnly = SleeveOuterOnly,
             SavedInProject = SavedInProject,
             SavedStamp = SavedStamp,
         };
@@ -152,6 +157,7 @@ namespace VKTools.Core.Calc
             string.Join("\u0002", Schedules), SystemParameter.Trim(), Group.Trim(),
             Canonical(ResourcesText), Canonical(PipeRulesText), Canonical(SupportsText),
             Canonical(CordText), Canonical(ReserveText), SleeveFamily.Trim(), SleeveLength.Trim(), CordAdd.Trim(), CordPitch.Trim(),
+            SleeveOuterOnly ? "outer" : "all",
         });
 
         public bool IsDefault(CalcDefaults defaults) => Signature() == FromDefaults(defaults).Signature();
@@ -235,6 +241,7 @@ namespace VKTools.Core.Calc
             settings.Set(SleeveLengthKey, isDefault || SleeveLength.Trim().Length == 0 ? null : SleeveLength.Trim());
             settings.Set(CordAddKey, isDefault || CordAdd.Trim() == DefaultCordAdd ? null : CordAdd.Trim());
             settings.Set(CordPitchKey, isDefault || CordPitch.Trim() == DefaultCordPitch ? null : CordPitch.Trim());
+            settings.Set(SleeveAllKey, isDefault || SleeveOuterOnly ? null : "1");
             if (isDefault) settings.ClearStamp(Section);
             else settings.SetStamp(Section, user, when);
         }
@@ -252,6 +259,7 @@ namespace VKTools.Core.Calc
             options.SleeveLength = settings.Get(SleeveLengthKey) ?? string.Empty;
             options.CordAdd = settings.Get(CordAddKey) ?? DefaultCordAdd;
             options.CordPitch = settings.Get(CordPitchKey) ?? DefaultCordPitch;
+            options.SleeveOuterOnly = settings.Get(SleeveAllKey) != "1";
             bool broken = false;
             foreach ((string key, string label, Action<string> set) in new (string, string, Action<string>)[]
             {

@@ -62,6 +62,8 @@ namespace VKTools.Revit.Calc
             plan.SleeveLengthUsed = lengthName;
 
             var geometry = new Options { DetailLevel = ViewDetailLevel.Fine };
+            List<OuterHosts>? hosts = options.SleeveOuterOnly ? OuterHosts.Collect(doc, plan) : null;
+            int outer = 0, inner = 0;
             foreach (FamilyInstance sleeve in sleeves)
             {
                 long id = sleeve.Id.ToLong();
@@ -90,9 +92,19 @@ namespace VKTools.Revit.Calc
                         "Выберите параметр длины на вкладке «" + CalcOptions.SleevesTab + "».", id);
                     continue;
                 }
+                if (hosts != null)
+                {
+                    if (!OuterHosts.Crosses(hosts, sleeve, pipe.Value.Direction, feet))
+                    {
+                        inner++;
+                        continue;
+                    }
+                    outer++;
+                }
                 result.TryGetValue(pipe.Value.Id, out (double Mm, int Count) sum);
                 result[pipe.Value.Id] = (sum.Mm + feet * FeetToMm, sum.Count + 1);
             }
+            if (hosts != null) plan.SleeveWalls = (outer, inner);
             return result;
         }
 
@@ -182,6 +194,132 @@ namespace VKTools.Revit.Calc
                 bestDistance = projected.Distance;
             }
             return best;
+        }
+    }
+
+    /// <summary>
+    /// Наружные (подпорные) стены и фундаменты одного документа — модели или загруженной связи (решение ведущего 2026-10-29:
+    /// шнур только в гильзах наружных стен и фундамента). Гильза засчитывается, если тонкий брус по её оси пересекает такой элемент.
+    /// </summary>
+    internal sealed class OuterHosts
+    {
+        private const double FeetToMm = 304.8;
+
+        /// <summary>Полусторона бруса по оси гильзы, мм; брус короче гильзы, чтобы не задеть стену, к которой гильза примыкает торцом.</summary>
+        private const double HalfSideMm = 5;
+        private const double LengthShare = 0.8;
+
+        private OuterHosts(Document document, Transform toHost, List<ElementId> ids)
+        {
+            Document = document;
+            ToHost = toHost;
+            Ids = ids;
+        }
+
+        public Document Document { get; }
+
+        /// <summary>Координаты документа → координаты модели ВК.</summary>
+        public Transform ToHost { get; }
+
+        public List<ElementId> Ids { get; }
+
+        public static List<OuterHosts>? Collect(Document doc, CalcPlan plan)
+        {
+            var list = new List<OuterHosts>();
+            Add(list, doc, Transform.Identity, "модель", plan);
+            int unloaded = 0;
+            foreach (RevitLinkInstance link in new FilteredElementCollector(doc).OfClass(typeof(RevitLinkInstance)).Cast<RevitLinkInstance>())
+            {
+                Document? linked = link.GetLinkDocument();
+                if (linked == null)
+                {
+                    unloaded++;
+                    continue;
+                }
+                Add(list, linked, link.GetTotalTransform(), linked.Title, plan);
+            }
+            if (unloaded > 0)
+            {
+                plan.Issues.Add(Severity.Warning, $"связей не загружено: {unloaded} — их стены и фундаменты не учтены при отборе гильз для шнура",
+                    "Загрузите связи АР и КР и нажмите «Обновить».");
+            }
+            if (list.Count == 0)
+            {
+                plan.Issues.Add(Severity.Warning, "в модели и загруженных связях нет наружных стен и фундаментов — шнур посчитан по всем гильзам",
+                    $"Загрузите связи АР/КР или снимите «Только гильзы в наружных стенах» на вкладке «{CalcOptions.SleevesTab}».");
+                return null;
+            }
+            return list;
+        }
+
+        private static void Add(List<OuterHosts> list, Document document, Transform toHost, string title, CalcPlan plan)
+        {
+            var ids = new List<ElementId>();
+            foreach (Wall wall in new FilteredElementCollector(document).OfClass(typeof(Wall)).WhereElementIsNotElementType().Cast<Wall>())
+            {
+                if (IsOuter(wall)) ids.Add(wall.Id);
+            }
+            int walls = ids.Count;
+            ids.AddRange(new FilteredElementCollector(document).OfCategory(BuiltInCategory.OST_StructuralFoundation).WhereElementIsNotElementType().ToElementIds());
+            if (ids.Count == 0) return;
+            list.Add(new OuterHosts(document, toHost, ids));
+            plan.SleeveWallSources.Add($"{title}: стен {walls}, фундаментов {ids.Count - walls}");
+        }
+
+        /// <summary>Функция типа стены: наружная, фундамент или подпорная.</summary>
+        private static bool IsOuter(Wall wall)
+        {
+            Parameter? function = wall.WallType?.get_Parameter(BuiltInParameter.FUNCTION_PARAM);
+            if (function == null || !function.HasValue) return false;
+            var value = (WallFunction)function.AsInteger();
+            return value == WallFunction.Exterior || value == WallFunction.Foundation || value == WallFunction.Retaining;
+        }
+
+        /// <summary>Брус по оси гильзы (центр — центр габарита, длина — <see cref="LengthShare"/> длины гильзы) пересекает элемент одного из документов.</summary>
+        public static bool Crosses(List<OuterHosts> hosts, FamilyInstance sleeve, XYZ direction, double lengthFeet)
+        {
+            BoundingBoxXYZ? box = sleeve.get_BoundingBox(null);
+            if (box == null) return false;
+            XYZ center = (box.Min + box.Max) / 2;
+            double length = Math.Max(lengthFeet * LengthShare, 2 * HalfSideMm / FeetToMm);
+            Solid probe;
+            try
+            {
+                probe = Probe(center, direction.Normalize(), length, HalfSideMm / FeetToMm);
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                return false;
+            }
+            foreach (OuterHosts host in hosts)
+            {
+                Solid local = host.ToHost.IsIdentity ? probe : SolidUtils.CreateTransformed(probe, host.ToHost.Inverse);
+                BoundingBoxXYZ b = local.GetBoundingBox();
+                XYZ min = b.Transform.OfPoint(b.Min), max = b.Transform.OfPoint(b.Max);
+                var outline = new Outline(new XYZ(Math.Min(min.X, max.X), Math.Min(min.Y, max.Y), Math.Min(min.Z, max.Z)),
+                    new XYZ(Math.Max(min.X, max.X), Math.Max(min.Y, max.Y), Math.Max(min.Z, max.Z)));
+                bool any = new FilteredElementCollector(host.Document, host.Ids)
+                    .WherePasses(new BoundingBoxIntersectsFilter(outline))
+                    .WherePasses(new ElementIntersectsSolidFilter(local))
+                    .Any();
+                if (any) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Квадратный брус со стороной 2·half вдоль direction, центр — center.</summary>
+        private static Solid Probe(XYZ center, XYZ direction, double length, double half)
+        {
+            XYZ u = Math.Abs(direction.Z) < 0.9 ? direction.CrossProduct(XYZ.BasisZ).Normalize() : direction.CrossProduct(XYZ.BasisX).Normalize();
+            XYZ v = direction.CrossProduct(u).Normalize();
+            XYZ start = center - direction * (length / 2);
+            XYZ[] corners =
+            {
+                start + u * half + v * half, start - u * half + v * half, start - u * half - v * half, start + u * half - v * half,
+            };
+            var loop = new CurveLoop();
+            for (int i = 0; i < corners.Length; i++) loop.Append(Line.CreateBound(corners[i], corners[(i + 1) % corners.Length]));
+            return GeometryCreationUtilities.CreateExtrusionGeometry(new[] { loop }, direction, length);
         }
     }
 }

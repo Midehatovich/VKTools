@@ -257,6 +257,13 @@ namespace VKTools.Core.Tests
             Assert.Equal(options.Signature(), loaded.Signature());
             Assert.Equal("Альтеза", loaded.Parse().Resources.Single(r => r.Code == "METAL").Extras.Single(e => e.Key == "ADSK_Завод-изготовитель").Value);
 
+            // Шнур во всех гильзах — отличие от умолчания (только наружные стены и фундамент)
+            Assert.True(loaded.SleeveOuterOnly);
+            options.SleeveOuterOnly = false;
+            options.StoreTo(settings, defaults, "user", DateTime.Now);
+            Assert.Equal("1", settings.Get("calc.sleeveAll"));
+            Assert.False(CalcOptions.Load(settings, defaults, issues, out _).SleeveOuterOnly);
+
             // Вернули как было — раздел удаляется целиком
             CalcOptions.FromDefaults(defaults).StoreTo(settings, defaults, "user", DateTime.Now);
             Assert.Empty(settings.Values);

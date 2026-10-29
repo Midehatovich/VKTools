@@ -221,6 +221,12 @@ namespace VKTools.Revit.Calc
         /// <summary>Каким параметром взята длина гильз (выбран или угадан).</summary>
         public string? SleeveLengthUsed { get; set; }
 
+        /// <summary>Отбор по стенам: гильз в наружных стенах и фундаментах, во внутренних; null — отбора не было.</summary>
+        public (int Outer, int Inner)? SleeveWalls { get; set; }
+
+        /// <summary>Откуда взяты наружные стены и фундаменты: «модель: 12», «АР.rvt: 340».</summary>
+        public List<string> SleeveWallSources { get; } = new List<string>();
+
         public string FamilyName { get; set; } = CalcFamilyBuilder.DefaultFamily;
 
         public long? FamilyId { get; set; }
