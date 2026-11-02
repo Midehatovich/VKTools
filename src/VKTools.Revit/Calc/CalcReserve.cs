@@ -150,7 +150,7 @@ namespace VKTools.Revit.Calc
                             plan.Notes.Add($"Запас, «{scope.Name}», {system}, «{name}»: хомут {first.Id.ToLong()} / запас {written.Id.ToLong()}: "
                                 + string.Join("; ", fields.Concat(visible).Select(f => $"{f} [{Id(ids, f).ToLong()}] = {Describe(first, f, Id(ids, f))} / {Describe(written, f, Id(ids, f))}")));
                         }
-                        List<string> diff = fields.Concat(visible).Select(f => (f, piece: Describe(first, f, Id(ids, f)), item: Describe(written, f, Id(ids, f))))
+                        List<string> diff = fields.Select(f => (f, piece: Describe(first, f, Id(ids, f)), item: Describe(written, f, Id(ids, f))))
                             .Where(d => Bare(d.piece) != Bare(d.item)).Select(d => $"«{d.f}»: у позиции {d.piece}, у запаса {d.item}").ToList();
                         if (diff.Count > 0)
                         {
@@ -254,15 +254,15 @@ namespace VKTools.Revit.Calc
             Element? type = element.Document.GetElement(element.GetTypeId());
             Parameter? p = ById(element, id);
             string where = "экз.";
-            if (p == null && (p = ById(type, id)) != null) where = "тип";
+            if (p == null && (p = ById(type, id)) != null) where = "тип " + type!.Id.ToLong();
             if (p == null && id != ElementId.InvalidElementId && id.ToLong() >= 0)
             {
                 Parameter? byName = CalcParams.Find(element, name, out _) ?? CalcParams.Find(type, name, out _);
                 return byName == null ? "нет параметра" : "нет параметра поля (есть одноимённый с другим GUID)";
             }
-            if (p == null && (p = CalcParams.Find(element, name, out _)) == null && (p = CalcParams.Find(type, name, out _)) != null) where = "тип";
+            if (p == null && (p = CalcParams.Find(element, name, out _)) == null && (p = CalcParams.Find(type, name, out _)) != null) where = "тип " + type!.Id.ToLong();
             if (p == null) return "нет параметра";
-            if (!p.HasValue) return "(не задано)";
+            if (!p.HasValue) return $"(не задано) ({where})";
             string text = p.StorageType == StorageType.String ? "«" + (p.AsString() ?? string.Empty) + "»"
                 : p.StorageType == StorageType.Double ? p.AsDouble().ToString("R", System.Globalization.CultureInfo.InvariantCulture)
                 : p.StorageType == StorageType.Integer ? p.AsInteger().ToString(System.Globalization.CultureInfo.InvariantCulture) : "(ссылка)";
@@ -273,7 +273,7 @@ namespace VKTools.Revit.Calc
         private static string Bare(string described)
         {
             int cut = described.LastIndexOf(" (", StringComparison.Ordinal);
-            return cut > 0 && described.EndsWith(")", StringComparison.Ordinal) && !described.StartsWith("(", StringComparison.Ordinal) ? described.Substring(0, cut) : described;
+            return cut > 0 && described.EndsWith(")", StringComparison.Ordinal) ? described.Substring(0, cut) : described;
         }
 
         /// <summary>Текст поля строки без обрезки пробелов — по параметру поля спецификации, если оно в сортировке.</summary>
