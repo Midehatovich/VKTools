@@ -54,21 +54,24 @@ namespace VKTools.Revit.Calc
                 List<FamilyInstance> pieces = new FilteredElementCollector(doc, schedule.Id).OfClass(typeof(FamilyInstance)).WhereElementIsNotElementType()
                     .Cast<FamilyInstance>().Where(fi => fi.Symbol != null && rules.Reserve.Any(r => r.Matches(fi.Symbol.FamilyName, fi.Symbol.Name))).ToList();
                 if (pieces.Count == 0) continue;
-                List<(string Name, ElementId Id)>? sortFields = SortFields(scope, plan);
+                List<(string Name, ElementId Id)>? sortFields = SortFields(scope, plan, out int sortCount);
                 if (sortFields == null) continue;
                 List<string> fields = sortFields.Select(f => f.Name).ToList();
                 var ids = sortFields.ToDictionary(f => f.Name, f => f.Id, StringComparer.Ordinal);
                 plan.ReserveFields.UnionWith(fields.Where(f => f != systemName && !IsTypeOf(f)));
                 // Остальные видимые текстовые колонки (ADSK_Масса_Текст…) — тоже с позиции, иначе в слитой строке «<варианты>»
                 List<string> visible = VisibleFields(scope, fields, systemName);
-                plan.Notes.Add($"Запас, «{scope.Name}»: строка спецификации — по полям {string.Join(", ", fields.Select(f => "«" + f + "»"))}; позиция запаса получает их значения"
+                plan.Notes.Add($"Запас, «{scope.Name}»: строка спецификации — по полям {string.Join(", ", fields.Take(sortCount).Select(f => "«" + f + "»"))}; позиция запаса получает их значения"
+                    + (fields.Count > sortCount ? $", поля фильтров {string.Join(", ", fields.Skip(sortCount).Select(f => "«" + f + "»"))} — с первой позиции строки" : string.Empty)
                     + (visible.Count > 0 ? $", а также колонок {string.Join(", ", visible.Select(f => "«" + f + "»"))}." : "."));
                 var unread = new HashSet<string>(StringComparer.Ordinal);
 
                 var groups = new Dictionary<string, List<FamilyInstance>>(StringComparer.Ordinal);
                 foreach (FamilyInstance piece in pieces)
                 {
-                    string key = string.Join("\u0001", fields.Select(f => Value(piece, f, ids[f]) is ParamValue v ? CalcParams.KeyOf(v) : string.Empty));
+                    // Строку делают только поля сортировки; поля фильтров (ADSK_Этаж…) копируются с первой позиции строки — иначе запас
+                    // считался бы по каждому этажу отдельно и округлялся вверх несколько раз
+                    string key = string.Join("\u0001", fields.Take(sortCount).Select(f => Value(piece, f, ids[f]) is ParamValue v ? CalcParams.KeyOf(v) : string.Empty));
                     if (!groups.TryGetValue(key, out List<FamilyInstance>? list))
                     {
                         list = new List<FamilyInstance>();
@@ -168,8 +171,9 @@ namespace VKTools.Revit.Calc
         }
 
         /// <summary>Поля сортировки и группировки (и фильтров) спецификации — то, по чему Revit сливает строки. null — запас по ней невозможен.</summary>
-        private static List<(string Name, ElementId Id)>? SortFields(CalcScope scope, CalcPlan plan)
+        private static List<(string Name, ElementId Id)>? SortFields(CalcScope scope, CalcPlan plan, out int sortCount)
         {
+            sortCount = 0;
             ScheduleDefinition definition = scope.Schedule!.Definition;
             if (definition.IsItemized)
             {
@@ -196,6 +200,7 @@ namespace VKTools.Revit.Calc
                 }
                 if (!names.Any(n => n.Name == field.GetName())) names.Add((field.GetName(), field.ParameterId));
             }
+            sortCount = names.Count;
             names.AddRange(scope.CopyNames.Where(n => !names.Any(x => x.Name == n)).Select(n => (n, ElementId.InvalidElementId)));
             return names;
         }
