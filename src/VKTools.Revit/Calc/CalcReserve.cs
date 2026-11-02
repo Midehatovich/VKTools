@@ -36,6 +36,7 @@ namespace VKTools.Revit.Calc
             string systemName = plan.Options.SystemParameter.Trim();
             var resources = new Dictionary<string, CalcResource>(StringComparer.Ordinal);
             int rows = 0, unmerged = 0;
+            var shown = new HashSet<string>(StringComparer.Ordinal);
             // Уже записанные позиции запаса: сверить их поля строки с позицией (то, по чему Revit сливает строки)
             var existing = new Dictionary<string, FamilyInstance>(StringComparer.Ordinal);
             foreach (FamilyInstance item in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)).WhereElementIsNotElementType().Cast<FamilyInstance>()
@@ -130,6 +131,12 @@ namespace VKTools.Revit.Calc
                     rows++;
                     if (existing.TryGetValue(target.Key, out FamilyInstance? written))
                     {
+                        // Контроль: значения полей первой строки каждой спецификации — видно, что сравнивается
+                        if (shown.Add(scope.Name))
+                        {
+                            plan.Notes.Add($"Запас, «{scope.Name}», {system}, «{name}»: хомут {first.Id.ToLong()} / запас {written.Id.ToLong()}: "
+                                + string.Join("; ", fields.Select(f => $"{f} [{ids[f].ToLong()}] = {Describe(first, f, ids[f])} / {Describe(written, f, ids[f])}")));
+                        }
                         List<string> diff = fields.Select(f => (f, piece: Describe(first, f, ids[f]), item: Describe(written, f, ids[f])))
                             .Where(d => Bare(d.piece) != Bare(d.item)).Select(d => $"«{d.f}»: у позиции {d.piece}, у запаса {d.item}").ToList();
                         if (diff.Count > 0)
