@@ -37,6 +37,9 @@ namespace VKTools.Revit.Calc
             var resources = new Dictionary<string, CalcResource>(StringComparer.Ordinal);
             int rows = 0, unmerged = 0;
             var shown = new HashSet<string>(StringComparer.Ordinal);
+            // Параметр типа в самом служебном семействе (пользователь мог отредактировать его) — значение уходит в тип запаса
+            FamilySymbol? baseSymbol = new FilteredElementCollector(doc).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
+                .FirstOrDefault(s => s.FamilyName == plan.FamilyName);
             // Уже записанные позиции запаса: сверить их поля строки с позицией (то, по чему Revit сливает строки)
             var existing = new Dictionary<string, FamilyInstance>(StringComparer.Ordinal);
             foreach (FamilyInstance item in new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)).WhereElementIsNotElementType().Cast<FamilyInstance>()
@@ -56,7 +59,10 @@ namespace VKTools.Revit.Calc
                 List<string> fields = sortFields.Select(f => f.Name).ToList();
                 var ids = sortFields.ToDictionary(f => f.Name, f => f.Id, StringComparer.Ordinal);
                 plan.ReserveFields.UnionWith(fields.Where(f => f != systemName && !IsTypeOf(f)));
-                plan.Notes.Add($"Запас, «{scope.Name}»: строка спецификации — по полям {string.Join(", ", fields.Select(f => "«" + f + "»"))}; позиция запаса получает их значения.");
+                // Остальные видимые текстовые колонки (ADSK_Масса_Текст…) — тоже с позиции, иначе в слитой строке «<варианты>»
+                List<string> visible = VisibleFields(scope, fields, systemName);
+                plan.Notes.Add($"Запас, «{scope.Name}»: строка спецификации — по полям {string.Join(", ", fields.Select(f => "«" + f + "»"))}; позиция запаса получает их значения"
+                    + (visible.Count > 0 ? $", а также колонок {string.Join(", ", visible.Select(f => "«" + f + "»"))}." : "."));
                 var unread = new HashSet<string>(StringComparer.Ordinal);
 
                 var groups = new Dictionary<string, List<FamilyInstance>>(StringComparer.Ordinal);
@@ -104,9 +110,16 @@ namespace VKTools.Revit.Calc
                             }
                             continue;
                         }
-                        bool typeBound = bindings.TryGetValue(field, out var list) && list.Count == 1 && list[0].Binding is TypeBinding;
+                        bool typeBound = (bindings.TryGetValue(field, out var list) && list.Count == 1 && list[0].Binding is TypeBinding) || CalcParams.Has(baseSymbol, field);
                         if (typeBound) extras.Add(new KeyValuePair<string, string>(field, CalcParams.Display(value)));
                         else copy[field] = value;
+                    }
+                    foreach (string field in visible)
+                    {
+                        if (Value(first, field) is ParamValue shownValue && shownValue.Kind == ParamValueKind.Text && !extras.Any(e => e.Key == field))
+                        {
+                            extras.Add(new KeyValuePair<string, string>(field, CalcParams.Display(shownValue)));
+                        }
                     }
                     string code = TypeName(name.Trim().Length > 0 ? name : first.Symbol.FamilyName + " " + first.Symbol.Name, group.Key);
                     if (!resources.TryGetValue(code, out CalcResource? resource))
@@ -135,9 +148,9 @@ namespace VKTools.Revit.Calc
                         if (shown.Add(scope.Name))
                         {
                             plan.Notes.Add($"Запас, «{scope.Name}», {system}, «{name}»: хомут {first.Id.ToLong()} / запас {written.Id.ToLong()}: "
-                                + string.Join("; ", fields.Select(f => $"{f} [{ids[f].ToLong()}] = {Describe(first, f, ids[f])} / {Describe(written, f, ids[f])}")));
+                                + string.Join("; ", fields.Concat(visible).Select(f => $"{f} [{Id(ids, f).ToLong()}] = {Describe(first, f, Id(ids, f))} / {Describe(written, f, Id(ids, f))}")));
                         }
-                        List<string> diff = fields.Select(f => (f, piece: Describe(first, f, ids[f]), item: Describe(written, f, ids[f])))
+                        List<string> diff = fields.Concat(visible).Select(f => (f, piece: Describe(first, f, Id(ids, f)), item: Describe(written, f, Id(ids, f))))
                             .Where(d => Bare(d.piece) != Bare(d.item)).Select(d => $"«{d.f}»: у позиции {d.piece}, у запаса {d.item}").ToList();
                         if (diff.Count > 0)
                         {
@@ -185,6 +198,25 @@ namespace VKTools.Revit.Calc
             }
             names.AddRange(scope.CopyNames.Where(n => !names.Any(x => x.Name == n)).Select(n => (n, ElementId.InvalidElementId)));
             return names;
+        }
+
+        private static ElementId Id(Dictionary<string, ElementId> ids, string name) => ids.TryGetValue(name, out ElementId? id) ? id : ElementId.InvalidElementId;
+
+        /// <summary>Видимые колонки спецификации с параметром (не итоговые, не поля строки) — их текст копируется в запас, необязательно.</summary>
+        private static List<string> VisibleFields(CalcScope scope, List<string> rowFields, string systemName)
+        {
+            ScheduleDefinition definition = scope.Schedule!.Definition;
+            var result = new List<string>();
+            for (int i = 0; i < definition.GetFieldCount(); i++)
+            {
+                ScheduleField field = definition.GetField(i);
+                string name = field.GetName();
+                if (field.IsHidden || field.ParameterId.ToLong() < 0 || field.DisplayType == ScheduleFieldDisplayType.Totals) continue;
+                if (name == CalcParams.Quantity || name == systemName || IsTypeOf(name) || rowFields.Contains(name) || result.Contains(name)) continue;
+                if (CalcFamilyBuilder.OwnParameters.Contains(name)) continue;
+                result.Add(name);
+            }
+            return result;
         }
 
         /// <summary>Наименование, единица и группа уходят в тип позиции (как у ресурсов), остальное — копией с позиции строки.</summary>
