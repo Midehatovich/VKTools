@@ -217,7 +217,24 @@ namespace VKTools.Revit.UI
         private void DeleteRow()
         {
             CommitEdits();
-            if (_grid.CurrentItem is CsvRowVm row) _rows.Remove(row);
+            // Строку выбирают щелчком по ячейке или по серому заголовку слева. Щелчок по заголовку выделяет ячейки строки,
+            // но не всегда ставит CurrentItem (0.11.1: «Удалить» молчал) — поэтому берём выделенные ячейки, а CurrentItem — запасом.
+            List<CsvRowVm> rows = _grid.SelectedCells.Select(c => c.Item).OfType<CsvRowVm>().Distinct().ToList();
+            if (rows.Count == 0 && _grid.CurrentItem is CsvRowVm current) rows.Add(current);
+            if (rows.Count == 0)
+            {
+                MessageBox.Show(Window.GetWindow(this), "Выберите строку: щёлкните любую её ячейку, затем «Удалить».", "VK Tools", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            int index = _rows.IndexOf(rows[0]);
+            foreach (CsvRowVm row in rows) _rows.Remove(row);
+            Host.Log.Info($"Таблица {_fileName}: удалено строк {rows.Count}.");
+            if (_rows.Count > 0)
+            {
+                CsvRowVm next = _rows[Math.Min(Math.Max(index, 0), _rows.Count - 1)];
+                _grid.SelectedCells.Clear();
+                _grid.CurrentCell = new DataGridCellInfo(next, _grid.Columns[0]);
+            }
         }
 
         private void AddColumn()
