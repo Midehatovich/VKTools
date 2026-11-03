@@ -178,7 +178,8 @@ namespace VKTools.Revit.UI
             {
                 _grid.Columns.Add(new DataGridTextColumn
                 {
-                    Header = column,
+                    // TextBlock, а не строка: в строковом заголовке WPF съедает «_» как клавишу доступа («ADSK_Марка» → «ADSKМарка»)
+                    Header = new TextBlock { Text = column, Tag = column },
                     Binding = new Binding("[" + column + "]") { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged },
                     Width = new DataGridLength(ColumnWidth(column)),
                 });
@@ -238,7 +239,7 @@ namespace VKTools.Revit.UI
         private void RemoveColumn()
         {
             CommitEdits();
-            string? name = _grid.CurrentColumn?.Header as string;
+            string? name = (_grid.CurrentColumn?.Header as TextBlock)?.Tag as string;
             if (name == null) return;
             if (_required.Contains(name, StringComparer.Ordinal))
             {
