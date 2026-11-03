@@ -86,6 +86,11 @@ namespace VKTools.Revit.Spec
             }
             planner._plan = new ParamPlan(new[] { options.Module });
             foreach (ConfigIssue issue in defaults.Issues) planner.AddConfigIssue(options.Module, issue);
+            if (options.Module == SpecModule.Insulation)
+            {
+                using (timings.Measure("анализ изоляции")) planner.PlanInsulation(options, defaults);
+                return planner._plan;
+            }
             if (options.Module == SpecModule.Nested)
             {
                 using (timings.Measure("анализ переноса")) planner.PlanNested(options, defaults, scope);

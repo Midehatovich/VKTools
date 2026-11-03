@@ -32,6 +32,9 @@ namespace VKTools.Core.Spec
         /// <summary>«Система и этаж»: встроенное умолчание (LSR_Имя системы, ADSK_Этаж, категории NestedParamSync v2.1).</summary>
         public SystemFloorSettings SystemFloor { get; } = SystemFloorSettings.Default();
 
+        /// <summary>«Изоляция»: встроенное умолчание (как InsulationPipeOD v1.1.2, наименование выключено).</summary>
+        public InsulationSettings Insulation { get; } = InsulationSettings.Default();
+
         /// <summary>Настройка проекта в модели повреждена: запись запрещена, пока её не сохранят заново.</summary>
         public string? ProjectBlocked { get; set; }
 
@@ -64,6 +67,9 @@ namespace VKTools.Core.Spec
         /// <summary>«Система и этаж»: параметры, категории, этажи, перенос во вложенные.</summary>
         public SystemFloorSettings SystemFloor { get; set; } = SystemFloorSettings.Default();
 
+        /// <summary>«Изоляция»: что писать и таблица «Изделия».</summary>
+        public InsulationSettings Insulation { get; set; } = InsulationSettings.Default();
+
         /// <summary>«Система и этаж» с переносом: настройка переноса есть в модели (иначе — по умолчанию).</summary>
         public bool NestedSavedInProject { get; set; }
 
@@ -84,6 +90,7 @@ namespace VKTools.Core.Spec
         {
             SpecModule.Nested => $"{Scope}|" + NestedSignature(),
             SpecModule.SystemFloor => SystemFloor.Signature() + (SystemFloor.ChainNested ? "|" + NestedSignature() : string.Empty),
+            SpecModule.Insulation => Insulation.Signature(),
             _ => TableSignature() + "|" + Kits.Signature(),
         };
 
@@ -92,6 +99,7 @@ namespace VKTools.Core.Spec
         {
             SpecModule.Nested => NestedSignature(),
             SpecModule.SystemFloor => SystemFloor.Signature(),
+            SpecModule.Insulation => Insulation.Signature(),
             _ => TableSignature() + "|" + Kits.Signature() + "|" + Kits.Words,
         };
 
@@ -111,6 +119,7 @@ namespace VKTools.Core.Spec
                 NestedParams = defaults.NestedParams.ToList(),
                 GroupRules = defaults.GroupRules.ToList(),
                 SystemFloor = defaults.SystemFloor.Clone(),
+                Insulation = defaults.Insulation.Clone(),
             };
             return Module == SpecModule.Grouping ? TableSignature() == asDefault.TableSignature() : SettingsSignature() == asDefault.SettingsSignature();
         }
@@ -123,6 +132,7 @@ namespace VKTools.Core.Spec
             GroupRules = GroupRules.ToList(),
             Kits = Kits.Clone(),
             SystemFloor = SystemFloor.Clone(),
+            Insulation = Insulation.Clone(),
             NestedSavedInProject = NestedSavedInProject,
             SavedInProject = SavedInProject,
             SavedStamp = SavedStamp,
@@ -136,6 +146,13 @@ namespace VKTools.Core.Spec
         public void StoreTo(SpecProjectSettings settings, SpecDefaults defaults, string user, System.DateTime when)
         {
             bool isDefault = IsDefault(defaults);
+            if (Module == SpecModule.Insulation)
+            {
+                Insulation.StoreTo(settings, isDefault);
+                if (isDefault) settings.ClearStamp(SpecProjectSettings.InsulationSection);
+                else settings.SetStamp(SpecProjectSettings.InsulationSection, user, when);
+                return;
+            }
             if (Module == SpecModule.SystemFloor)
             {
                 SystemFloor.StoreTo(settings, isDefault);
@@ -180,10 +197,28 @@ namespace VKTools.Core.Spec
                 NestedParams = defaults.NestedParams.ToList(),
                 GroupRules = defaults.GroupRules.ToList(),
                 SystemFloor = defaults.SystemFloor.Clone(),
+                Insulation = defaults.Insulation.Clone(),
             };
             var parseIssues = new List<ConfigIssue>();
             bool broken = false;
-            if (module == SpecModule.SystemFloor)
+            if (module == SpecModule.Insulation)
+            {
+                if (InsulationSettings.IsStored(settings))
+                {
+                    InsulationSettings? parsed = InsulationSettings.Parse(settings, parseIssues);
+                    if (parsed != null)
+                    {
+                        options.Insulation = parsed;
+                        options.SavedInProject = true;
+                        options.SavedStamp = settings.Stamp(SpecProjectSettings.InsulationSection);
+                    }
+                    else
+                    {
+                        broken = true;
+                    }
+                }
+            }
+            else if (module == SpecModule.SystemFloor)
             {
                 if (SystemFloorSettings.IsStored(settings))
                 {

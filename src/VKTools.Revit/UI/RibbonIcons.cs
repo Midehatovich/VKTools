@@ -38,6 +38,10 @@ namespace VKTools.Revit.UI
         public static ImageSource SystemFloor(int size) =>
             Draw(size, Green, "M 6,10 L 19,10 M 6,17 L 19,17 M 6,24 L 19,24 M 24,6 L 24,27");
 
+        /// <summary>Труба в изоляции: два контура.</summary>
+        public static ImageSource Insulation(int size) =>
+            Draw(size, Green, "M 5,12 L 27,12 M 5,20 L 27,20 M 5,7.5 L 27,7.5 M 5,24.5 L 27,24.5");
+
         /// <summary>Знак суммы: расчётные позиции.</summary>
         public static ImageSource Calc(int size) =>
             Draw(size, Green, "M 23,8 L 9,8 L 16,16 L 9,24 L 23,24");

@@ -16,6 +16,9 @@ namespace VKTools.Core.Spec
 
         /// <summary>Р4: параметр системы из «Сокращения для системы», этаж из уровня, изоляция от основы (NestedParamSync v2.1, шаги 1, 1б, 2).</summary>
         SystemFloor = 2,
+
+        /// <summary>Р4: изоляция — Dнар трубы, наименование и параметры изделия (InsulationPipeOD v1.1.2).</summary>
+        Insulation = 3,
     }
 
     public static class SpecModuleText
@@ -24,6 +27,7 @@ namespace VKTools.Core.Spec
         {
             SpecModule.Nested => "Перенос во вложенные",
             SpecModule.SystemFloor => "Система и этаж",
+            SpecModule.Insulation => "Изоляция",
             _ => "Группирование",
         };
     }
@@ -180,6 +184,9 @@ namespace VKTools.Core.Spec
 
         /// <summary>«Система и этаж»: уровни модели (имя → элементов на нём) — для таблицы этажей.</summary>
         public SortedDictionary<string, int> Levels { get; } = new SortedDictionary<string, int>(StringComparer.CurrentCultureIgnoreCase);
+
+        /// <summary>«Изоляция»: по типу — сколько штук, какая строка «Изделий» и какое имя получится (пример).</summary>
+        public List<string> Preview { get; } = new List<string>();
 
         public IReadOnlyList<PlanIssue> Issues => _issueOrder;
 
