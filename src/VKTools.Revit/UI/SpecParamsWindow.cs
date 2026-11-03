@@ -41,6 +41,7 @@ namespace VKTools.Revit.UI
         private readonly NestedSettingsPanel? _nestedPanel;
         private readonly GroupSchemePanel? _groupPanel;
         private readonly KitsPanel? _kitsPanel;
+        private readonly SystemFloorPanel? _sfPanel;
         private readonly TabControl _tabs;
         private readonly TabItem _settingsTab;
         private readonly TabItem? _kitsTab;
@@ -73,6 +74,8 @@ namespace VKTools.Revit.UI
         private int _changes;
         private int _newKitNumbers;
         private bool _busy;
+        private List<ParamCandidate> _lastCandidates = new List<ParamCandidate>();
+        private Dictionary<string, int> _lastLevels = new Dictionary<string, int>();
 
         public SpecParamsWindow(Autodesk.Revit.DB.Document document, SpecOptions options, SpecDefaults defaults, SpecParamsHandler handler, ExternalEvent externalEvent,
             SelectElementsHandler selectHandler, ExternalEvent selectEvent)
@@ -87,9 +90,10 @@ namespace VKTools.Revit.UI
             _defaultsData = defaults;
             _savedSignature = options.SettingsSignature();
             bool nested = _module == SpecModule.Nested;
+            bool sf = _module == SpecModule.SystemFloor;
 
             this.ApplyDefaultLook();
-            Title = $"VK Tools — {(nested ? "перенос во вложенные" : "группирование")}: {document.Title}";
+            Title = $"VK Tools — {_module.Title().ToLowerInvariant()}: {document.Title}";
             Width = 1250;
             Height = 760;
             MinWidth = 820;
@@ -102,7 +106,9 @@ namespace VKTools.Revit.UI
             DockPanel.SetDock(header, Dock.Top);
             header.Children.Add(new TextBlock
             {
-                Text = nested
+                Text = sf
+                    ? "Параметр системы := «Сокращение для системы», параметр этажа := имя уровня (или своё значение из таблицы этажей); изоляция — значения своей основы; затем перенос во вложенные."
+                    : nested
                     ? "Значения верхнего родителя → его общие вложенные семейства (все уровни). Какие параметры — на вкладке «Параметры»."
                     : "ADSK_Группирование по таблице групп: категории, семейства, «не трогать». Комплекты (вкладка «Комплекты») и шкафы ПК — «группа.K.ранг», подряд в спецификации.",
                 FontSize = 13,
@@ -132,7 +138,9 @@ namespace VKTools.Revit.UI
             bottom.Children.Add(new Expander { Header = "Сводка, правила и сообщения Revit", Content = _details });
             var buttons = new DockPanel { Margin = new Thickness(0, 8, 0, 0), LastChildFill = false };
             _defaults = ReportWindow.MakeButton("По умолчанию", (s, e) => ResetToDefaults());
-            _defaults.ToolTip = nested
+            _defaults.ToolTip = sf
+                ? "LSR_Имя системы, ADSK_Этаж, категории NestedParamSync v2.1, изоляция и перенос включены, этажи — имя уровня. В модели — после «Сохранить»."
+                : nested
                 ? "Отметить параметры из nested_params.csv (папка отдела или встроенные). В модели — после «Сохранить»."
                 : "Таблица групп из grouping.csv (папка отдела или встроенная), как в 0.4.0. Комплекты не меняются. В модели — после «Сохранить».";
             _save = ReportWindow.MakeButton("Сохранить", (s, e) => Send(SpecRequest.Save));
@@ -156,7 +164,14 @@ namespace VKTools.Revit.UI
             root.Children.Add(bottom);
 
             _tabs = new TabControl();
-            if (nested)
+            if (sf)
+            {
+                _sfPanel = new SystemFloorPanel { Margin = new Thickness(6) };
+                _sfPanel.Load(options, Array.Empty<ParamCandidate>(), new Dictionary<string, int>());
+                _sfPanel.Changed += (s, e) => OnSettingsChanged();
+                _settingsTab = new TabItem { Header = "Настройка", Content = _sfPanel };
+            }
+            else if (nested)
             {
                 _nestedPanel = new NestedSettingsPanel { Margin = new Thickness(6) };
                 _nestedPanel.Load(options, Array.Empty<ParamCandidate>());
@@ -246,6 +261,7 @@ namespace VKTools.Revit.UI
         {
             SpecOptions options = _base.Clone();
             _nestedPanel?.ApplyTo(options);
+            _sfPanel?.ApplyTo(options);
             if (_groupPanel != null) options.GroupRules = _groupPanel.Rules();
             if (_kitsPanel != null) options.Kits = _kitsPanel.Settings();
             return options;
@@ -279,6 +295,12 @@ namespace VKTools.Revit.UI
             _newKitNumbers = (after ?? plan).NewKitNumbers.Count;
 
             if (_nestedPanel != null && run == null) _nestedPanel.Load(used, plan.Candidates);
+            if (_sfPanel != null && run == null)
+            {
+                _lastCandidates = plan.Candidates.ToList();
+                _lastLevels = new Dictionary<string, int>(plan.Levels);
+                _sfPanel.Load(used, plan.Candidates, plan.Levels);
+            }
             _groupPanel?.UpdateLists(plan.FamilyNames, plan.Categories);
             ParamPlan latest = after ?? plan;
             _kitsPanel?.UpdateData(latest.KitFamilies, latest.KitNumbers, latest.NewKitNumbers);
@@ -297,8 +319,9 @@ namespace VKTools.Revit.UI
 
             string done = run?.Committed == true ? "записано" : "будет изменено";
             _summary.Text = $"{(_module == SpecModule.Nested ? "Область: " + scopeLabel + ". " : string.Empty)}"
-                + $"{char.ToUpper(done[0], CultureInfo.CurrentCulture)}{done.Substring(1)} {plan.ChangeCount(_module)}, без изменений {plan.Unchanged(_module)}, "
-                + $"ошибок {plan.IssueCount(_module, Severity.Error)}, предупреждений {plan.IssueCount(_module, Severity.Warning)}.";
+                + $"{char.ToUpper(done[0], CultureInfo.CurrentCulture)}{done.Substring(1)} {plan.Changes.Count}, без изменений {plan.Modules.Sum(plan.Unchanged)}, "
+                + $"ошибок {plan.Modules.Sum(m => plan.IssueCount(m, Severity.Error))}, предупреждений {plan.Modules.Sum(m => plan.IssueCount(m, Severity.Warning))}."
+                + (plan.Modules.Count > 1 ? " (" + string.Join("; ", plan.Modules.Select(m => $"{m.Title()}: {plan.ChangeCount(m)}")) + ")" : string.Empty);
             if (after != null)
             {
                 _summary.Text += after.Changes.Count == 0
@@ -373,7 +396,8 @@ namespace VKTools.Revit.UI
         private void UpdateState()
         {
             bool dirty = SettingsDirty();
-            string source = _module == SpecModule.Nested ? _defaultsData.NestedSource : _defaultsData.GroupingSource;
+            string source = _module == SpecModule.Nested ? _defaultsData.NestedSource
+                : _module == SpecModule.SystemFloor ? "встроенные" : _defaultsData.GroupingSource;
             int comma = source.IndexOf(", ", StringComparison.Ordinal);
             if (comma > 0) source = source.Substring(0, comma);
             string text;
@@ -424,6 +448,7 @@ namespace VKTools.Revit.UI
             if (_nestedPanel != null) _nestedPanel.IsEnabled = !_busy;
             if (_groupPanel != null) _groupPanel.IsEnabled = !_busy;
             if (_kitsPanel != null) _kitsPanel.IsEnabled = !_busy;
+            if (_sfPanel != null) _sfPanel.IsEnabled = !_busy;
         }
 
         private void ResetToDefaults()
@@ -431,6 +456,13 @@ namespace VKTools.Revit.UI
             if (_nestedPanel != null)
             {
                 _nestedPanel.SelectDefaults(_defaultsData);
+            }
+            else if (_sfPanel != null)
+            {
+                SpecOptions reset = CurrentOptions();
+                reset.SystemFloor = _defaultsData.SystemFloor.Clone();
+                _sfPanel.Load(reset, _lastCandidates, _lastLevels);
+                OnSettingsChanged();
             }
             else if (_groupPanel != null)
             {
@@ -555,7 +587,7 @@ namespace VKTools.Revit.UI
         private void ExportCsv()
         {
             if (_report == null) return;
-            string module = _module == SpecModule.Nested ? "перенос" : "группирование";
+            string module = _module == SpecModule.Nested ? "перенос" : _module == SpecModule.SystemFloor ? "система-этаж" : "группирование";
             var dialog = new SaveFileDialog
             {
                 Filter = "CSV для Excel (*.csv)|*.csv",

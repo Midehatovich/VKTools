@@ -128,6 +128,18 @@ namespace VKTools.Revit
                 LargeImage = RibbonIcons.Calc(32),
                 Image = RibbonIcons.Calc(16),
             };
+            var systemFloor = new PushButtonData("VKTools.SystemFloor", "Система\nи этаж", assembly, typeof(SystemFloorCommand).FullName)
+            {
+                ToolTip = "Параметр системы := «Сокращение для системы», параметр этажа := имя уровня; изоляция — значения своей трубы; затем перенос во вложенные.",
+                LongDescription =
+                    "По умолчанию LSR_Имя системы и ADSK_Этаж (параметры выбираются в окне и хранятся в модели). Пустое сокращение у трубы — из типа системы, " +
+                    "у фитинга и арматуры — у соседей (до 3 шагов); элемент в нескольких системах или не подключённый не меняется. " +
+                    "Имя уровня можно заменить своим значением в таблице этажей. Сначала окно «было → станет» и пробный прогон, запись — одна операция.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.SystemFloor(32),
+                Image = RibbonIcons.SystemFloor(16),
+            };
+            spec.AddItem(systemFloor);
             spec.AddItem(nested);
             spec.AddItem(grouping);
             spec.AddItem(calc);

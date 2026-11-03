@@ -13,11 +13,19 @@ namespace VKTools.Core.Spec
 
         /// <summary>ADSK_Группирование по категории, спринклеры, комплекты шкафов.</summary>
         Grouping = 1,
+
+        /// <summary>Р4: параметр системы из «Сокращения для системы», этаж из уровня, изоляция от основы (NestedParamSync v2.1, шаги 1, 1б, 2).</summary>
+        SystemFloor = 2,
     }
 
     public static class SpecModuleText
     {
-        public static string Title(this SpecModule module) => module == SpecModule.Nested ? "Перенос во вложенные" : "Группирование";
+        public static string Title(this SpecModule module) => module switch
+        {
+            SpecModule.Nested => "Перенос во вложенные",
+            SpecModule.SystemFloor => "Система и этаж",
+            _ => "Группирование",
+        };
     }
 
     /// <summary>Одно изменение: элемент, параметр, было → станет. Только данные, без объектов Revit.</summary>
@@ -169,6 +177,9 @@ namespace VKTools.Core.Spec
 
         /// <summary>«Группирование»: новые K — «Применить» сохранит их в модели той же операцией.</summary>
         public List<KitNumber> NewKitNumbers { get; } = new List<KitNumber>();
+
+        /// <summary>«Система и этаж»: уровни модели (имя → элементов на нём) — для таблицы этажей.</summary>
+        public SortedDictionary<string, int> Levels { get; } = new SortedDictionary<string, int>(StringComparer.CurrentCultureIgnoreCase);
 
         public IReadOnlyList<PlanIssue> Issues => _issueOrder;
 

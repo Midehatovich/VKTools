@@ -29,6 +29,9 @@ namespace VKTools.Core.Spec
 
         public string? GroupingBlocked { get; set; }
 
+        /// <summary>«Система и этаж»: встроенное умолчание (LSR_Имя системы, ADSK_Этаж, категории NestedParamSync v2.1).</summary>
+        public SystemFloorSettings SystemFloor { get; } = SystemFloorSettings.Default();
+
         /// <summary>Настройка проекта в модели повреждена: запись запрещена, пока её не сохранят заново.</summary>
         public string? ProjectBlocked { get; set; }
 
@@ -58,6 +61,12 @@ namespace VKTools.Core.Spec
 
         public List<GroupRule> GroupRules { get; set; } = new List<GroupRule>();
 
+        /// <summary>«Система и этаж»: параметры, категории, этажи, перенос во вложенные.</summary>
+        public SystemFloorSettings SystemFloor { get; set; } = SystemFloorSettings.Default();
+
+        /// <summary>«Система и этаж» с переносом: настройка переноса есть в модели (иначе — по умолчанию).</summary>
+        public bool NestedSavedInProject { get; set; }
+
         /// <summary>«Группирование»: комплекты проекта (составы, номера K, слова поиска).</summary>
         public KitSettings Kits { get; set; } = new KitSettings();
 
@@ -71,14 +80,23 @@ namespace VKTools.Core.Spec
         public string? KitsStamp { get; set; }
 
         /// <summary>Строка-отпечаток: те же настройки — тот же анализ (пробный прогон засчитывается только для них).</summary>
-        public string Signature() => Module == SpecModule.Nested
-            ? $"{Scope}|{(NestedClearEmpty ? 1 : 0)}|" + string.Join(",", NestedParams.Select(k => k.Id).OrderBy(x => x, System.StringComparer.Ordinal))
-            : TableSignature() + "|" + Kits.Signature();
+        public string Signature() => Module switch
+        {
+            SpecModule.Nested => $"{Scope}|" + NestedSignature(),
+            SpecModule.SystemFloor => SystemFloor.Signature() + (SystemFloor.ChainNested ? "|" + NestedSignature() : string.Empty),
+            _ => TableSignature() + "|" + Kits.Signature(),
+        };
 
         /// <summary>Отпечаток того, что сохраняется в модели (без области обработки).</summary>
-        public string SettingsSignature() => Module == SpecModule.Nested
-            ? $"{(NestedClearEmpty ? 1 : 0)}|" + string.Join(",", NestedParams.Select(k => k.Id).OrderBy(x => x, System.StringComparer.Ordinal))
-            : TableSignature() + "|" + Kits.Signature() + "|" + Kits.Words;
+        public string SettingsSignature() => Module switch
+        {
+            SpecModule.Nested => NestedSignature(),
+            SpecModule.SystemFloor => SystemFloor.Signature(),
+            _ => TableSignature() + "|" + Kits.Signature() + "|" + Kits.Words,
+        };
+
+        private string NestedSignature() =>
+            $"{(NestedClearEmpty ? 1 : 0)}|" + string.Join(",", NestedParams.Select(k => k.Id).OrderBy(x => x, System.StringComparer.Ordinal));
 
         private string TableSignature() => SpecRuleTables.FormatGrouping(GroupRules, Enumerable.Empty<string>());
 
@@ -88,8 +106,13 @@ namespace VKTools.Core.Spec
         /// </summary>
         public bool IsDefault(SpecDefaults defaults)
         {
-            var asDefault = new SpecOptions(Module) { NestedParams = defaults.NestedParams.ToList(), GroupRules = defaults.GroupRules.ToList() };
-            return Module == SpecModule.Nested ? SettingsSignature() == asDefault.SettingsSignature() : TableSignature() == asDefault.TableSignature();
+            var asDefault = new SpecOptions(Module)
+            {
+                NestedParams = defaults.NestedParams.ToList(),
+                GroupRules = defaults.GroupRules.ToList(),
+                SystemFloor = defaults.SystemFloor.Clone(),
+            };
+            return Module == SpecModule.Grouping ? TableSignature() == asDefault.TableSignature() : SettingsSignature() == asDefault.SettingsSignature();
         }
 
         public SpecOptions Clone() => new SpecOptions(Module)
@@ -99,6 +122,8 @@ namespace VKTools.Core.Spec
             Scope = Scope,
             GroupRules = GroupRules.ToList(),
             Kits = Kits.Clone(),
+            SystemFloor = SystemFloor.Clone(),
+            NestedSavedInProject = NestedSavedInProject,
             SavedInProject = SavedInProject,
             SavedStamp = SavedStamp,
             KitsStamp = KitsStamp,
@@ -111,6 +136,13 @@ namespace VKTools.Core.Spec
         public void StoreTo(SpecProjectSettings settings, SpecDefaults defaults, string user, System.DateTime when)
         {
             bool isDefault = IsDefault(defaults);
+            if (Module == SpecModule.SystemFloor)
+            {
+                SystemFloor.StoreTo(settings, isDefault);
+                if (isDefault) settings.ClearStamp(SpecProjectSettings.SystemFloorSection);
+                else settings.SetStamp(SpecProjectSettings.SystemFloorSection, user, when);
+                return;
+            }
             if (Module == SpecModule.Nested)
             {
                 settings.NestedParams = isDefault ? null : SpecRuleTables.FormatNestedSelection(NestedParams);
@@ -143,10 +175,45 @@ namespace VKTools.Core.Spec
         public static SpecOptions Load(SpecModule module, SpecProjectSettings settings, SpecDefaults defaults, List<ConfigIssue> issues, out string? blocked)
         {
             blocked = null;
-            var options = new SpecOptions(module) { NestedParams = defaults.NestedParams.ToList(), GroupRules = defaults.GroupRules.ToList() };
+            var options = new SpecOptions(module)
+            {
+                NestedParams = defaults.NestedParams.ToList(),
+                GroupRules = defaults.GroupRules.ToList(),
+                SystemFloor = defaults.SystemFloor.Clone(),
+            };
             var parseIssues = new List<ConfigIssue>();
             bool broken = false;
-            if (module == SpecModule.Nested)
+            if (module == SpecModule.SystemFloor)
+            {
+                if (SystemFloorSettings.IsStored(settings))
+                {
+                    SystemFloorSettings? parsed = SystemFloorSettings.Parse(settings, parseIssues);
+                    if (parsed != null)
+                    {
+                        options.SystemFloor = parsed;
+                        options.SavedInProject = true;
+                        options.SavedStamp = settings.Stamp(SpecProjectSettings.SystemFloorSection);
+                    }
+                    else
+                    {
+                        broken = true;
+                    }
+                }
+                // Перенос во вложенные той же операцией — с настройкой модуля «Перенос во вложенные» (только чтение)
+                string? nested = settings.NestedParams;
+                if (nested != null)
+                {
+                    var nestedIssues = new List<ConfigIssue>();
+                    List<ParamKey> keys = SpecRuleTables.ParseNestedSelection(nested, nestedIssues);
+                    if (!nestedIssues.Any(i => i.Severity == Checks.Severity.Error))
+                    {
+                        options.NestedParams = keys;
+                        options.NestedClearEmpty = settings.NestedClearEmpty;
+                        options.NestedSavedInProject = true;
+                    }
+                }
+            }
+            else if (module == SpecModule.Nested)
             {
                 string? stored = settings.NestedParams;
                 if (stored != null)

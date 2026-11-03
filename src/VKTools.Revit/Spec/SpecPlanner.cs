@@ -19,7 +19,7 @@ namespace VKTools.Revit.Spec
     /// Поведение по умолчанию — как у Dynamo-эталонов: NestedParamSync v2.1 (шаг 3), adsk_grouping v2,
     /// fire_cabinet_postprocess v1.0. Настройки (какие параметры, какая таблица групп) — <see cref="SpecOptions"/>.
     /// </summary>
-    internal sealed class SpecPlanner
+    internal sealed partial class SpecPlanner
     {
         /// <summary>Защита от зацикленной вложенности (как HARD_MAX_LEVEL в NestedParamSync).</summary>
         private const int MaxNestedLevel = 20;
@@ -61,6 +61,29 @@ namespace VKTools.Revit.Spec
             IOperationProgress progress, OperationTimings timings)
         {
             var planner = new SpecPlanner(doc, progress);
+            if (options.Module == SpecModule.SystemFloor)
+            {
+                bool chain = options.SystemFloor.ChainNested;
+                planner._plan = new ParamPlan(chain ? new[] { SpecModule.SystemFloor, SpecModule.Nested } : new[] { SpecModule.SystemFloor });
+                foreach (ConfigIssue issue in defaults.Issues) planner.AddConfigIssue(options.Module, issue);
+                using (timings.Measure("анализ системы и этажа")) planner.PlanSystemFloor(options, defaults);
+                if (chain)
+                {
+                    // Родитель отдаёт вложенным уже НОВОЕ значение (как шаг 3 NestedParamSync v2.1)
+                    var nested = new SpecOptions(SpecModule.Nested)
+                    {
+                        NestedParams = options.NestedParams.ToList(),
+                        NestedClearEmpty = options.NestedClearEmpty,
+                        Scope = NestedScope.Model,
+                        SavedInProject = options.NestedSavedInProject,
+                    };
+                    int ownCandidates = planner._plan.Candidates.Count;
+                    using (timings.Measure("анализ переноса")) planner.PlanNested(nested, defaults, null);
+                    // Варианты параметров окна — только свои (текстовые параметры элементов), без кандидатов переноса
+                    planner._plan.Candidates.RemoveRange(ownCandidates, planner._plan.Candidates.Count - ownCandidates);
+                }
+                return planner._plan;
+            }
             planner._plan = new ParamPlan(new[] { options.Module });
             foreach (ConfigIssue issue in defaults.Issues) planner.AddConfigIssue(options.Module, issue);
             if (options.Module == SpecModule.Nested)
@@ -296,7 +319,8 @@ namespace VKTools.Revit.Spec
                 }
                 return;
             }
-            ParamValue? value = ParamAccess.Read(source.Parameter);
+            ParamValue? value = (!source.FromType && _pending.TryGetValue((parentId, key.Id), out ParamValue? planned) ? planned : null)
+                ?? ParamAccess.Read(source.Parameter);
             if (ParamAccess.IsEmpty(value))
             {
                 if (!clearEmpty || source.Parameter.StorageType != StorageType.String)
