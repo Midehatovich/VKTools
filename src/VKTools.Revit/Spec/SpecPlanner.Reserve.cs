@@ -293,8 +293,16 @@ namespace VKTools.Revit.Spec
             return (e as MEPCurve)?.Location is LocationCurve lc ? lc.Curve.Length * ReserveMath.FeetToMeters : (double?)null;
         }
 
-        private static string SystemAbbreviation(Element e) =>
-            e.get_Parameter(BuiltInParameter.RBS_SYSTEM_ABBREVIATION_PARAM)?.AsString()?.Trim() ?? string.Empty;
+        /// <summary>«Сокращение для системы» трубы (у экземпляра — RBS_DUCT_PIPE_…; RBS_SYSTEM_… — запасной вариант).</summary>
+        private static string SystemAbbreviation(Element e)
+        {
+            foreach (BuiltInParameter bip in new[] { BuiltInParameter.RBS_DUCT_PIPE_SYSTEM_ABBREVIATION_PARAM, BuiltInParameter.RBS_SYSTEM_ABBREVIATION_PARAM })
+            {
+                string value = e.get_Parameter(bip)?.AsString()?.Trim() ?? string.Empty;
+                if (value.Length > 0) return value;
+            }
+            return string.Empty;
+        }
 
         private static (string Spec, string Unit) SpecAndUnit(Parameter p)
         {
