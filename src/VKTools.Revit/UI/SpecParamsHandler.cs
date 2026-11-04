@@ -213,8 +213,11 @@ namespace VKTools.Revit.UI
                 return;
             }
             int kits = options.Kits.Rules.Select(r => r.Family).Distinct(StringComparer.OrdinalIgnoreCase).Count();
-            bool removed = toDefault && (options.Module == SpecModule.Nested || kits == 0);
-            string what = options.Module == SpecModule.Nested
+            bool removed = toDefault && (options.Module != SpecModule.Grouping || kits == 0);
+            string what = options.Module == SpecModule.SystemFloor ? SystemFloorText(options.SystemFloor)
+                : options.Module == SpecModule.Insulation
+                    ? $"Dнар {(options.Insulation.WriteOd ? "да" : "нет")}, наименование {(options.Insulation.WriteName ? "да" : "нет")}, параметры изделия {(options.Insulation.WriteProduct ? "да" : "нет")}"
+                : options.Module == SpecModule.Nested
                 ? "параметры: " + string.Join(", ", options.NestedParams.Select(k => k.Name)) + (options.NestedClearEmpty ? "; пустое очищает вложенное" : string.Empty)
                 : $"строк таблицы групп: {options.GroupRules.Count}{(toDefault ? " (по умолчанию)" : string.Empty)}, «не трогать»: {options.GroupRules.Count(r => r.Skip)}; "
                     + $"комплектов: {kits}" + (kits > 0 ? " (" + string.Join(", ", options.Kits.Rules.Select(r => r.Label)) + $"), номеров K: {options.Kits.Numbers.Count}" : string.Empty);
@@ -225,6 +228,11 @@ namespace VKTools.Revit.UI
                 : $"Настройка сохранена в модели (в журнале отмены — «{SpecSettingsStore.TransactionName}»)."
                     + (toDefault && options.Module == SpecModule.Grouping ? " Таблица групп — по умолчанию." : string.Empty)) + sync, error: false);
         }
+
+        private static string SystemFloorText(SystemFloorSettings sf) =>
+            $"система → {(sf.WriteSystem ? sf.SystemParam?.Name ?? "не выбран" : "не пишется")}, этаж → {(sf.WriteFloor ? sf.FloorParam?.Name ?? "не выбран" : "не пишется")}, "
+            + $"изоляция {(sf.Insulation ? "да" : "нет")}, перенос во вложенные {(sf.ChainNested ? "да" : "нет")}, категорий {sf.Categories.Count}, "
+            + $"переименований уровней {sf.EffectiveFloors().Count()}";
 
         internal static void LogPlan(Document doc, ParamPlan plan, OperationTimings timings)
         {

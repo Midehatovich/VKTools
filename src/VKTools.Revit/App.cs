@@ -128,6 +128,29 @@ namespace VKTools.Revit
                 LargeImage = RibbonIcons.Calc(32),
                 Image = RibbonIcons.Calc(16),
             };
+            var systemFloor = new PushButtonData("VKTools.SystemFloor", "Система\nи этаж", assembly, typeof(SystemFloorCommand).FullName)
+            {
+                ToolTip = "Параметр системы := «Сокращение для системы», параметр этажа := имя уровня; изоляция — значения своей трубы; затем перенос во вложенные.",
+                LongDescription =
+                    "По умолчанию LSR_Имя системы и ADSK_Этаж (параметры выбираются в окне и хранятся в модели). Пустое сокращение у трубы — из типа системы, " +
+                    "у фитинга и арматуры — у соседей (до 3 шагов); элемент в нескольких системах или не подключённый не меняется. " +
+                    "Имя уровня можно заменить своим значением в таблице этажей. Сначала окно «было → станет» и пробный прогон, запись — одна операция.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.SystemFloor(32),
+                Image = RibbonIcons.SystemFloor(16),
+            };
+            var insulation = new PushButtonData("VKTools.Insulation", "Изоляция", assembly, typeof(InsulationCommand).FullName)
+            {
+                ToolTip = "Изоляция труб: Dнар трубы-основы, наименование «… толщиной t мм для трубы D = d мм», марка и завод — по таблице «Изделия» проекта.",
+                LongDescription =
+                    "Таблица «Изделия» в окне хранится в модели: маска типа, основа и формат имени, ряды толщин и цилиндров, любые параметры изделия (+ Колонка). " +
+                    "Наименование пишется, только если включено в окне (тогда формулу имени изоляции в BIM2B нужно убрать). Запись — одна операция в журнале отмены.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.Insulation(32),
+                Image = RibbonIcons.Insulation(16),
+            };
+            spec.AddItem(systemFloor);
+            spec.AddItem(insulation);
             spec.AddItem(nested);
             spec.AddItem(grouping);
             spec.AddItem(calc);

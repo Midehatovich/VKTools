@@ -89,7 +89,9 @@ namespace VKTools.Revit.Spec
     internal static class SpecExecutor
     {
         public static string OperationName(IReadOnlyList<SpecModule> modules) =>
-            modules.Count == 1 && modules[0] == SpecModule.Nested ? "VK Tools: перенос во вложенные" : "VK Tools: группирование";
+            modules.Contains(SpecModule.SystemFloor) ? "VK Tools: система и этаж"
+            : modules.Contains(SpecModule.Insulation) ? "VK Tools: изоляция"
+            : modules.Count == 1 && modules[0] == SpecModule.Nested ? "VK Tools: перенос во вложенные" : "VK Tools: группирование";
 
         /// <param name="saveSettings">Для «Применить»: сохранить настройки окна в модели той же операцией (null — не нужно). Возвращает причину отказа.</param>
         public static SpecRunResult Run(Document doc, ParamPlan plan, SpecRunMode mode, IOperationProgress progress, OperationTimings timings, ILog log,
@@ -102,7 +104,7 @@ namespace VKTools.Revit.Spec
                 result.Status = "Записывать нечего: все значения уже такие, как нужно.";
                 return result;
             }
-            // Порядок записи — порядок модулей: вложенные, затем группирование
+            // Порядок записи — порядок модулей: вложенные, группирование, система и этаж (значения посчитаны заранее, порядок не влияет)
             List<ParamChange> changes = plan.Changes.OrderBy(c => c.Module).ToList();
             var written = new List<ParamChange>();
             bool fatal = false;

@@ -14,6 +14,8 @@ namespace VKTools.Core.Spec
         public const string NestedSection = "nested";
         public const string GroupingSection = "grouping";
         public const string KitsSection = "kits";
+        public const string SystemFloorSection = "sf";
+        public const string InsulationSection = "ins";
 
         private const string NestedParamsKey = "nested.params";
         private const string NestedClearKey = "nested.clearEmpty";

@@ -50,7 +50,7 @@ namespace VKTools.Revit.Checks
                     {
                         Current = value.Length == 0 ? "(пусто)" : value,
                         Expected = hostValue!,
-                        Action = "Перенесите значения на изоляцию (скрипт NestedParamSync, позже — модуль «Изоляция» VK Tools).",
+                        Action = "VK Tools → «Система и этаж» (изоляция получает значения своей основы).",
                     }.Describe(insulation));
                 }
             }

@@ -27,6 +27,22 @@ namespace VKTools.Revit.Commands
             SpecLauncher.Run(commandData.Application, SpecModule.Grouping);
     }
 
+    /// <summary>«Система и этаж» (Р4): параметр системы из сокращения, этаж из уровня, изоляция от основы, затем перенос во вложенные.</summary>
+    [Transaction(TransactionMode.ReadOnly)]
+    public sealed class SystemFloorCommand : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements) =>
+            SpecLauncher.Run(commandData.Application, SpecModule.SystemFloor);
+    }
+
+    /// <summary>«Изоляция» (Р4): Dнар трубы, наименование и параметры изделия по таблице «Изделия» проекта.</summary>
+    [Transaction(TransactionMode.ReadOnly)]
+    public sealed class InsulationCommand : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements) =>
+            SpecLauncher.Run(commandData.Application, SpecModule.Insulation);
+    }
+
     /// <summary>
     /// Общий запуск модулей Р2: настройки из модели (или по умолчанию) → анализ → окно. Сама команда только анализирует;
     /// пробный прогон, запись и сохранение настройки идут из окна через ExternalEvent.
