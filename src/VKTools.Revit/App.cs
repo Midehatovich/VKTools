@@ -149,11 +149,33 @@ namespace VKTools.Revit
                 LargeImage = RibbonIcons.Insulation(32),
                 Image = RibbonIcons.Insulation(16),
             };
+            var reserve = new PushButtonData("VKTools.PipeReserve", "Запас\nтруб", assembly, typeof(PipeReserveCommand).FullName)
+            {
+                ToolTip = "Количество = длина × k жёстким трубам и изоляции на трубах (по умолчанию 1,1 = +10 %, ТЗ главного 2026-10-20).",
+                LongDescription =
+                    "Коэффициенты — таблица в окне, хранится в модели: категория, маска типа, системы, k (пусто — не трогать). Гибкие трубы и изоляция фитингов не трогаются. " +
+                    "Единицы количества проверяются по типу данных и по значениям в модели; не сходятся — запись запрещена. Запись — одна операция в журнале отмены.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.PipeReserve(32),
+                Image = RibbonIcons.PipeReserve(16),
+            };
+            var pipeNames = new PushButtonData("VKTools.PipeNames", "Имена\nтруб", assembly, typeof(PipeNamesCommand).FullName)
+            {
+                ToolTip = "ADSK_Наименование труб по правилу типа: ВГП ГОСТ 3262 и чугун — по Ду, остальные — по Dнар. По умолчанию только проверка.",
+                LongDescription =
+                    "Правила — таблица в окне, хранится в модели: маска типа, основа («Комментарии к типоразмеру»), формат ({base} ø{dn}x{s}…). " +
+                    "Пока имена труб пишет BIM2B, плагин только показывает расхождения и «двойные строки»; запись включается галкой на проект.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.PipeNames(32),
+                Image = RibbonIcons.PipeNames(16),
+            };
             spec.AddItem(systemFloor);
             spec.AddItem(insulation);
             spec.AddItem(nested);
             spec.AddItem(grouping);
             spec.AddItem(calc);
+            spec.AddItem(reserve);
+            spec.AddItem(pipeNames);
 
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)

@@ -5,6 +5,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using VKTools.Core.Checks;
 using VKTools.Core.Logging;
+using VKTools.Core.Config;
 using VKTools.Core.Spec;
 using VKTools.Revit.Infrastructure;
 using VKTools.Revit.Spec;
@@ -215,6 +216,10 @@ namespace VKTools.Revit.UI
             int kits = options.Kits.Rules.Select(r => r.Family).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             bool removed = toDefault && (options.Module != SpecModule.Grouping || kits == 0);
             string what = options.Module == SpecModule.SystemFloor ? SystemFloorText(options.SystemFloor)
+                : options.Module == SpecModule.PipeReserve
+                    ? $"параметр количества {options.Reserve.QtyParam?.Name ?? "не выбран"}, строк таблицы «Коэффициенты» {PipeReserveSettings.ParseRules(options.Reserve.Table, new List<ConfigIssue>()).Count}"
+                : options.Module == SpecModule.PipeNames
+                    ? $"имена {(options.PipeNames.WriteName ? "пишутся" : "только проверка")} в {options.PipeNames.NameParam?.Name ?? "не выбран"}, правил {PipeNameSettings.ParseRules(options.PipeNames.Rules, new List<ConfigIssue>()).Count}"
                 : options.Module == SpecModule.Insulation
                     ? $"Dнар {(options.Insulation.WriteOd ? "да" : "нет")}, наименование {(options.Insulation.WriteName ? "да" : "нет")}, параметры изделия {(options.Insulation.WriteProduct ? "да" : "нет")}"
                 : options.Module == SpecModule.Nested
