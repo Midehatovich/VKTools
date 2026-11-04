@@ -91,6 +91,16 @@ namespace VKTools.Revit.Spec
                 using (timings.Measure("анализ изоляции")) planner.PlanInsulation(options, defaults);
                 return planner._plan;
             }
+            if (options.Module == SpecModule.PipeReserve)
+            {
+                using (timings.Measure("анализ запаса")) planner.PlanReserve(options, defaults);
+                return planner._plan;
+            }
+            if (options.Module == SpecModule.PipeNames)
+            {
+                using (timings.Measure("анализ имён труб")) planner.PlanPipeNames(options, defaults);
+                return planner._plan;
+            }
             if (options.Module == SpecModule.Nested)
             {
                 using (timings.Measure("анализ переноса")) planner.PlanNested(options, defaults, scope);

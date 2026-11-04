@@ -16,6 +16,8 @@ namespace VKTools.Core.Spec
         public const string KitsSection = "kits";
         public const string SystemFloorSection = "sf";
         public const string InsulationSection = "ins";
+        public const string ReserveSection = "rsv";
+        public const string PipeNamesSection = "pn";
 
         private const string NestedParamsKey = "nested.params";
         private const string NestedClearKey = "nested.clearEmpty";

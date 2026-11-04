@@ -42,7 +42,7 @@ namespace VKTools.Revit.UI
         private readonly GroupSchemePanel? _groupPanel;
         private readonly KitsPanel? _kitsPanel;
         private readonly SystemFloorPanel? _sfPanel;
-        private readonly InsulationPanel? _insPanel;
+        private readonly ISpecTablePanel? _tablePanel;
         private readonly TabControl _tabs;
         private readonly TabItem _settingsTab;
         private readonly TabItem? _kitsTab;
@@ -93,6 +93,8 @@ namespace VKTools.Revit.UI
             bool nested = _module == SpecModule.Nested;
             bool sf = _module == SpecModule.SystemFloor;
             bool ins = _module == SpecModule.Insulation;
+            bool reserve = _module == SpecModule.PipeReserve;
+            bool names = _module == SpecModule.PipeNames;
 
             this.ApplyDefaultLook();
             Title = $"VK Tools — {_module.Title().ToLowerInvariant()}: {document.Title}";
@@ -108,7 +110,11 @@ namespace VKTools.Revit.UI
             DockPanel.SetDock(header, Dock.Top);
             header.Children.Add(new TextBlock
             {
-                Text = ins
+                Text = reserve
+                    ? "Запас: количество = длина × k жёстким трубам и изоляции на трубах по таблице «Коэффициенты» проекта (вкладка «Настройка»; по умолчанию 1,1 = +10 %)."
+                    : names
+                    ? "Имена труб: наименование по правилу типа из таблицы «Правила» (ВГП — по Ду, пластик — по Dнар…). По умолчанию только проверка — имена пишет BIM2B."
+                    : ins
                     ? "Изоляция труб: Dнар трубы-основы, наименование и параметры изделия по таблице «Изделия» проекта (вкладка «Настройка»)."
                     : sf
                     ? "Параметр системы := «Сокращение для системы», параметр этажа := имя уровня (или своё значение из таблицы этажей); изоляция — значения своей основы; затем перенос во вложенные."
@@ -142,7 +148,11 @@ namespace VKTools.Revit.UI
             bottom.Children.Add(new Expander { Header = "Сводка, правила и сообщения Revit", Content = _details });
             var buttons = new DockPanel { Margin = new Thickness(0, 8, 0, 0), LastChildFill = false };
             _defaults = ReportWindow.MakeButton("По умолчанию", (s, e) => ResetToDefaults());
-            _defaults.ToolTip = ins
+            _defaults.ToolTip = reserve
+                ? "ADSK_Количество, трубы и изоляция на трубах × 1,1. В модели — после «Сохранить»."
+                : names
+                ? "Стиль бюро: ВГП ГОСТ 3262 и чугун — «{base} ø{dn}x{s}», остальные — «{base} ø{od}x{s}»; только проверка. В модели — после «Сохранить»."
+                : ins
                 ? "U_Наружный диаметр, таблица «Изделия» как в InsulationPipeOD v1.1.2 (ROCKWOOL), наименование выключено. В модели — после «Сохранить»."
                 : sf
                 ? "LSR_Имя системы, ADSK_Этаж, категории NestedParamSync v2.1, изоляция и перенос включены, этажи — имя уровня. В модели — после «Сохранить»."
@@ -170,12 +180,16 @@ namespace VKTools.Revit.UI
             root.Children.Add(bottom);
 
             _tabs = new TabControl();
-            if (ins)
+            if (ins || reserve || names)
             {
-                _insPanel = new InsulationPanel(document.Title) { Margin = new Thickness(6) };
-                _insPanel.Load(options, Array.Empty<ParamCandidate>(), Array.Empty<string>());
-                _insPanel.Changed += (s, e) => OnSettingsChanged();
-                _settingsTab = new TabItem { Header = "Настройка", Content = _insPanel };
+                FrameworkElement panel = reserve ? new PipeReservePanel(document.Title)
+                    : names ? new PipeNamesPanel(document.Title)
+                    : (FrameworkElement)new InsulationPanel(document.Title);
+                panel.Margin = new Thickness(6);
+                _tablePanel = (ISpecTablePanel)panel;
+                _tablePanel.Load(options, Array.Empty<ParamCandidate>(), Array.Empty<string>());
+                _tablePanel.Changed += (s, e) => OnSettingsChanged();
+                _settingsTab = new TabItem { Header = "Настройка", Content = panel };
             }
             else if (sf)
             {
@@ -275,7 +289,7 @@ namespace VKTools.Revit.UI
             SpecOptions options = _base.Clone();
             _nestedPanel?.ApplyTo(options);
             _sfPanel?.ApplyTo(options);
-            _insPanel?.ApplyTo(options);
+            _tablePanel?.ApplyTo(options);
             if (_groupPanel != null) options.GroupRules = _groupPanel.Rules();
             if (_kitsPanel != null) options.Kits = _kitsPanel.Settings();
             return options;
@@ -309,10 +323,10 @@ namespace VKTools.Revit.UI
             _newKitNumbers = (after ?? plan).NewKitNumbers.Count;
 
             if (_nestedPanel != null && run == null) _nestedPanel.Load(used, plan.Candidates);
-            if (_insPanel != null && run == null)
+            if (_tablePanel != null && run == null)
             {
                 _lastCandidates = plan.Candidates.ToList();
-                _insPanel.Load(used, plan.Candidates, plan.Preview);
+                _tablePanel.Load(used, plan.Candidates, plan.Preview);
             }
             if (_sfPanel != null && run == null)
             {
@@ -416,7 +430,7 @@ namespace VKTools.Revit.UI
         {
             bool dirty = SettingsDirty();
             string source = _module == SpecModule.Nested ? _defaultsData.NestedSource
-                : _module == SpecModule.SystemFloor || _module == SpecModule.Insulation ? "встроенные" : _defaultsData.GroupingSource;
+                : _module != SpecModule.Grouping ? "встроенные" : _defaultsData.GroupingSource;
             int comma = source.IndexOf(", ", StringComparison.Ordinal);
             if (comma > 0) source = source.Substring(0, comma);
             string text;
@@ -449,7 +463,7 @@ namespace VKTools.Revit.UI
 
         private void UpdateButtons()
         {
-            bool errors = _groupPanel?.HasErrors == true || _insPanel?.HasErrors == true;
+            bool errors = _groupPanel?.HasErrors == true || _tablePanel?.HasErrors == true;
             bool current = !errors && IsCurrent();
             bool dirty = SettingsDirty();
             _refresh.IsEnabled = !_busy && !errors;
@@ -468,7 +482,7 @@ namespace VKTools.Revit.UI
             if (_groupPanel != null) _groupPanel.IsEnabled = !_busy;
             if (_kitsPanel != null) _kitsPanel.IsEnabled = !_busy;
             if (_sfPanel != null) _sfPanel.IsEnabled = !_busy;
-            if (_insPanel != null) _insPanel.IsEnabled = !_busy;
+            if (_tablePanel is UIElement tableElement) tableElement.IsEnabled = !_busy;
         }
 
         private void ResetToDefaults()
@@ -477,11 +491,11 @@ namespace VKTools.Revit.UI
             {
                 _nestedPanel.SelectDefaults(_defaultsData);
             }
-            else if (_insPanel != null)
+            else if (_tablePanel != null)
             {
                 SpecOptions reset = CurrentOptions();
-                reset.Insulation = _defaultsData.Insulation.Clone();
-                _insPanel.Load(reset, _lastCandidates, Array.Empty<string>());
+                reset.ResetModule(_defaultsData);
+                _tablePanel.Load(reset, _lastCandidates, Array.Empty<string>());
                 OnSettingsChanged();
             }
             else if (_sfPanel != null)
@@ -517,8 +531,8 @@ namespace VKTools.Revit.UI
         {
             if (_busy) return;
             _groupPanel?.CommitEdits();
-            _insPanel?.CommitEdits();
-            if (_insPanel?.HasErrors == true)
+            _tablePanel?.CommitEdits();
+            if (_tablePanel?.HasErrors == true)
             {
                 _tabs.SelectedItem = _settingsTab;
                 ShowMessage("В таблице «Изделия» ошибки (под таблицей): исправьте их, потом «Обновить».");
@@ -622,7 +636,8 @@ namespace VKTools.Revit.UI
         {
             if (_report == null) return;
             string module = _module == SpecModule.Nested ? "перенос" : _module == SpecModule.SystemFloor ? "система-этаж"
-                : _module == SpecModule.Insulation ? "изоляция" : "группирование";
+                : _module == SpecModule.Insulation ? "изоляция" : _module == SpecModule.PipeReserve ? "запас-труб"
+                : _module == SpecModule.PipeNames ? "имена-труб" : "группирование";
             var dialog = new SaveFileDialog
             {
                 Filter = "CSV для Excel (*.csv)|*.csv",

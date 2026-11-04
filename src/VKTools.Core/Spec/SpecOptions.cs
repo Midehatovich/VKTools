@@ -35,6 +35,12 @@ namespace VKTools.Core.Spec
         /// <summary>«Изоляция»: встроенное умолчание (как InsulationPipeOD v1.1.2, наименование выключено).</summary>
         public InsulationSettings Insulation { get; } = InsulationSettings.Default();
 
+        /// <summary>«Запас труб»: встроенное умолчание (ADSK_Количество, трубы и изоляция на трубах × 1,1).</summary>
+        public PipeReserveSettings Reserve { get; } = PipeReserveSettings.Default();
+
+        /// <summary>«Имена труб»: встроенное умолчание (стиль бюро, только проверка).</summary>
+        public PipeNameSettings PipeNames { get; } = PipeNameSettings.Default();
+
         /// <summary>Настройка проекта в модели повреждена: запись запрещена, пока её не сохранят заново.</summary>
         public string? ProjectBlocked { get; set; }
 
@@ -70,6 +76,12 @@ namespace VKTools.Core.Spec
         /// <summary>«Изоляция»: что писать и таблица «Изделия».</summary>
         public InsulationSettings Insulation { get; set; } = InsulationSettings.Default();
 
+        /// <summary>«Запас труб»: параметр количества и таблица «Коэффициенты».</summary>
+        public PipeReserveSettings Reserve { get; set; } = PipeReserveSettings.Default();
+
+        /// <summary>«Имена труб»: писать ли, параметр и таблица «Правила».</summary>
+        public PipeNameSettings PipeNames { get; set; } = PipeNameSettings.Default();
+
         /// <summary>«Система и этаж» с переносом: настройка переноса есть в модели (иначе — по умолчанию).</summary>
         public bool NestedSavedInProject { get; set; }
 
@@ -91,6 +103,8 @@ namespace VKTools.Core.Spec
             SpecModule.Nested => $"{Scope}|" + NestedSignature(),
             SpecModule.SystemFloor => SystemFloor.Signature() + (SystemFloor.ChainNested ? "|" + NestedSignature() : string.Empty),
             SpecModule.Insulation => Insulation.Signature(),
+            SpecModule.PipeReserve => Reserve.Signature(),
+            SpecModule.PipeNames => PipeNames.Signature(),
             _ => TableSignature() + "|" + Kits.Signature(),
         };
 
@@ -100,6 +114,8 @@ namespace VKTools.Core.Spec
             SpecModule.Nested => NestedSignature(),
             SpecModule.SystemFloor => SystemFloor.Signature(),
             SpecModule.Insulation => Insulation.Signature(),
+            SpecModule.PipeReserve => Reserve.Signature(),
+            SpecModule.PipeNames => PipeNames.Signature(),
             _ => TableSignature() + "|" + Kits.Signature() + "|" + Kits.Words,
         };
 
@@ -120,8 +136,22 @@ namespace VKTools.Core.Spec
                 GroupRules = defaults.GroupRules.ToList(),
                 SystemFloor = defaults.SystemFloor.Clone(),
                 Insulation = defaults.Insulation.Clone(),
+                Reserve = defaults.Reserve.Clone(),
+                PipeNames = defaults.PipeNames.Clone(),
             };
             return Module == SpecModule.Grouping ? TableSignature() == asDefault.TableSignature() : SettingsSignature() == asDefault.SettingsSignature();
+        }
+
+        /// <summary>«По умолчанию» для модулей с одной настройкой (система и этаж, изоляция, запас, имена труб).</summary>
+        public void ResetModule(SpecDefaults defaults)
+        {
+            switch (Module)
+            {
+                case SpecModule.SystemFloor: SystemFloor = defaults.SystemFloor.Clone(); break;
+                case SpecModule.Insulation: Insulation = defaults.Insulation.Clone(); break;
+                case SpecModule.PipeReserve: Reserve = defaults.Reserve.Clone(); break;
+                case SpecModule.PipeNames: PipeNames = defaults.PipeNames.Clone(); break;
+            }
         }
 
         public SpecOptions Clone() => new SpecOptions(Module)
@@ -133,6 +163,8 @@ namespace VKTools.Core.Spec
             Kits = Kits.Clone(),
             SystemFloor = SystemFloor.Clone(),
             Insulation = Insulation.Clone(),
+            Reserve = Reserve.Clone(),
+            PipeNames = PipeNames.Clone(),
             NestedSavedInProject = NestedSavedInProject,
             SavedInProject = SavedInProject,
             SavedStamp = SavedStamp,
@@ -146,6 +178,20 @@ namespace VKTools.Core.Spec
         public void StoreTo(SpecProjectSettings settings, SpecDefaults defaults, string user, System.DateTime when)
         {
             bool isDefault = IsDefault(defaults);
+            if (Module == SpecModule.PipeReserve)
+            {
+                Reserve.StoreTo(settings, isDefault);
+                if (isDefault) settings.ClearStamp(SpecProjectSettings.ReserveSection);
+                else settings.SetStamp(SpecProjectSettings.ReserveSection, user, when);
+                return;
+            }
+            if (Module == SpecModule.PipeNames)
+            {
+                PipeNames.StoreTo(settings, isDefault);
+                if (isDefault) settings.ClearStamp(SpecProjectSettings.PipeNamesSection);
+                else settings.SetStamp(SpecProjectSettings.PipeNamesSection, user, when);
+                return;
+            }
             if (Module == SpecModule.Insulation)
             {
                 Insulation.StoreTo(settings, isDefault);
@@ -198,10 +244,46 @@ namespace VKTools.Core.Spec
                 GroupRules = defaults.GroupRules.ToList(),
                 SystemFloor = defaults.SystemFloor.Clone(),
                 Insulation = defaults.Insulation.Clone(),
+                Reserve = defaults.Reserve.Clone(),
+                PipeNames = defaults.PipeNames.Clone(),
             };
             var parseIssues = new List<ConfigIssue>();
             bool broken = false;
-            if (module == SpecModule.Insulation)
+            if (module == SpecModule.PipeReserve)
+            {
+                if (PipeReserveSettings.IsStored(settings))
+                {
+                    PipeReserveSettings? parsed = PipeReserveSettings.Parse(settings, parseIssues);
+                    if (parsed != null)
+                    {
+                        options.Reserve = parsed;
+                        options.SavedInProject = true;
+                        options.SavedStamp = settings.Stamp(SpecProjectSettings.ReserveSection);
+                    }
+                    else
+                    {
+                        broken = true;
+                    }
+                }
+            }
+            else if (module == SpecModule.PipeNames)
+            {
+                if (PipeNameSettings.IsStored(settings))
+                {
+                    PipeNameSettings? parsed = PipeNameSettings.Parse(settings, parseIssues);
+                    if (parsed != null)
+                    {
+                        options.PipeNames = parsed;
+                        options.SavedInProject = true;
+                        options.SavedStamp = settings.Stamp(SpecProjectSettings.PipeNamesSection);
+                    }
+                    else
+                    {
+                        broken = true;
+                    }
+                }
+            }
+            else if (module == SpecModule.Insulation)
             {
                 if (InsulationSettings.IsStored(settings))
                 {

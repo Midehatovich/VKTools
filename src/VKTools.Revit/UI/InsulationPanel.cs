@@ -13,7 +13,7 @@ using TextBox = System.Windows.Controls.TextBox;
 namespace VKTools.Revit.UI
 {
     /// <summary>Вкладка «Настройка» окна «Изоляция»: что писать, параметры и таблица «Изделия» с превью имён.</summary>
-    internal sealed class InsulationPanel : DockPanel
+    internal sealed class InsulationPanel : DockPanel, ISpecTablePanel
     {
         private const string AutoOd = "(найти по имени «U_Наружный диаметр»)";
 

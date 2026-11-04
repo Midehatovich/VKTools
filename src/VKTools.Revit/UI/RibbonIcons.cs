@@ -42,6 +42,14 @@ namespace VKTools.Revit.UI
         public static ImageSource Insulation(int size) =>
             Draw(size, Green, "M 5,12 L 27,12 M 5,20 L 27,20 M 5,7.5 L 27,7.5 M 5,24.5 L 27,24.5");
 
+        /// <summary>Труба и «+10 %»: запас.</summary>
+        public static ImageSource PipeReserve(int size) =>
+            Draw(size, Green, "M 5,11 L 18,11 M 5,21 L 18,21 M 22,16 L 28,16 M 25,13 L 25,19");
+
+        /// <summary>Труба и строка текста: имя трубы.</summary>
+        public static ImageSource PipeNames(int size) =>
+            Draw(size, Green, "M 5,8 L 27,8 M 5,15 L 27,15 M 7,22 L 13,22 M 17,22 L 25,22 M 7,26.5 L 20,26.5");
+
         /// <summary>Знак суммы: расчётные позиции.</summary>
         public static ImageSource Calc(int size) =>
             Draw(size, Green, "M 23,8 L 9,8 L 16,16 L 9,24 L 23,24");

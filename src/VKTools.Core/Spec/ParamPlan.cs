@@ -19,6 +19,12 @@ namespace VKTools.Core.Spec
 
         /// <summary>Р4: изоляция — Dнар трубы, наименование и параметры изделия (InsulationPipeOD v1.1.2).</summary>
         Insulation = 3,
+
+        /// <summary>Р5: запас — ADSK_Количество = длина × k трубам и изоляции на трубах (PipeQtyReserve v1.0.2).</summary>
+        PipeReserve = 4,
+
+        /// <summary>Р5: ADSK_Наименование труб по правилу типа (Ду×S / Dнар×S), по умолчанию только проверка (VgpNameDuS v1.1).</summary>
+        PipeNames = 5,
     }
 
     public static class SpecModuleText
@@ -28,6 +34,8 @@ namespace VKTools.Core.Spec
             SpecModule.Nested => "Перенос во вложенные",
             SpecModule.SystemFloor => "Система и этаж",
             SpecModule.Insulation => "Изоляция",
+            SpecModule.PipeReserve => "Запас труб",
+            SpecModule.PipeNames => "Имена труб",
             _ => "Группирование",
         };
     }

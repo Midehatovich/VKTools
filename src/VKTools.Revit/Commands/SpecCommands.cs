@@ -43,6 +43,22 @@ namespace VKTools.Revit.Commands
             SpecLauncher.Run(commandData.Application, SpecModule.Insulation);
     }
 
+    /// <summary>«Запас труб» (Р5): количество = длина × k трубам и изоляции на трубах по таблице «Коэффициенты» проекта.</summary>
+    [Transaction(TransactionMode.ReadOnly)]
+    public sealed class PipeReserveCommand : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements) =>
+            SpecLauncher.Run(commandData.Application, SpecModule.PipeReserve);
+    }
+
+    /// <summary>«Имена труб» (Р5): ADSK_Наименование труб по правилу типа; по умолчанию только проверка.</summary>
+    [Transaction(TransactionMode.ReadOnly)]
+    public sealed class PipeNamesCommand : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements) =>
+            SpecLauncher.Run(commandData.Application, SpecModule.PipeNames);
+    }
+
     /// <summary>
     /// Общий запуск модулей Р2: настройки из модели (или по умолчанию) → анализ → окно. Сама команда только анализирует;
     /// пробный прогон, запись и сохранение настройки идут из окна через ExternalEvent.
