@@ -71,6 +71,49 @@ namespace VKTools.Revit.UI
         }
     }
 
+    /// <summary>Строка таблицы «Своя система у вложенных».</summary>
+    internal sealed class OwnSystemRowVm : INotifyPropertyChanged
+    {
+        private string _mask;
+        private string _source;
+        private string _targets;
+
+        public OwnSystemRowVm(string mask, string source, string targets)
+        {
+            _mask = mask;
+            _source = source;
+            _targets = targets;
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        public string Mask
+        {
+            get => _mask;
+            set => SetField(ref _mask, value, nameof(Mask));
+        }
+
+        public string Source
+        {
+            get => _source;
+            set => SetField(ref _source, value, nameof(Source));
+        }
+
+        public string Targets
+        {
+            get => _targets;
+            set => SetField(ref _targets, value, nameof(Targets));
+        }
+
+        private void SetField(ref string field, string? value, string name)
+        {
+            value ??= string.Empty;
+            if (field == value) return;
+            field = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+    }
+
     /// <summary>Вкладка «Параметры» окна «Перенос во вложенные»: область, пустые значения, какие параметры переносить.</summary>
     internal sealed class NestedSettingsPanel : DockPanel
     {
@@ -85,6 +128,9 @@ namespace VKTools.Revit.UI
         private readonly DataGrid _grid;
         private readonly ObservableCollection<CandidateRow> _rows = new ObservableCollection<CandidateRow>();
         private readonly ICollectionView _view;
+        private readonly ObservableCollection<OwnSystemRowVm> _ownRows = new ObservableCollection<OwnSystemRowVm>();
+        private readonly DataGrid _ownGrid;
+        private readonly TextBlock _ownErrors;
         private bool _loading;
 
         public NestedSettingsPanel()
@@ -128,6 +174,55 @@ namespace VKTools.Revit.UI
             };
             DockPanel.SetDock(note, Dock.Bottom);
             Children.Add(note);
+
+            var own = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
+            DockPanel.SetDock(own, Dock.Bottom);
+            var ownTop = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+            DockPanel.SetDock(ownTop, Dock.Top);
+            ownTop.Children.Add(new TextBlock { Text = "Своя система у вложенных", FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) });
+            ownTop.Children.Add(ReportWindow.MakeButton("+ Строка", (s, e) => { _ownRows.Add(new OwnSystemRowVm("*", OwnSystemRules.DefaultSource, string.Empty)); }));
+            ownTop.Children.Add(ReportWindow.MakeButton("Удалить", (s, e) => { if (_ownGrid?.SelectedItem is OwnSystemRowVm row) _ownRows.Remove(row); }));
+            own.Children.Add(ownTop);
+            var ownNote = new TextBlock
+            {
+                Text = "Вложенное, имя семейства которого подходит под маску, берёт систему не у родителя, а из своего параметра-источника (смеситель в умывальнике: "
+                    + "родитель в К1, смеситель — В1 или В1.1 из «СокращениеСистемы»). Первый параметр системы получает само сокращение, остальные — значение, "
+                    + "которое стоит у труб этой системы. Источник пуст или в нём несколько систем — вложенное не трогается и попадает в отчёт.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brushes.DimGray,
+                Margin = new Thickness(0, 4, 0, 0),
+            };
+            DockPanel.SetDock(ownNote, Dock.Bottom);
+            own.Children.Add(ownNote);
+            _ownErrors = new TextBlock { Foreground = Brushes.DarkRed, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
+            DockPanel.SetDock(_ownErrors, Dock.Bottom);
+            own.Children.Add(_ownErrors);
+            _ownGrid = new DataGrid
+            {
+                AutoGenerateColumns = false,
+                CanUserAddRows = false,
+                CanUserDeleteRows = false,
+                CanUserSortColumns = false,
+                SelectionMode = DataGridSelectionMode.Single,
+                HeadersVisibility = DataGridHeadersVisibility.Column,
+                GridLinesVisibility = DataGridGridLinesVisibility.All,
+                HorizontalGridLinesBrush = Brushes.Gainsboro,
+                VerticalGridLinesBrush = Brushes.Gainsboro,
+                RowHeaderWidth = 0,
+                Height = 110,
+                ItemsSource = _ownRows,
+            };
+            _ownGrid.Columns.Add(EditColumn("Маска семейства", nameof(OwnSystemRowVm.Mask), 220));
+            _ownGrid.Columns.Add(EditColumn("Параметр-источник", nameof(OwnSystemRowVm.Source), 180));
+            _ownGrid.Columns.Add(EditColumn("Параметры системы (через запятую)", nameof(OwnSystemRowVm.Targets), 320));
+            own.Children.Add(_ownGrid);
+            Children.Add(own);
+            _ownRows.CollectionChanged += (s, e) =>
+            {
+                if (e.NewItems != null) foreach (OwnSystemRowVm row in e.NewItems) row.PropertyChanged += OnOwnRowChanged;
+                if (e.OldItems != null) foreach (OwnSystemRowVm row in e.OldItems) row.PropertyChanged -= OnOwnRowChanged;
+                OnOwnRowChanged(null, new PropertyChangedEventArgs(string.Empty));
+            };
 
             _grid = new DataGrid
             {
@@ -187,6 +282,7 @@ namespace VKTools.Revit.UI
                     _rows.Add(new CandidateRow(new ParamCandidate(key, "—"), true));
                 }
                 foreach (CandidateRow row in _rows) row.PropertyChanged += OnRowChanged;
+                LoadOwn(options.OwnSystem);
             }
             finally
             {
@@ -194,6 +290,34 @@ namespace VKTools.Revit.UI
             }
             RefreshView();
         }
+
+        private void LoadOwn(IEnumerable<OwnSystemRule> rules)
+        {
+            _ownRows.Clear();
+            foreach (OwnSystemRule rule in rules) _ownRows.Add(new OwnSystemRowVm(rule.Mask, rule.Source, rule.TargetsText));
+            UpdateOwnErrors();
+        }
+
+        private void OnOwnRowChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            UpdateOwnErrors();
+            RaiseChanged();
+        }
+
+        private void UpdateOwnErrors()
+        {
+            List<string> problems = _ownRows.Select(r => OwnSystemRules.Problem(r.Mask, r.Source, OwnSystemRules.SplitTargets(r.Targets)))
+                .Where(p => p != null).Select(p => p!).ToList();
+            _ownErrors.Text = problems.Count == 0 ? string.Empty : "Строка не учитывается: " + string.Join("; ", problems);
+            _ownErrors.Visibility = problems.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private static DataGridTextColumn EditColumn(string header, string path, double width) => new DataGridTextColumn
+        {
+            Header = header,
+            Binding = new Binding(path) { Mode = BindingMode.TwoWay, UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged },
+            Width = new DataGridLength(width),
+        };
 
         /// <summary>Отметить только параметры по умолчанию.</summary>
         public void SelectDefaults(SpecDefaults defaults)
@@ -210,6 +334,7 @@ namespace VKTools.Revit.UI
                     _rows.Add(row);
                 }
                 _keepEmpty.IsChecked = true;
+                LoadOwn(OwnSystemRules.Defaults());
             }
             finally
             {
@@ -224,6 +349,9 @@ namespace VKTools.Revit.UI
             options.Scope = _scopeSelection.IsChecked == true ? NestedScope.Selection : _scopeView.IsChecked == true ? NestedScope.ActiveView : NestedScope.Model;
             options.NestedClearEmpty = _clearEmpty.IsChecked == true;
             options.NestedParams = _rows.Where(r => r.Selected).Select(r => r.Key).ToList();
+            options.OwnSystem = _ownRows
+                .Where(r => OwnSystemRules.Problem(r.Mask, r.Source, OwnSystemRules.SplitTargets(r.Targets)) == null)
+                .Select(r => new OwnSystemRule(r.Mask, r.Source, OwnSystemRules.SplitTargets(r.Targets))).ToList();
         }
 
         private void OnRowChanged(object? sender, PropertyChangedEventArgs e)
