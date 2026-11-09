@@ -51,6 +51,8 @@ namespace VKTools.Core.Spec
     {
         public const string DefaultSource = "СокращениеСистемы";
 
+        private static readonly char[] TargetSeparators = { ',', ';' };
+
         private static readonly string[] Header = { "Маска семейства", "Параметр-источник", "Параметры системы" };
 
         private static readonly string[] Comments =
@@ -75,7 +77,7 @@ namespace VKTools.Core.Spec
             string.Join("|", rules.Select(r => r.Mask + ";" + r.Source + ";" + r.TargetsText));
 
         public static List<string> SplitTargets(string? text) =>
-            (text ?? string.Empty).Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim()).Where(t => t.Length > 0).ToList();
+            (text ?? string.Empty).Split(TargetSeparators, StringSplitOptions.RemoveEmptyEntries).Select(t => t.Trim()).Where(t => t.Length > 0).ToList();
 
         /// <summary>Разбор настройки проекта; ошибки — в <paramref name="issues"/>, строка с ошибкой пропускается.</summary>
         public static List<OwnSystemRule> Parse(string text, List<ConfigIssue> issues)
