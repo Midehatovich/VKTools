@@ -21,6 +21,7 @@ namespace VKTools.Core.Spec
 
         private const string NestedParamsKey = "nested.params";
         private const string NestedClearKey = "nested.clearEmpty";
+        private const string NestedOwnSystemKey = "nested.ownSystem";
         private const string GroupingTableKey = "grouping.table";
         private const string KitsTableKey = "kits.table";
         private const string KitsWordsKey = "kits.words";
@@ -48,6 +49,13 @@ namespace VKTools.Core.Spec
         {
             get => Get(NestedClearKey) == "1";
             set => Set(NestedClearKey, value ? "1" : null);
+        }
+
+        /// <summary>«Своя система у вложенных» (<see cref="OwnSystemRules.Format"/>); null — правила по умолчанию.</summary>
+        public string? NestedOwnSystem
+        {
+            get => Get(NestedOwnSystemKey);
+            set => Set(NestedOwnSystemKey, value);
         }
 
         /// <summary>Таблица групп в формате grouping.csv; null — по умолчанию (grouping.csv).</summary>
