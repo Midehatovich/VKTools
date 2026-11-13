@@ -40,6 +40,9 @@ namespace VKTools.Core.Schedules
 
         public bool GroupByFloor { get; set; }
 
+        /// <summary>Шапка граф — в основной надписи листа («Девятиграфка_Шапка» ADSK): у формы ГОСТ заголовки граф скрыты.</summary>
+        public bool HeaderInTitleBlock { get; set; } = true;
+
         /// <summary>У копии эталона оставить его сортировку и группировку.</summary>
         public bool KeepTemplateSort { get; set; } = true;
 
@@ -176,7 +179,7 @@ namespace VKTools.Core.Schedules
                 ["floors"] = Join(Floors),
                 ["name"] = Name,
                 ["template"] = Template,
-                ["flags"] = $"bySystem={B(GroupBySystem)};byFloor={B(GroupByFloor)};keepSort={B(KeepTemplateSort)}",
+                ["flags"] = $"bySystem={B(GroupBySystem)};byFloor={B(GroupByFloor)};keepSort={B(KeepTemplateSort)};titleHeader={B(HeaderInTitleBlock)}",
                 ["knownSystems"] = Join(KnownSystems),
                 ["knownFloors"] = Join(KnownFloors),
                 ["systemParam"] = SystemParam,
@@ -217,6 +220,7 @@ namespace VKTools.Core.Schedules
                     case "bySystem": request.GroupBySystem = on; break;
                     case "byFloor": request.GroupByFloor = on; break;
                     case "keepSort": request.KeepTemplateSort = on; break;
+                    case "titleHeader": request.HeaderInTitleBlock = on; break;
                 }
             }
             return request;

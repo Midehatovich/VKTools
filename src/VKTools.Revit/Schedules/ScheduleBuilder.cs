@@ -73,7 +73,7 @@ namespace VKTools.Revit.Schedules
                     {
                         schedule = ViewSchedule.CreateSchedule(doc, ElementId.InvalidElementId);
                         schedule.Name = name;
-                        ApplyForm(doc, schedule, data, result);
+                        ApplyForm(doc, schedule, data, request, result);
                     }
                     else
                     {
@@ -182,12 +182,13 @@ namespace VKTools.Revit.Schedules
         }
 
         /// <summary>Графы формы: заголовок, ширина, выравнивание, итог. Неразвёрнутые строки, без общего итога.</summary>
-        private static void ApplyForm(Document doc, ViewSchedule schedule, ScheduleModelData data, ScheduleResult result)
+        private static void ApplyForm(Document doc, ViewSchedule schedule, ScheduleModelData data, ScheduleRequest request, ScheduleResult result)
         {
             ScheduleDefinition definition = schedule.Definition;
             definition.IsItemized = false;
             definition.ShowGrandTotal = false;
-            definition.ShowHeaders = true;
+            // Шапка граф есть в основной надписи («Девятиграфка_Шапка») — своя скрыта, иначе на листе две шапки
+            definition.ShowHeaders = !request.HeaderInTitleBlock;
             // По ГОСТ 21.110 название — в основной надписи листа, не строкой над таблицей
             definition.ShowTitle = false;
             var missing = new List<string>();
@@ -204,6 +205,7 @@ namespace VKTools.Revit.Schedules
                 field.GridColumnWidth = column.WidthMm / MmPerFoot;
                 field.IsHidden = column.Hidden;
                 field.HorizontalAlignment = column.Center ? ScheduleHorizontalAlignment.Center : ScheduleHorizontalAlignment.Left;
+                MiddleVertically(field);
                 if (column.Total)
                 {
                     if (field.CanTotal()) field.DisplayType = ScheduleFieldDisplayType.Totals;
@@ -220,6 +222,17 @@ namespace VKTools.Revit.Schedules
             {
                 result.Notes.Add("высота строк на листе — 8 мм");
             }
+        }
+
+        /// <summary>Текст ячеек графы — по центру строки по вертикали (в многострочном наименовании соседние графы не прилипают к верху).</summary>
+        private static void MiddleVertically(ScheduleField field)
+        {
+            TableCellStyle style = field.GetStyle();
+            TableCellStyleOverrideOptions overrides = style.GetCellStyleOverrideOptions();
+            overrides.VerticalAlignment = true;
+            style.SetCellStyleOverrideOptions(overrides);
+            style.FontVerticalAlignment = VerticalAlignmentStyle.Middle;
+            field.SetStyle(style);
         }
 
         /// <summary>Шрифт ГОСТ, если в проекте есть такой тип текста 3,5 мм; иначе шрифт Revit по умолчанию и строка в отчёте.</summary>

@@ -39,6 +39,7 @@ namespace VKTools.Revit.UI
         private readonly CheckBox _bySystem;
         private readonly CheckBox _byFloor;
         private readonly CheckBox _keepSort;
+        private readonly CheckBox _titleHeader;
         private readonly TextBlock _preview;
         private readonly TextBlock _problem;
         private readonly Button _create;
@@ -184,6 +185,7 @@ namespace VKTools.Revit.UI
             _template.SelectionChanged += (s, e) =>
             {
                 _keepSort!.IsEnabled = !(_template.SelectedItem is string);
+                _titleHeader!.IsEnabled = _template.SelectedItem is string;
                 Recompute();
             };
             templateRow.Children.Add(_template);
@@ -191,7 +193,14 @@ namespace VKTools.Revit.UI
             _bySystem = new CheckBox { Content = "Заголовки по системам (строка «В1», под ней позиции системы)", IsChecked = true, Margin = new Thickness(0, 6, 0, 0) };
             _byFloor = new CheckBox { Content = "Заголовки по этажам", Margin = new Thickness(0, 2, 0, 0) };
             _keepSort = new CheckBox { Content = "У копии эталона оставить его сортировку и группировку (галки выше не действуют)", IsChecked = true, IsEnabled = false, Margin = new Thickness(0, 2, 0, 0) };
-            foreach (CheckBox c in new[] { _bySystem, _byFloor, _keepSort })
+            _titleHeader = new CheckBox
+            {
+                Content = "Шапка граф — в основной надписи листа («Девятиграфка_Шапка»): у формы ГОСТ свои заголовки граф скрыть",
+                IsChecked = true,
+                Margin = new Thickness(0, 2, 0, 0),
+                ToolTip = "Галка «Девятиграфка_Шапка» в свойствах основной надписи ADSK рисует шапку на каждом листе. Если её не включаете — снимите, и шапка будет у спецификации.",
+            };
+            foreach (CheckBox c in new[] { _bySystem, _byFloor, _keepSort, _titleHeader })
             {
                 c.Checked += (s, e) => Recompute();
                 c.Unchecked += (s, e) => Recompute();
@@ -371,6 +380,7 @@ namespace VKTools.Revit.UI
                 GroupBySystem = _bySystem?.IsChecked == true,
                 GroupByFloor = _byFloor?.IsChecked == true,
                 KeepTemplateSort = _keepSort?.IsChecked == true,
+                HeaderInTitleBlock = _titleHeader?.IsChecked == true,
             };
         }
 

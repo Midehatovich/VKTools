@@ -204,6 +204,7 @@ namespace VKTools.Core.Tests
                 Template = "Эталон",
                 GroupBySystem = false,
                 GroupByFloor = true,
+                HeaderInTitleBlock = false,
                 KnownSystems = new List<string> { "В1", "Т3", "К1" },
                 SystemParam = "0cc98b64-809e-45f3-9ea7-553b2d6f21ca",
             };
@@ -214,6 +215,7 @@ namespace VKTools.Core.Tests
             Assert.Equal("Эталон", back.Template);
             Assert.False(back.GroupBySystem);
             Assert.True(back.GroupByFloor);
+            Assert.False(back.HeaderInTitleBlock);
             Assert.Equal(r.KnownSystems, back.KnownSystems);
             Assert.Equal(r.SystemParam, back.SystemParam);
             Assert.Null(ScheduleRequest.FromMap(new Dictionary<string, string>()));
