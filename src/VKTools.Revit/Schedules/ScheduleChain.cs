@@ -130,8 +130,19 @@ namespace VKTools.Revit.Schedules
                 return result;
             }
             string before = options.Signature();
-            if (!options.Schedules.Contains(scheduleName, StringComparer.Ordinal)) options.Schedules.Add(scheduleName);
+            bool added = !options.Schedules.Contains(scheduleName, StringComparer.Ordinal);
+            if (added) options.Schedules.Add(scheduleName);
             CalcPlan plan = CalcPlanner.Build(doc, options, defaults, progress, timings);
+            string? covered = added ? Overlap(plan, scheduleName) : null;
+            if (covered != null)
+            {
+                // Трубы новой спецификации уже считаются в отмеченной: своя область дала бы вторые копии позиций, и обе спецификации
+                // показали бы обе копии. Новая не добавляется — позиции отмеченной видны в ней, если проходят её фильтры.
+                options.Schedules.Remove(scheduleName);
+                plan = CalcPlanner.Build(doc, options, defaults, progress, timings);
+                result.Summary = $"новая спецификация не добавлена в расчёт — её трубы уже считаются в {covered}; "
+                    + "в новой видны позиции оттуда (по её фильтрам). ";
+            }
             if (plan.WriteBlockedReason != null)
             {
                 result.Skipped = true;
@@ -147,10 +158,21 @@ namespace VKTools.Revit.Schedules
                 result.Error = run.Errors.Count > 0 ? string.Join("; ", run.Errors.Take(3)) : run.Status;
                 return result;
             }
-            result.Summary = $"позиций создано {run.Created}, обновлено {run.Updated}, удалено {run.Deleted}"
+            result.Summary += $"позиций создано {run.Created}, обновлено {run.Updated}, удалено {run.Deleted}"
                 + (run.SettingsSaved ? "; спецификация добавлена в настройку «Расчётных позиций»" : string.Empty)
-                + (run.Failed.Count > 0 ? $"; не записалось {run.Failed.Count}" : string.Empty);
+                + (run.Failed.Count > 0 ? $"; не записалось {run.Failed.Count}" : string.Empty)
+                + (plan.Issues.Items.Any(i => i.Message.Contains("посчитаны дважды")) ? "; ВНИМАНИЕ: отмеченные спецификации пересекаются — материалы посчитаны дважды, см. окно «Расчётные позиции»" : string.Empty);
             return result;
+        }
+
+        /// <summary>Пересекается ли новая область по трубам с уже отмеченными: имена этих спецификаций или null.</summary>
+        private static string? Overlap(CalcPlan plan, string scheduleName)
+        {
+            CalcScope? mine = plan.Scopes.FirstOrDefault(s => s.Name == scheduleName);
+            if (mine == null || mine.Pipes.Count == 0) return null;
+            var ids = new HashSet<long>(mine.Pipes.Select(p => p.Id));
+            List<string> others = plan.Scopes.Where(s => s != mine && s.Pipes.Any(p => ids.Contains(p.Id))).Select(s => "«" + s.Name + "»").ToList();
+            return others.Count == 0 ? null : string.Join(", ", others);
         }
     }
 }
