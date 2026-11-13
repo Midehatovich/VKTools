@@ -135,6 +135,9 @@ namespace VKTools.Core.Schedules
         public int Sort { get; }
 
         public bool Center { get; }
+
+        /// <summary>Шаг округления числа в графе (0,1 — до десятых); null — как в проекте. Лишние нули не показываются: 2, 158,9.</summary>
+        public double? Accuracy { get; set; }
     }
 
     /// <summary>Файлы правил кнопки «Создать спецификацию».</summary>
@@ -175,8 +178,18 @@ namespace VKTools.Core.Schedules
                     issues.Add(new ConfigIssue(Checks.Severity.Warning, Form.FileName, row.LineNumber, $"«{name}»: сортировка «{sortText}» — нужно целое 1, 2, 3…; графа без сортировки"));
                     sort = 0;
                 }
+                double? accuracy = null;
+                string accuracyText = row.Get("Точность").Replace(',', '.');
+                if (accuracyText.Length > 0)
+                {
+                    if (double.TryParse(accuracyText, NumberStyles.Float, CultureInfo.InvariantCulture, out double a) && a > 0 && a <= 1000) accuracy = a;
+                    else issues.Add(new ConfigIssue(Checks.Severity.Warning, Form.FileName, row.LineNumber, $"«{name}»: точность «{row.Get("Точность")}» — нужно число (0,1; 0,01; 1); графа как в проекте"));
+                }
                 result.Add(new FormColumn(heading.Length > 0 ? heading : name, new ParameterRef(name, guid), width,
-                    IsYes(row.Get("Итог")), IsYes(row.Get("Скрыть")), sort, string.Equals(row.Get("Выравнивание"), "центр", StringComparison.OrdinalIgnoreCase)));
+                    IsYes(row.Get("Итог")), IsYes(row.Get("Скрыть")), sort, string.Equals(row.Get("Выравнивание"), "центр", StringComparison.OrdinalIgnoreCase))
+                {
+                    Accuracy = accuracy,
+                });
             }
             if (!result.Any(c => !c.Hidden))
             {

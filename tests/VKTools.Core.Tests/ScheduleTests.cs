@@ -238,6 +238,8 @@ namespace VKTools.Core.Tests
             Assert.Empty(issues);
             // ГОСТ 21.110-2013, форма 1: 20+130+60+35+45+20+20+25+40 = 395 мм
             Assert.Equal(395, form.Where(c => !c.Hidden).Sum(c => c.WidthMm));
+            Assert.Equal(0.1, form.Single(c => c.Parameter.Name == "ADSK_Количество").Accuracy);
+            Assert.All(form.Where(c => c.Parameter.Name != "ADSK_Наименование" && !c.Hidden), c => Assert.True(c.Center));
             Assert.Single(form, c => c.Total && c.Parameter.Name == "ADSK_Количество");
             List<SystemGroup> groups = ScheduleRules.ParseGroups(loader.Load(ScheduleRules.Groups).Table!, issues);
             Assert.Empty(issues);

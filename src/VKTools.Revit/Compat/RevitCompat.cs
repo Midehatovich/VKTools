@@ -73,6 +73,36 @@ namespace VKTools.Revit.Compat
 #endif
         }
 
+        /// <summary>
+        /// Округление числа в графе спецификации (шаг <paramref name="accuracy"/>, лишние нули не показываются). Единица — та же,
+        /// что в проекте для этого типа данных. false — поле без единиц (текст) или Revit не принимает такой шаг.
+        /// </summary>
+        public static bool TrySetFieldAccuracy(Document doc, ScheduleField field, double accuracy)
+        {
+            try
+            {
+                ForgeTypeId spec = field.GetSpecTypeId();
+                if (spec == null || spec.Empty()) return false;
+#if REVIT2022_OR_GREATER
+                if (!UnitUtils.IsMeasurableSpec(spec)) return false;
+#endif
+                ForgeTypeId unit = doc.GetUnits().GetFormatOptions(spec).GetUnitTypeId();
+                var options = new FormatOptions(unit) { UseDefault = false, SuppressTrailingZeros = true };
+                if (!options.IsValidAccuracy(accuracy)) return false;
+                options.Accuracy = accuracy;
+                field.SetFormatOptions(options);
+                return true;
+            }
+            catch (Autodesk.Revit.Exceptions.ArgumentException)
+            {
+                return false;
+            }
+            catch (Autodesk.Revit.Exceptions.InvalidOperationException)
+            {
+                return false;
+            }
+        }
+
         /// <summary>Новый параметр проекта в группе «Данные».</summary>
         public static bool InsertAsData(this BindingMap map, Definition definition, ElementBinding binding)
         {

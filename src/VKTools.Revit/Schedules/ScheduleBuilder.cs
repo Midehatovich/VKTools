@@ -206,6 +206,10 @@ namespace VKTools.Revit.Schedules
                 field.IsHidden = column.Hidden;
                 field.HorizontalAlignment = column.Center ? ScheduleHorizontalAlignment.Center : ScheduleHorizontalAlignment.Left;
                 MiddleVertically(field);
+                if (column.Accuracy.HasValue && !RevitCompat.TrySetFieldAccuracy(doc, field, column.Accuracy.Value))
+                {
+                    result.Notes.Add($"«{column.Heading}»: округление {column.Accuracy.Value.ToString(System.Globalization.CultureInfo.CurrentCulture)} не применилось (поле не числовое) — формат как в проекте");
+                }
                 if (column.Total)
                 {
                     if (field.CanTotal()) field.DisplayType = ScheduleFieldDisplayType.Totals;
