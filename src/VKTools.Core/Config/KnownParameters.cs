@@ -21,6 +21,13 @@ namespace VKTools.Core.Config
         public static readonly ParameterRef AdskQuantity =
             new ParameterRef("ADSK_Количество", new Guid("8d057bb3-6ccd-4655-9165-55526691fe3a"));
 
+        /// <summary>
+        /// Свой параметр VK Tools (не из ФОП отдела и не LSR): копия встроенного «Сокращения для системы» для фильтров и группировки
+        /// спецификаций. GUID зафиксирован навсегда (2026-11-13): во всех моделях это один и тот же параметр.
+        /// </summary>
+        public static readonly ParameterRef VkSystem =
+            new ParameterRef("VK_Сокращение системы", new Guid("788b1069-9783-4da0-bfc6-cf6885948e7c"));
+
         public static readonly ParameterRef LsrSystemName =
             new ParameterRef("LSR_Имя системы", new Guid("0cc98b64-809e-45f3-9ea7-553b2d6f21ca"));
     }

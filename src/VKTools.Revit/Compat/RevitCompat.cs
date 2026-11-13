@@ -72,5 +72,15 @@ namespace VKTools.Revit.Compat
             return false;
 #endif
         }
+
+        /// <summary>Новый параметр проекта в группе «Данные».</summary>
+        public static bool InsertAsData(this BindingMap map, Definition definition, ElementBinding binding)
+        {
+#if REVIT2022_OR_GREATER
+            return map.Insert(definition, binding, GroupTypeId.Data);
+#else
+            return map.Insert(definition, binding, BuiltInParameterGroup.PG_DATA);
+#endif
+        }
     }
 }

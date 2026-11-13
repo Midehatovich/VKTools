@@ -303,6 +303,7 @@ namespace VKTools.Revit.Calc
             // Привязки параметров проекта к категории позиций
             var needed = new List<(string Name, bool Required)> { (system, true), (CalcParams.Quantity, true) };
             needed.AddRange(anyNames.Select(n => (n, n == CalcParams.Name || n == CalcParams.Unit || n == CalcParams.Group)));
+            needed.AddRange(options.ExtraSystemParameters.Select(n => (n, false)));
             needed.AddRange(plan.Scopes.SelectMany(s => s.CopyNames).Concat(plan.ReserveFields).Distinct().Select(n => (n, true)));
             Element? sampleItem = null;
             foreach ((string name, bool required) in needed.Distinct())
@@ -483,6 +484,7 @@ namespace VKTools.Revit.Calc
             string basis = target.Basis + (mode == CalcMode.Manual ? " | ВРУЧНУЮ: " + CalcTables.Format(final) : string.Empty) + (note.Length > 0 ? " | " + note : string.Empty);
             op.Values.Add(new CalcItemValue(CalcParams.Key, target.Key, true));
             op.Values.Add(new CalcItemValue(plan.Options.SystemParameter.Trim(), target.System, true));
+            foreach (string extra in plan.Options.ExtraSystemParameters) op.Values.Add(new CalcItemValue(extra, target.System, false));
             op.Values.Add(new CalcItemValue(CalcParams.Quantity, final, true));
             op.Values.Add(new CalcItemValue(CalcParams.Calc, Math.Round(target.Quantity, 4), false));
             op.Values.Add(new CalcItemValue(CalcParams.Mode, CalcManual.ModeText(mode), false));

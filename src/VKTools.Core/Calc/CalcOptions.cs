@@ -102,6 +102,12 @@ namespace VKTools.Core.Calc
         /// <summary>Параметр системы у труб и позиций: по нему спецификация делит строки.</summary>
         public string SystemParameter { get; set; } = DefaultSystemParameter;
 
+        /// <summary>
+        /// Те же значения системы позиции — ещё в эти параметры (не хранится: берётся из «Системы и этажа» при каждом запуске,
+        /// например «VK_Сокращение системы», по которому фильтрует «Создать спецификацию»). Пишутся, только если привязаны в проекте.
+        /// </summary>
+        public List<string> ExtraSystemParameters { get; set; } = new List<string>();
+
         /// <summary>ADSK_Группирование позиций: «9» → 9.1, 9.2… по «Порядку» ресурсов.</summary>
         public string Group { get; set; } = DefaultGroup;
 
@@ -136,6 +142,7 @@ namespace VKTools.Core.Calc
         {
             Schedules = Schedules.ToList(),
             SystemParameter = SystemParameter,
+            ExtraSystemParameters = ExtraSystemParameters.ToList(),
             Group = Group,
             ResourcesText = ResourcesText,
             PipeRulesText = PipeRulesText,
