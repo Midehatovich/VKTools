@@ -58,5 +58,19 @@ namespace VKTools.Revit.Compat
             return map.ReInsert(definition, binding, definition.ParameterGroup);
 #endif
         }
+
+        /// <summary>Высота строк спецификации на листе (ГОСТ 21.110: не менее 8 мм). Свойство появилось в Revit 2024; раньше — false.</summary>
+        public static bool TrySetBodyRowHeight(ViewSchedule schedule, double feet)
+        {
+#if REVIT2024_OR_GREATER
+            schedule.RowHeightOverride = RowHeightOverrideOptions.All;
+            schedule.RowHeight = feet;
+            return true;
+#else
+            _ = schedule;
+            _ = feet;
+            return false;
+#endif
+        }
     }
 }
