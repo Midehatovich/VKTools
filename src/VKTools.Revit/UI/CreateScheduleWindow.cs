@@ -43,6 +43,7 @@ namespace VKTools.Revit.UI
         private readonly TextBlock _problem;
         private readonly Button _create;
         private readonly Dictionary<long, CheckBox> _ownBoxes = new Dictionary<long, CheckBox>();
+        private readonly Dictionary<ChainStep, CheckBox> _stepBoxes = new Dictionary<ChainStep, CheckBox>();
         private readonly Button _update;
         private bool _sync;
         private string _systemPreset = ScheduleRequest.PresetAll;
@@ -234,13 +235,22 @@ namespace VKTools.Revit.UI
             own.Children.Add(_update);
             if (data.Own.Count == 0) own.Children.Clear();
 
-            body.Children.Add(new TextBlock
+            // Функции после создания — по порядку выпуска, с настройками, сохранёнными в модели
+            var chain = new StackPanel();
+            body.Children.Add(new GroupBox { Header = "После «Создать» применить по порядку (настройки — сохранённые в модели)", Content = chain, Padding = new Thickness(6), Margin = new Thickness(0, 8, 0, 0) });
+            foreach (ChainStep step in ScheduleChain.Order)
             {
-                Text = "После создания: расчётные позиции (окраска, крепления, шнур, запас хомутов) появятся в новой спецификации только после «Расчётные позиции» "
-                    + "с отмеченной ею. Правила: " + string.Join("; ", data.Sources),
+                var box = new CheckBox { Content = ScheduleChain.Title(step) + StepHint(step), IsChecked = true, Margin = new Thickness(0, 1, 0, 1) };
+                _stepBoxes[step] = box;
+                chain.Children.Add(box);
+            }
+            chain.Children.Add(new TextBlock
+            {
+                Text = "«Система и этаж» обновляется до этого окна. Всё вместе — одна операция: в конце отчёт и выбор «Записать» или «Откатить»; "
+                    + "после записи всё отменяется одним Ctrl+Z. Правила: " + string.Join("; ", data.Sources),
                 Foreground = Brushes.DimGray,
                 TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 8, 0, 0),
+                Margin = new Thickness(0, 4, 0, 0),
             });
 
             _sync = true;
@@ -257,6 +267,16 @@ namespace VKTools.Revit.UI
         public ScheduleRequest Request { get; private set; } = new ScheduleRequest();
 
         public List<long> UpdateIds { get; } = new List<long>();
+
+        /// <summary>Функции, отмеченные к применению после создания, в порядке <see cref="ScheduleChain.Order"/>.</summary>
+        public List<ChainStep> Steps { get; } = new List<ChainStep>();
+
+        private static string StepHint(ChainStep step) => step switch
+        {
+            ChainStep.Calc => " — новая спецификация добавится к отмеченным в «Расчётных позициях»",
+            ChainStep.PipeNames => " — пишет, только если запись включена в окне «Имена труб» (пока имена пишет BIM2B)",
+            _ => string.Empty,
+        };
 
         private static string FloorLabel(FloorInfo f) =>
             f.Elevation.HasValue ? $"{f.Value}  ({f.Elevation.Value.ToString("+0.000;-0.000;0.000", CultureInfo.InvariantCulture)})" : f.Value + "  (уровня нет)";
@@ -413,6 +433,8 @@ namespace VKTools.Revit.UI
                 UpdateIds.AddRange(_ownBoxes.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key));
                 if (UpdateIds.Count == 0) return;
             }
+            Steps.Clear();
+            Steps.AddRange(ScheduleChain.Order.Where(st => _stepBoxes.TryGetValue(st, out CheckBox? b) && b.IsChecked == true));
             Action = action;
             DialogResult = true;
             Close();
