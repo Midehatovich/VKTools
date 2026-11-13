@@ -150,6 +150,12 @@ namespace VKTools.Revit.Schedules
                 return result;
             }
             Func<Document, string?>? save = options.Signature() != before ? d => CalcSettingsLoader.Store(d, options, defaults) : (Func<Document, string?>?)null;
+            if (plan.ChangeCount == 0)
+            {
+                // Позиции уже по расчёту — не ошибка (исполнитель в этом случае ничего не фиксирует)
+                result.Summary += "изменений нет: позиции уже такие, как по расчёту.";
+                return result;
+            }
             progress.Report("Расчётные позиции: запись…");
             CalcRunResult run = CalcExecutor.Run(doc, plan, SpecRunMode.Apply, progress, timings, Host.Log, save);
             if (run.Cancelled) throw new OperationCanceledException();
