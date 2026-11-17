@@ -74,6 +74,7 @@ namespace VKTools.Revit.Spec
                     {
                         NestedParams = options.NestedParams.ToList(),
                         NestedClearEmpty = options.NestedClearEmpty,
+                        OwnSystem = options.OwnSystem.ToList(),
                         Scope = NestedScope.Model,
                         SavedInProject = options.NestedSavedInProject,
                     };
@@ -216,6 +217,8 @@ namespace VKTools.Revit.Spec
                     var childSet = new HashSet<ParamKey>(childKeys);
                     string subject = parentLabel + " → " + FamilyLabel(child);
                     long childId = child.Id.ToLong();
+                    OwnSystemRule? own = OwnSystemRules.Find(options.OwnSystem, child.Symbol?.Family?.Name ?? string.Empty);
+                    OwnSystemCode? ownCode = own == null ? null : ResolveOwnCode(child, own);
                     foreach (KeyValuePair<ParamKey, ParamSlot> pair in source)
                     {
                         ParamKey key = pair.Key;
@@ -237,6 +240,12 @@ namespace VKTools.Revit.Spec
                             candidate.DataType = ParamAccess.DataTypeLabel(pair.Value.Parameter);
                         }
                         candidate.Nested++;
+                        int ownIndex = own?.TargetIndex(key.Name) ?? -1;
+                        if (own != null && ownCode != null && ownIndex >= 0)
+                        {
+                            EvaluateOwnSystem(own, ownCode, ownIndex, key, target, child, isSelected, candidate, subject, childId);
+                            continue;
+                        }
                         EvaluatePair(pair.Value, target, child, options.NestedClearEmpty, isSelected, candidate, subject, childId, parentId, parentLabel);
                     }
                 }
@@ -249,6 +258,9 @@ namespace VKTools.Revit.Spec
                 + (byLevel.Count > 0 ? " (" + string.Join(", ", byLevel.Select(p => $"ур. {p.Key}: {p.Value}")) + ")" : string.Empty)
                 + "; параметры: " + (options.NestedParams.Count == 0 ? "не выбраны" : string.Join(", ", options.NestedParams.Select(k => k.Name)))
                 + (options.NestedClearEmpty ? "; пустое у родителя очищает вложенное." : "."));
+            _plan.Notes.Add(options.OwnSystem.Count == 0 ? "Своя система у вложенных: правил нет."
+                : "Своя система у вложенных: " + string.Join("; ", options.OwnSystem.Select(r => $"«{r.Mask}» ← {r.Source} ({r.TargetsText})"))
+                    + (_ownMatched > 0 ? $"; вложенных по правилам {_ownMatched}." : "; подходящих вложенных нет."));
             if (options.NestedParams.Count == 0)
             {
                 _plan.AddIssue(M, Severity.Warning, string.Empty, "не выбран ни один параметр — переносить нечего", string.Empty)
