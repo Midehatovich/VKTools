@@ -84,7 +84,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          SOURCE: ${{ github.event_name == 'pull_request' && format('PR #{0} ({1})', github.event.pull_request.number, github.head_ref) || github.ref_name }}
+          SOURCE: ${{ github.event_name == 'pull_request' && format('PR {0} ({1})', github.event.pull_request.number, github.head_ref) || github.ref_name }}
         run: |
           set -e
           file=$(ls msi/*.msi | head -n 1)

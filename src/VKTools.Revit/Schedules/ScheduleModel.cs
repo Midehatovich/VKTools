@@ -67,6 +67,28 @@ namespace VKTools.Revit.Schedules
 
         public ParamKey FloorParam { get; set; } = ParamKey.Shared(KnownParameters.AdskLevel.Name, KnownParameters.AdskLevel.Guid);
 
+        /// <summary>Второй параметр системы из «Системы и этажа» (LSR_Имя системы): его фильтры в эталоне тоже заменяются.</summary>
+        public ParamKey? MirrorParam { get; set; }
+
+        /// <summary>Встроенные параметры системы: фильтры эталона по ним противоречат выбору систем и снимаются.</summary>
+        private static readonly BuiltInParameter[] SystemBuiltIns =
+        {
+            BuiltInParameter.RBS_SYSTEM_NAME_PARAM, BuiltInParameter.RBS_DUCT_PIPE_SYSTEM_ABBREVIATION_PARAM,
+            BuiltInParameter.RBS_PIPING_SYSTEM_TYPE_PARAM, BuiltInParameter.RBS_SYSTEM_CLASSIFICATION_PARAM,
+        };
+
+        /// <summary>
+        /// Фильтр эталона по системе или этажу: плагин его снимает и ставит свои. Иначе, например, у копии спецификации канализации
+        /// остаются «LSR_Имя системы не содержит В», и выбор «В1» даёт пустую спецификацию.
+        /// </summary>
+        public bool IsReplaced(Document doc, ElementId parameterId)
+        {
+            if (ScheduleFields.Is(doc, parameterId, SystemParam) || ScheduleFields.Is(doc, parameterId, FloorParam)) return true;
+            if (MirrorParam != null && ScheduleFields.Is(doc, parameterId, MirrorParam)) return true;
+            long id = parameterId.ToLong();
+            return SystemBuiltIns.Any(b => (long)b == id);
+        }
+
         public List<string> Systems { get; } = new List<string>();
 
         public Dictionary<string, int> SystemCounts { get; } = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -133,6 +155,7 @@ namespace VKTools.Revit.Schedules
             SystemFloorSettings sf = options.SystemFloor;
             if (sf.SystemParam != null) data.SystemParam = sf.SystemParam;
             if (sf.FloorParam != null) data.FloorParam = sf.FloorParam;
+            data.MirrorParam = sf.MirrorParam;
 
             ReadElements(doc, data, sf);
             ReadViews(doc, data);
@@ -232,7 +255,7 @@ namespace VKTools.Revit.Schedules
             foreach (ScheduleFilter filter in definition.GetFilters())
             {
                 ScheduleField field = definition.GetField(filter.FieldId);
-                if (!ScheduleFields.Is(doc, field.ParameterId, data.SystemParam) && !ScheduleFields.Is(doc, field.ParameterId, data.FloorParam)) count++;
+                if (!data.IsReplaced(doc, field.ParameterId)) count++;
             }
             return count;
         }

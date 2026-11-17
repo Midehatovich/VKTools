@@ -206,9 +206,9 @@ namespace VKTools.Revit.Schedules
                 field.IsHidden = column.Hidden;
                 field.HorizontalAlignment = column.Center ? ScheduleHorizontalAlignment.Center : ScheduleHorizontalAlignment.Left;
                 MiddleVertically(field);
-                if (column.Accuracy.HasValue && !RevitCompat.TrySetFieldAccuracy(doc, field, column.Accuracy.Value))
+                if (column.Accuracy.HasValue && !RevitCompat.TrySetFieldAccuracy(doc, field, column.Accuracy.Value, out string? why))
                 {
-                    result.Notes.Add($"«{column.Heading}»: округление {column.Accuracy.Value.ToString(System.Globalization.CultureInfo.CurrentCulture)} не применилось (поле не числовое) — формат как в проекте");
+                    result.Notes.Add($"«{column.Heading}»: округление {column.Accuracy.Value.ToString(System.Globalization.CultureInfo.CurrentCulture)} не применилось ({why}) — формат как в проекте");
                 }
                 if (column.Total)
                 {
@@ -293,12 +293,21 @@ namespace VKTools.Revit.Schedules
             }
 
             var keep = new List<ScheduleFilter>();
+            var removed = new List<string>();
             foreach (ScheduleFilter filter in definition.GetFilters())
             {
                 ScheduleField field = definition.GetField(filter.FieldId);
-                if (ScheduleFields.Is(doc, field.ParameterId, data.SystemParam) || ScheduleFields.Is(doc, field.ParameterId, data.FloorParam)) continue;
+                if (data.IsReplaced(doc, field.ParameterId))
+                {
+                    if (!ScheduleFields.Is(doc, field.ParameterId, data.SystemParam) && !ScheduleFields.Is(doc, field.ParameterId, data.FloorParam))
+                    {
+                        removed.Add($"«{field.GetName()}» {FilterText(filter)}");
+                    }
+                    continue;
+                }
                 keep.Add(filter);
             }
+            if (removed.Count > 0) result.Notes.Add("сняты фильтры эталона по системе: " + string.Join(", ", removed) + " — их заменяет выбор систем");
             var filters = new List<ScheduleFilter>(keep);
             foreach (FilterCondition c in set.SystemConditions)
             {
@@ -317,6 +326,13 @@ namespace VKTools.Revit.Schedules
             }
             definition.SetFilters(filters);
             return true;
+        }
+
+        private static string FilterText(ScheduleFilter filter)
+        {
+            string value = filter.IsStringValue ? filter.GetStringValue() : filter.IsDoubleValue ? filter.GetDoubleValue().ToString(System.Globalization.CultureInfo.CurrentCulture)
+                : filter.IsIntegerValue ? filter.GetIntegerValue().ToString(System.Globalization.CultureInfo.CurrentCulture) : string.Empty;
+            return value.Length > 0 ? $"{filter.FilterType} «{value}»" : filter.FilterType.ToString();
         }
 
         private static ScheduleFilter? Make(ScheduleDefinition definition, ScheduleFieldId fieldId, FilterCondition c, string fieldName, ScheduleResult result)

@@ -77,30 +77,56 @@ namespace VKTools.Revit.Compat
         /// Округление числа в графе спецификации (шаг <paramref name="accuracy"/>, лишние нули не показываются). Единица — та же,
         /// что в проекте для этого типа данных. false — поле без единиц (текст) или Revit не принимает такой шаг.
         /// </summary>
-        public static bool TrySetFieldAccuracy(Document doc, ScheduleField field, double accuracy)
+        public static bool TrySetFieldAccuracy(Document doc, ScheduleField field, double accuracy, out string? reason)
         {
+            reason = null;
+            ForgeTypeId spec;
             try
             {
-                ForgeTypeId spec = field.GetSpecTypeId();
-                if (spec == null || spec.Empty()) return false;
-#if REVIT2022_OR_GREATER
-                if (!UnitUtils.IsMeasurableSpec(spec)) return false;
-#endif
-                ForgeTypeId unit = doc.GetUnits().GetFormatOptions(spec).GetUnitTypeId();
-                var options = new FormatOptions(unit) { UseDefault = false, SuppressTrailingZeros = true };
-                if (!options.IsValidAccuracy(accuracy)) return false;
-                options.Accuracy = accuracy;
-                field.SetFormatOptions(options);
-                return true;
+                spec = field.GetSpecTypeId();
             }
-            catch (Autodesk.Revit.Exceptions.ArgumentException)
+            catch (Autodesk.Revit.Exceptions.ApplicationException ex)
             {
+                reason = "тип данных поля не читается: " + ex.Message;
                 return false;
             }
-            catch (Autodesk.Revit.Exceptions.InvalidOperationException)
+            string specId = spec == null || spec.Empty() ? "(пусто)" : spec.TypeId;
+            // Единица — как в проекте для этого типа данных; число без единиц (ADSK_Количество) — «Общий» (General)
+            ForgeTypeId? unit = null;
+            if (spec != null && !spec.Empty())
             {
-                return false;
+                try
+                {
+                    unit = doc.GetUnits().GetFormatOptions(spec).GetUnitTypeId();
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException)
+                {
+                    unit = null;
+                }
             }
+            if (unit == null || unit.Empty()) unit = UnitTypeId.General;
+            foreach (ForgeTypeId candidate in unit == UnitTypeId.General ? new[] { unit } : new[] { unit, UnitTypeId.General })
+            {
+                try
+                {
+                    var options = new FormatOptions(candidate) { UseDefault = false };
+                    if (!options.IsValidAccuracy(accuracy))
+                    {
+                        reason = $"шаг {accuracy} не подходит единице {candidate.TypeId}";
+                        continue;
+                    }
+                    options.Accuracy = accuracy;
+                    if (options.CanSuppressTrailingZeros()) options.SuppressTrailingZeros = true;
+                    field.SetFormatOptions(options);
+                    reason = null;
+                    return true;
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+                {
+                    reason = $"тип данных {specId}, единица {candidate.TypeId}: {ex.Message}";
+                }
+            }
+            return false;
         }
 
         /// <summary>Новый параметр проекта в группе «Данные».</summary>
