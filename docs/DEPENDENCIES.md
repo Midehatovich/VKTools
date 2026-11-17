@@ -29,6 +29,7 @@
 | actions/checkout | v4.2.2 |
 | actions/setup-dotnet | v4.3.0 |
 | actions/upload-artifact | v4.6.2 |
+| actions/download-artifact | v4.3.0 |
 | Раннеры | ubuntu-24.04, windows-2025 |
 
 Действия зафиксированы тегами релизов. Тег теоретически можно перевесить; переход на SHA коммитов — отдельная задача.
