@@ -91,7 +91,7 @@ namespace VKTools.Revit.Compat
                 return false;
             }
             string specId = spec == null || spec.Empty() ? "(пусто)" : spec.TypeId;
-            // Единица — как в проекте для этого типа данных; число без единиц (ADSK_Количество) — «Общий» (General)
+            // Единица — как в проекте для этого типа данных; число без единиц (ADSK_Количество) — «Фиксированный» (Fixed)
             ForgeTypeId? unit = null;
             if (spec != null && !spec.Empty())
             {
@@ -105,7 +105,8 @@ namespace VKTools.Revit.Compat
                 }
             }
             if (unit == null || unit.Empty()) unit = UnitTypeId.General;
-            foreach (ForgeTypeId candidate in unit == UnitTypeId.General ? new[] { unit } : new[] { unit, UnitTypeId.General })
+            // «Общий» (General) не округляет — Revit не принимает шаг; число без единиц округляется в «Фиксированном» (Fixed), как в окне «Формат»
+            foreach (ForgeTypeId candidate in unit == UnitTypeId.General || unit == UnitTypeId.Fixed ? new[] { UnitTypeId.Fixed } : new[] { unit, UnitTypeId.Fixed })
             {
                 try
                 {
