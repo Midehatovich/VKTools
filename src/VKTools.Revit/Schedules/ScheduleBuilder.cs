@@ -94,6 +94,7 @@ namespace VKTools.Revit.Schedules
                     }
                     if (template == null || !request.KeepTemplateSort) ApplySorting(doc, schedule, data, request, template == null, result);
                     request.Name = name;
+                    MarkPurpose(schedule, result);
                     Remember(request, data, set);
                     ScheduleStore.Write(schedule, request);
                     if (t.Commit() != TransactionStatus.Committed)
@@ -326,6 +327,25 @@ namespace VKTools.Revit.Schedules
             }
             definition.SetFilters(filters);
             return true;
+        }
+
+        /// <summary>Параметр вида для папок диспетчера (ADSK): созданная спецификация без листа — «Оформленные спецификации».</summary>
+        public const string PurposeParam = "ADSK_Назначение вида";
+
+        public const string PurposeValue = "Оформленные спецификации";
+
+        private static void MarkPurpose(ViewSchedule schedule, ScheduleResult result)
+        {
+            Parameter? p = schedule.LookupParameter(PurposeParam);
+            if (p == null || p.StorageType != StorageType.String) return;
+            if (p.IsReadOnly)
+            {
+                result.Notes.Add($"«{PurposeParam}» только для чтения (задаёт шаблон вида?) — не изменён");
+                return;
+            }
+            if (p.AsString() == PurposeValue) return;
+            p.Set(PurposeValue);
+            result.Notes.Add($"«{PurposeParam}» = «{PurposeValue}»");
         }
 
         private static string FilterText(ScheduleFilter filter)
