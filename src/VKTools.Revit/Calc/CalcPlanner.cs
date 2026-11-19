@@ -496,7 +496,7 @@ namespace VKTools.Revit.Calc
             }
             foreach (KeyValuePair<string, string> copy in target.Copy.OrderBy(c => c.Key, StringComparer.Ordinal))
             {
-                if (plan.CopyValues.TryGetValue(copy.Key + "\u0001" + copy.Value, out ParamValue? value)) op.Values.Add(new CalcItemValue(copy.Key, value, true));
+                if (plan.CopyValues.TryGetValue(copy.Key + "\u0001" + copy.Value, out ParamValue? value)) op.Values.Add(new CalcItemValue(copy.Key, value, !plan.OptionalCopy.Contains(copy.Key)));
             }
         }
 
