@@ -80,8 +80,11 @@ namespace VKTools.Revit.UI
             ("OST_Sprinklers", "Спринклеры"),
         };
 
+        private const string NoMirror = "— не писать —";
+
         private readonly CheckBox _writeSystem;
         private readonly ComboBox _systemParam;
+        private readonly ComboBox _mirrorParam;
         private readonly CheckBox _writeFloor;
         private readonly ComboBox _floorParam;
         private readonly CheckBox _insulation;
@@ -106,6 +109,13 @@ namespace VKTools.Revit.UI
             system.Children.Add(_writeSystem);
             system.Children.Add(_systemParam);
             top.Children.Add(system);
+
+            var mirror = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
+            mirror.Children.Add(new TextBlock { Text = "и тем же значением в", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(20, 0, 6, 0), Width = 130 });
+            _mirrorParam = ParamCombo();
+            _mirrorParam.ToolTip = "Второй параметр системы — только у элементов, где он есть (например LSR_Имя системы для старых спецификаций). Нет в проекте — не пишется.";
+            mirror.Children.Add(_mirrorParam);
+            top.Children.Add(mirror);
 
             var floor = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
             _writeFloor = new CheckBox { Content = "Писать этаж в", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0), Width = 150,
@@ -169,6 +179,7 @@ namespace VKTools.Revit.UI
             foreach (CheckBox box in new[] { _writeSystem, _writeFloor, _insulation, _chainNested }) box.Click += (s, e) => RaiseChanged();
             _systemParam.SelectionChanged += (s, e) => RaiseChanged();
             _floorParam.SelectionChanged += (s, e) => RaiseChanged();
+            _mirrorParam.SelectionChanged += (s, e) => RaiseChanged();
         }
 
         /// <summary>Пользователь поменял настройку (не загрузка).</summary>
@@ -187,13 +198,17 @@ namespace VKTools.Revit.UI
                     if (_options.Any(o => o.Key.Equals(c.Key))) continue;
                     _options.Add(new ParamOption(c.Key, c.Nested > 0 ? $"{c.Name} ({c.KindText})" : $"{c.Name} ({c.KindText}, в модели не найден)"));
                 }
-                foreach (ParamKey? key in new[] { sf.SystemParam, sf.FloorParam })
+                foreach (ParamKey? key in new[] { sf.SystemParam, sf.FloorParam, sf.MirrorParam })
                 {
                     if (key != null && !_options.Any(o => o.Key.Equals(key))) _options.Add(new ParamOption(key, $"{key.Name} ({key.KindText})"));
                 }
                 _options.Sort((a, b) => StringComparer.CurrentCultureIgnoreCase.Compare(a.Text, b.Text));
                 Fill(_systemParam, sf.SystemParam);
                 Fill(_floorParam, sf.FloorParam);
+                var mirrorItems = new List<object> { NoMirror };
+                mirrorItems.AddRange(_options);
+                _mirrorParam.ItemsSource = mirrorItems;
+                _mirrorParam.SelectedItem = sf.MirrorParam == null ? NoMirror : (object?)_options.FirstOrDefault(o => o.Key.Equals(sf.MirrorParam)) ?? NoMirror;
                 _writeSystem.IsChecked = sf.WriteSystem;
                 _writeFloor.IsChecked = sf.WriteFloor;
                 _insulation.IsChecked = sf.Insulation;
@@ -230,6 +245,7 @@ namespace VKTools.Revit.UI
             SystemFloorSettings sf = options.SystemFloor.Clone();
             sf.SystemParam = (_systemParam.SelectedItem as ParamOption)?.Key;
             sf.FloorParam = (_floorParam.SelectedItem as ParamOption)?.Key;
+            sf.MirrorParam = (_mirrorParam.SelectedItem as ParamOption)?.Key;
             sf.WriteSystem = _writeSystem.IsChecked == true;
             sf.WriteFloor = _writeFloor.IsChecked == true;
             sf.Insulation = _insulation.IsChecked == true;

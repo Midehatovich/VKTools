@@ -210,6 +210,12 @@ namespace VKTools.Revit.Calc
         /// <summary>Поля строк спецификаций, которые копируются в позиции запаса (им нужна категория позиций).</summary>
         public HashSet<string> ReserveFields { get; } = new HashSet<string>(StringComparer.Ordinal);
 
+        /// <summary>
+        /// Видимые числовые колонки (ADSK_Масса…), которые копируются в позицию запаса, если у неё есть такой параметр: иначе в слитой
+        /// строке «&lt;варианты&gt;». Необязательные: нет параметра у позиции — позиция всё равно пишется.
+        /// </summary>
+        public HashSet<string> OptionalCopy { get; } = new HashSet<string>(StringComparer.Ordinal);
+
         /// <summary>Семейства, похожие на гильзы (подсказки для маски), и параметры длины первой гильзы.</summary>
         public SortedSet<string> SleeveFamilies { get; } = new SortedSet<string>(StringComparer.CurrentCultureIgnoreCase);
 

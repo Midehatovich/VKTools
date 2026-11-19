@@ -107,6 +107,26 @@ namespace VKTools.Revit.UI
                 }
 
                 SpecRunMode mode = _request == SpecRequest.Apply ? SpecRunMode.Apply : SpecRunMode.Trial;
+                // Настройку переключили на «VK_Сокращение системы» в окне, а в проекте его ещё нет: при записи плагин добавляет его сам
+                // (отдельной операцией); пробный прогон модель не меняет — там запись в него покажется как «параметра нет».
+                if (options.Module == SpecModule.SystemFloor && options.SystemFloor.WriteSystem && options.SystemFloor.UsesVkSystem
+                    && VkParameters.NeedsSetup(doc, out _))
+                {
+                    if (mode == SpecRunMode.Trial)
+                    {
+                        Host.Log.Info($"{title}: «{Core.Config.KnownParameters.VkSystem.Name}» нет в проекте — пробный прогон без него, добавится при «Применить».");
+                    }
+                    else
+                    {
+                        string? refused = VkParameters.Ensure(doc, app.Application, out string? note);
+                        if (refused != null)
+                        {
+                            window.ShowMessage($"«{Core.Config.KnownParameters.VkSystem.Name}» не добавлен: {refused}. Модель не изменялась.");
+                            return;
+                        }
+                        if (note != null) Host.Log.Info(title + ": " + note + ".");
+                    }
+                }
                 ParamPlan plan;
                 ParamPlan? after = null;
                 SpecRunResult run;

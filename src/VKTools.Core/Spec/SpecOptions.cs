@@ -66,6 +66,9 @@ namespace VKTools.Core.Spec
 
         public bool NestedClearEmpty { get; set; }
 
+        /// <summary>«Своя система у вложенных»: смесители и т. п. берут систему по своему сокращению, а не от родителя.</summary>
+        public List<OwnSystemRule> OwnSystem { get; set; } = OwnSystemRules.Defaults();
+
         public NestedScope Scope { get; set; }
 
         public List<GroupRule> GroupRules { get; set; } = new List<GroupRule>();
@@ -120,7 +123,8 @@ namespace VKTools.Core.Spec
         };
 
         private string NestedSignature() =>
-            $"{(NestedClearEmpty ? 1 : 0)}|" + string.Join(",", NestedParams.Select(k => k.Id).OrderBy(x => x, System.StringComparer.Ordinal));
+            $"{(NestedClearEmpty ? 1 : 0)}|" + string.Join(",", NestedParams.Select(k => k.Id).OrderBy(x => x, System.StringComparer.Ordinal))
+            + "|" + OwnSystemRules.Signature(OwnSystem);
 
         private string TableSignature() => SpecRuleTables.FormatGrouping(GroupRules, Enumerable.Empty<string>());
 
@@ -158,6 +162,7 @@ namespace VKTools.Core.Spec
         {
             NestedParams = NestedParams.ToList(),
             NestedClearEmpty = NestedClearEmpty,
+            OwnSystem = OwnSystem.ToList(),
             Scope = Scope,
             GroupRules = GroupRules.ToList(),
             Kits = Kits.Clone(),
@@ -210,6 +215,8 @@ namespace VKTools.Core.Spec
             {
                 settings.NestedParams = isDefault ? null : SpecRuleTables.FormatNestedSelection(NestedParams);
                 settings.NestedClearEmpty = !isDefault && NestedClearEmpty;
+                string ownSystem = OwnSystemRules.Signature(OwnSystem);
+                settings.NestedOwnSystem = isDefault || ownSystem == OwnSystemRules.Signature(OwnSystemRules.Defaults()) ? null : OwnSystemRules.Format(OwnSystem);
                 if (isDefault) settings.ClearStamp(SpecProjectSettings.NestedSection);
                 else settings.SetStamp(SpecProjectSettings.NestedSection, user, when);
                 return;
@@ -329,6 +336,13 @@ namespace VKTools.Core.Spec
                         options.NestedSavedInProject = true;
                     }
                 }
+                string? ownSystem = settings.NestedOwnSystem;
+                if (ownSystem != null)
+                {
+                    var ownIssues = new List<ConfigIssue>();
+                    List<OwnSystemRule> rules = OwnSystemRules.Parse(ownSystem, ownIssues);
+                    if (!ownIssues.Any(i => i.Severity == Checks.Severity.Error)) options.OwnSystem = rules;
+                }
             }
             else if (module == SpecModule.Nested)
             {
@@ -343,6 +357,18 @@ namespace VKTools.Core.Spec
                         options.NestedClearEmpty = settings.NestedClearEmpty;
                         options.SavedInProject = true;
                         options.SavedStamp = settings.Stamp(SpecProjectSettings.NestedSection);
+                    }
+                }
+                string? ownSystem = settings.NestedOwnSystem;
+                if (ownSystem != null && !broken)
+                {
+                    List<OwnSystemRule> rules = OwnSystemRules.Parse(ownSystem, parseIssues);
+                    broken = parseIssues.Any(i => i.Severity == Checks.Severity.Error);
+                    if (!broken)
+                    {
+                        options.OwnSystem = rules;
+                        options.SavedInProject = true;
+                        options.SavedStamp ??= settings.Stamp(SpecProjectSettings.NestedSection);
                     }
                 }
             }

@@ -64,3 +64,34 @@ jobs:
           path: installer/bin/Release/*.msi
           if-no-files-found: error
           retention-days: 30
+
+  # Постоянная ссылка на свежий MSI для проверки в Revit (без поиска артефакта на странице сборки):
+  # https://github.com/Midehatovich/VKTools/releases/download/test-build/VKTools.msi
+  # Пре-релиз «test-build» перезаписывается последней успешной сборкой (PR или main); это не выпуск для отдела.
+  publish-test-build:
+    name: Publish test-build MSI
+    runs-on: ubuntu-24.04
+    needs: installer
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: VKTools-msi
+          path: msi
+      - name: Upload to pre-release test-build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE: ${{ github.event_name == 'pull_request' && format('PR {0} ({1})', github.event.pull_request.number, github.head_ref) || github.ref_name }}
+        run: |
+          set -e
+          file=$(ls msi/*.msi | head -n 1)
+          cp "$file" VKTools.msi
+          notes="Тестовая сборка: $(basename "$file"), источник: $SOURCE, коммит ${GITHUB_SHA::7}, $(date -u '+%Y-%m-%d %H:%M') UTC."
+          if ! gh release view test-build >/dev/null 2>&1; then
+            gh release create test-build --prerelease --target main --title "VK Tools — тестовая сборка" --notes "$notes"
+          fi
+          gh release upload test-build VKTools.msi --clobber
+          gh release edit test-build --prerelease --notes "$notes"

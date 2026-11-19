@@ -52,7 +52,7 @@ namespace VKTools.Revit.Spec
             SystemFloorSettings sf = options.SystemFloor;
             if (options.IsDefault(defaults))
             {
-                _plan.RuleSources.Add("Система и этаж: по умолчанию (LSR_Имя системы, ADSK_Этаж, категории NestedParamSync v2.1)");
+                _plan.RuleSources.Add("Система и этаж: по умолчанию (VK_Сокращение системы и LSR_Имя системы, где он есть; ADSK_Этаж; категории NestedParamSync v2.1)");
             }
             else
             {
@@ -63,6 +63,7 @@ namespace VKTools.Revit.Spec
 
             ParamKey? systemKey = sf.WriteSystem ? sf.SystemParam : null;
             ParamKey? floorKey = sf.WriteFloor ? sf.FloorParam : null;
+            ParamKey? mirrorKey = systemKey != null && sf.MirrorParam != null && !sf.MirrorParam.Equals(systemKey) ? sf.MirrorParam : null;
             if (sf.WriteSystem && systemKey == null)
             {
                 _plan.AddIssue(M, Severity.Warning, string.Empty, "не выбран параметр системы — система не пишется", string.Empty)
@@ -150,6 +151,7 @@ namespace VKTools.Revit.Spec
                     if (!(isParent && OwnCodes(e).Count == 0))
                     {
                         PlanSelf(M, e, systemKey, value, problem, "«Сокращение для системы»", null);
+                        PlanMirror(M, e, mirrorKey, value, problem, "«Сокращение для системы»", null);
                         counts[0]++;
                     }
                 }
@@ -183,6 +185,7 @@ namespace VKTools.Revit.Spec
                 {
                     (string? value, string? problem) = ResolveSystem(host);
                     PlanSelf(M, ins, systemKey, value, problem == null ? null : "основа: " + problem, $"основа {hostId}", hostId);
+                    PlanMirror(M, ins, mirrorKey, value, problem == null ? null : "основа: " + problem, $"основа {hostId}", hostId);
                 }
                 if (floorKey != null)
                 {
@@ -194,7 +197,7 @@ namespace VKTools.Revit.Spec
             List<FloorRename> renames = sf.EffectiveFloors().ToList();
             _plan.Notes.Add($"Система и этаж: элементов {elements.Count - parents} в {categories.Count} категориях, родителей других категорий с вложенными {parents}, "
                 + $"изоляции {(sf.Insulation ? insulationDone.ToString(System.Globalization.CultureInfo.InvariantCulture) : "не обрабатывается")}; "
-                + $"система → {(systemKey?.Name ?? "не пишется")}, этаж → {(floorKey?.Name ?? "не пишется")}"
+                + $"система → {(systemKey?.Name ?? "не пишется")}{(mirrorKey != null ? " и " + mirrorKey.Name + " (где есть)" : string.Empty)}, этаж → {(floorKey?.Name ?? "не пишется")}"
                 + (floorKey != null ? (renames.Count == 0 ? " (имя уровня как есть)" : $" (переименований уровней: {renames.Count})") : string.Empty)
                 + (sf.ChainNested ? "; затем перенос во вложенные." : "."));
         }
@@ -218,6 +221,15 @@ namespace VKTools.Revit.Spec
                 }
                 candidate.Nested++;
             }
+        }
+
+        /// <summary>Второй параметр системы: только у элементов, где он есть, без замечаний про пустое (их уже дал основной).</summary>
+        private void PlanMirror(SpecModule module, Element e, ParamKey? key, string? value, string? problem, string source, long? sourceId)
+        {
+            if (key == null || problem != null || string.IsNullOrEmpty(value)) return;
+            Parameter? p = _access.Find(e, key);
+            if (p == null || p.IsReadOnly || p.StorageType != StorageType.String) return;
+            PlanSelf(module, e, key, value, null, source, sourceId);
         }
 
         private void PlanSelf(SpecModule module, Element e, ParamKey key, string? value, string? problem, string source, long? sourceId)
