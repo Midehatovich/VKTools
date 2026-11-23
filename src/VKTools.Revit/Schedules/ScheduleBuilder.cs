@@ -238,7 +238,7 @@ namespace VKTools.Revit.Schedules
         /// выравнивание, формат, стиль, итоги, скрытость, сортировка и фильтры переносятся на новую графу. Эталон не меняется.
         /// Вычисляемые графы (формулы с ADSK_*) Revit пересобрать не даёт — о них замечание.
         /// </summary>
-        private static void RemapToOwn(Document doc, ViewSchedule schedule, ScheduleResult result)
+        internal static void RemapToOwn(Document doc, ViewSchedule schedule, ScheduleResult result, bool legacyOnly = false)
         {
             ScheduleDefinition definition = schedule.Definition;
             var replaced = new List<string>();
@@ -255,13 +255,14 @@ namespace VKTools.Revit.Schedules
 #if REVIT2022_OR_GREATER
                 if (old.IsCombinedParameterField)
                 {
-                    RemapCombined(doc, old, replaced, failed);
+                    RemapCombined(doc, old, replaced, failed, legacyOnly);
                     continue;
                 }
 #endif
                 if (!(doc.GetElement(old.ParameterId) is SharedParameterElement shared)) continue;
                 ParamRole? role = ParamProfile.RoleOf(shared.GuidValue);
                 if (role == null) continue;
+                if (legacyOnly && !ParamProfile.LegacyOwnGuids.ContainsKey(shared.GuidValue)) continue;   // перенос «Р_» 0.14 → 0.15: ADSK_ графы не трогать
                 OwnParamDef own = ParamProfile.Own(role.Value);
                 if (shared.GuidValue == own.Guid) continue;
                 SchedulableField? candidate = definition.GetSchedulableFields()
@@ -333,7 +334,7 @@ namespace VKTools.Revit.Schedules
         /// Графа «Комбинировать параметры» (Пушкарев 2026-11-23: наименование эталона КрМа3 показывало ADSK_, а сортировка уже шла по Р_ —
         /// в строках «‹варианты›» и пустые имена): части ADSK_ роли заменяются своими «Р_», префиксы и разделители сохраняются.
         /// </summary>
-        private static void RemapCombined(Document doc, ScheduleField field, List<string> replaced, List<string> failed)
+        private static void RemapCombined(Document doc, ScheduleField field, List<string> replaced, List<string> failed, bool legacyOnly)
         {
             IList<TableCellCombinedParameterData> parts = field.GetCombinedParameters();
             var updated = new List<TableCellCombinedParameterData>();
@@ -343,7 +344,7 @@ namespace VKTools.Revit.Schedules
             {
                 ElementId id = part.ParamId;
                 if (doc.GetElement(id) is SharedParameterElement shared && ParamProfile.RoleOf(shared.GuidValue) is ParamRole role
-                    && shared.GuidValue != ParamProfile.Own(role).Guid)
+                    && shared.GuidValue != ParamProfile.Own(role).Guid && (!legacyOnly || ParamProfile.LegacyOwnGuids.ContainsKey(shared.GuidValue)))
                 {
                     OwnParamDef own = ParamProfile.Own(role);
                     SharedParameterElement? target = SharedParameterElement.Lookup(doc, own.Guid);

@@ -62,6 +62,19 @@ namespace VKTools.Revit.Compat
 #endif
         }
 
+        /// <summary>
+        /// Свои «Р_» — в группе «Результаты анализа»: своей вкладки Revit не даёт (группы только встроенные), а эта в семействах ВК пустая,
+        /// поэтому «Р_» в свойствах стоят отдельным блоком (решение пользователя 2026-11-23: «отдельная вкладка»).
+        /// </summary>
+        public static bool InsertInOwnGroup(this BindingMap map, Definition definition, ElementBinding binding)
+        {
+#if REVIT2022_OR_GREATER
+            return map.Insert(definition, binding, GroupTypeId.AnalysisResults);
+#else
+            return map.Insert(definition, binding, BuiltInParameterGroup.PG_ANALYSIS_RESULTS);
+#endif
+        }
+
         /// <summary>Перепривязать параметр проекта к другому набору категорий, не меняя группу параметра.</summary>
         public static bool ReInsertKeepingGroup(this BindingMap map, Definition definition, ElementBinding binding)
         {

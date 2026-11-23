@@ -77,7 +77,8 @@ namespace VKTools.Core.Spec
                 string builtIn = id.Substring(BuiltInPrefix.Length).Trim();
                 return builtIn.Length == 0 ? null : OfBuiltIn(name.Length > 0 ? name : builtIn, builtIn);
             }
-            return Guid.TryParse(id, out Guid guid) && guid != Guid.Empty ? Shared(name.Length > 0 ? name : id, guid) : null;
+            // Старые GUID «Р_» (0.14.x) в сохранённых настройках → текущие (0.15.0, нередактируемые)
+            return Guid.TryParse(id, out Guid guid) && guid != Guid.Empty ? Shared(name.Length > 0 ? name : id, Config.ParamProfile.Current(guid)) : null;
         }
 
         public bool Equals(ParamKey? other) => other != null && Kind == other.Kind && Id == other.Id;

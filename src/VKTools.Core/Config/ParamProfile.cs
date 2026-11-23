@@ -74,19 +74,42 @@ namespace VKTools.Core.Config
 
         public static readonly IReadOnlyList<OwnParamDef> OwnDefinitions = new[]
         {
-            new OwnParamDef(ParamRole.Position, "Р_Позиция", new Guid("173d86d8-465b-4bef-8541-4d503231d600"), false, "VK Tools: позиция (копия ADSK_Позиция)"),
-            new OwnParamDef(ParamRole.Name, "Р_Наименование", new Guid("bbe8adf8-7aa7-4b69-aa04-82a50f30f4df"), false, "VK Tools: наименование и техническая характеристика"),
-            new OwnParamDef(ParamRole.Mark, "Р_Марка", new Guid("fcaa3c34-387a-4646-a9a3-69f9afb41628"), false, "VK Tools: тип, марка, обозначение документа"),
-            new OwnParamDef(ParamRole.Code, "Р_Код изделия", new Guid("b9d5507a-2d69-429f-800a-d0bb7d7bd0eb"), false, "VK Tools: код изделия"),
-            new OwnParamDef(ParamRole.Maker, "Р_Завод-изготовитель", new Guid("41e91545-14bb-4712-9c07-7d80554844bb"), false, "VK Tools: поставщик"),
-            new OwnParamDef(ParamRole.Unit, "Р_Единица измерения", new Guid("074d72ac-0a0c-47b3-ad0a-3b50b28afc1e"), false, "VK Tools: единица измерения"),
-            new OwnParamDef(ParamRole.Quantity, "Р_Количество", new Guid("e8f7cdb5-fe43-4a07-a577-dd057acc3488"), true, "VK Tools: количество (трубы и изоляция — с запасом)"),
-            new OwnParamDef(ParamRole.Mass, "Р_Масса", new Guid("106e552d-8e37-4e1c-a266-d7f117671aab"), true, "VK Tools: масса 1 ед., кг"),
-            new OwnParamDef(ParamRole.Note, "Р_Примечание", new Guid("643fda80-80f5-4631-a3a3-d91c680a76c5"), false, "VK Tools: примечание"),
-            new OwnParamDef(ParamRole.Group, "Р_Группирование", new Guid("e5b08cda-2011-4a01-a660-f79e0077d802"), false, "VK Tools: сортировка разделов спецификации"),
-            new OwnParamDef(ParamRole.Floor, "Р_Этаж", new Guid("db8e55d3-4b24-4f5a-af53-6bc9d686c41a"), false, "VK Tools: этаж (имя уровня)"),
-            new OwnParamDef(ParamRole.System, "Р_Сокращение системы", new Guid("9e0b554d-b41e-4be5-b44f-cd2473c8af61"), false, "VK Tools: сокращение системы для фильтров спецификаций"),
+            new OwnParamDef(ParamRole.Position, "Р_Позиция", new Guid("876103ca-8bd4-4792-8f2f-02e29d454967"), false, "VK Tools: позиция (копия ADSK_Позиция)"),
+            new OwnParamDef(ParamRole.Name, "Р_Наименование", new Guid("991962bf-daaa-4cdf-b394-4fa03aa38c62"), false, "VK Tools: наименование и техническая характеристика"),
+            new OwnParamDef(ParamRole.Mark, "Р_Марка", new Guid("439aeb1b-28cd-44e9-a8d6-74e0befd6eab"), false, "VK Tools: тип, марка, обозначение документа"),
+            new OwnParamDef(ParamRole.Code, "Р_Код изделия", new Guid("ef0897e4-20bd-4b7d-97ca-9ccfc9ce2267"), false, "VK Tools: код изделия"),
+            new OwnParamDef(ParamRole.Maker, "Р_Завод-изготовитель", new Guid("6644d9ac-c898-46e7-95fb-80d091ae7391"), false, "VK Tools: поставщик"),
+            new OwnParamDef(ParamRole.Unit, "Р_Единица измерения", new Guid("f6a15e44-03a0-42c1-93ac-214fd31c0b2a"), false, "VK Tools: единица измерения"),
+            new OwnParamDef(ParamRole.Quantity, "Р_Количество", new Guid("7c8d8687-7995-4bea-a543-f85f2c372376"), true, "VK Tools: количество (трубы и изоляция — с запасом)"),
+            new OwnParamDef(ParamRole.Mass, "Р_Масса", new Guid("3784ca1d-1a42-46de-88d0-7a271deb6377"), true, "VK Tools: масса 1 ед., кг"),
+            new OwnParamDef(ParamRole.Note, "Р_Примечание", new Guid("8c160a35-6634-4189-a472-526ea2139f43"), false, "VK Tools: примечание"),
+            new OwnParamDef(ParamRole.Group, "Р_Группирование", new Guid("0dcd461e-2cd7-4fb5-8254-43d0ee67fe3a"), false, "VK Tools: сортировка разделов спецификации"),
+            new OwnParamDef(ParamRole.Floor, "Р_Этаж", new Guid("2f253eb9-0bac-474d-bf7c-d4738b276f3e"), false, "VK Tools: этаж (имя уровня)"),
+            new OwnParamDef(ParamRole.System, "Р_Сокращение системы", new Guid("e7686104-a64d-4e99-8466-9fef98d7e175"), false, "VK Tools: сокращение системы для фильтров спецификаций"),
         };
+
+        /// <summary>
+        /// GUID «Р_» 0.14.x (редактируемые вручную). С 0.15.0 «Р_» не редактируются вручную (USERMODIFIABLE = 0, решение пользователя 2026-11-23),
+        /// а этот признак Revit задаёт только при создании параметра — поэтому новые GUID; старые плагин переносит (значения, графы, настройки).
+        /// </summary>
+        public static readonly IReadOnlyDictionary<Guid, ParamRole> LegacyOwnGuids = new Dictionary<Guid, ParamRole>
+        {
+            [new Guid("173d86d8-465b-4bef-8541-4d503231d600")] = ParamRole.Position,
+            [new Guid("bbe8adf8-7aa7-4b69-aa04-82a50f30f4df")] = ParamRole.Name,
+            [new Guid("fcaa3c34-387a-4646-a9a3-69f9afb41628")] = ParamRole.Mark,
+            [new Guid("b9d5507a-2d69-429f-800a-d0bb7d7bd0eb")] = ParamRole.Code,
+            [new Guid("41e91545-14bb-4712-9c07-7d80554844bb")] = ParamRole.Maker,
+            [new Guid("074d72ac-0a0c-47b3-ad0a-3b50b28afc1e")] = ParamRole.Unit,
+            [new Guid("e8f7cdb5-fe43-4a07-a577-dd057acc3488")] = ParamRole.Quantity,
+            [new Guid("106e552d-8e37-4e1c-a266-d7f117671aab")] = ParamRole.Mass,
+            [new Guid("643fda80-80f5-4631-a3a3-d91c680a76c5")] = ParamRole.Note,
+            [new Guid("e5b08cda-2011-4a01-a660-f79e0077d802")] = ParamRole.Group,
+            [new Guid("db8e55d3-4b24-4f5a-af53-6bc9d686c41a")] = ParamRole.Floor,
+            [new Guid("9e0b554d-b41e-4be5-b44f-cd2473c8af61")] = ParamRole.System,
+        };
+
+        /// <summary>Старый GUID «Р_» → текущий; прочие — как есть (сохранённые настройки и выбор параметров читаются со старыми GUID).</summary>
+        public static Guid Current(Guid guid) => LegacyOwnGuids.TryGetValue(guid, out ParamRole role) ? Own(role).Guid : guid;
 
         private static readonly Dictionary<ParamRole, ParameterRef> AdskRefs = new Dictionary<ParamRole, ParameterRef>
         {
@@ -163,7 +186,8 @@ namespace VKTools.Core.Config
                 if (pair.Value.Guid == guid) return pair.Key;
             }
             OwnParamDef? own = OwnDefinitions.FirstOrDefault(d => d.Guid == guid);
-            return own?.Role;
+            if (own != null) return own.Role;
+            return LegacyOwnGuids.TryGetValue(guid, out ParamRole legacy) ? legacy : (ParamRole?)null;
         }
 
         /// <summary>Роль по имени (ADSK_Марка, Р_Марка, VK_Сокращение системы); null — не из наборов.</summary>
@@ -214,7 +238,8 @@ namespace VKTools.Core.Config
             };
             foreach (OwnParamDef d in OwnDefinitions)
             {
-                lines.Add($"PARAM\t{d.Guid:D}\t{d.Name}\t{(d.Number ? "NUMBER" : "TEXT")}\t\t1\t1\t{d.Description}\t1\t0");
+                // USERMODIFIABLE = 0: в свойствах и спецификации серые, пишет только плагин (API)
+                lines.Add($"PARAM\t{d.Guid:D}\t{d.Name}\t{(d.Number ? "NUMBER" : "TEXT")}\t\t1\t1\t{d.Description}\t0\t0");
             }
             return string.Join("\r\n", lines) + "\r\n";
         }

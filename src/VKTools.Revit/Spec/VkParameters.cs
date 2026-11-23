@@ -37,6 +37,15 @@ namespace VKTools.Revit.Spec
         public static bool NeedsSetup(Document doc, out List<Category> missing)
         {
             missing = new List<Category>();
+            if (ParamProfile.IsOwn && LegacyBound(doc).Count > 0)
+            {
+                foreach (BuiltInCategory bic in Categories)
+                {
+                    Category? c = Category.GetCategory(doc, bic);
+                    if (c != null && c.AllowsBoundParameters) missing.Add(c);
+                }
+                return true;
+            }
             foreach (ParameterRef param in Required())
             {
                 List<Category> lack = Missing(doc, param);
@@ -98,13 +107,24 @@ namespace VKTools.Revit.Spec
                             if (!file.TryGetValue(param.Guid, out ExternalDefinition? definition)) throw new InvalidOperationException($"в своём ФОП VK Tools нет «{param.Name}»");
                             CategorySet set = app.Create.NewCategorySet();
                             foreach (Category c in missing) set.Insert(c);
-                            ok = doc.ParameterBindings.InsertAsData(definition, app.Create.NewInstanceBinding(set));
+                            ok = ParamProfile.IsOwn && ParamProfile.RoleOf(param.Guid) != null
+                                ? doc.ParameterBindings.InsertInOwnGroup(definition, app.Create.NewInstanceBinding(set))
+                                : doc.ParameterBindings.InsertAsData(definition, app.Create.NewInstanceBinding(set));
                             notes.Add($"в проект добавлен параметр «{param.Name}» (экземпляра)");
                         }
                         if (!ok)
                         {
                             t.RollBack();
                             return $"Revit не принял привязку параметра «{param.Name}»";
+                        }
+                    }
+                    if (ParamProfile.IsOwn)
+                    {
+                        string? migrated = MigrateLegacy(doc, notes);
+                        if (migrated != null)
+                        {
+                            t.RollBack();
+                            return migrated;
                         }
                     }
                     if (t.Commit() != TransactionStatus.Committed) return "Revit не сохранил параметры";
@@ -117,6 +137,81 @@ namespace VKTools.Revit.Spec
             }
             note = string.Join("; ", notes) + " — категории: " + string.Join(", ", Categories.Select(c => Category.GetCategory(doc, c)?.Name).Where(n => n != null));
             Host.Log.Info("VK Tools: " + note + ".");
+            return null;
+        }
+
+        /// <summary>Старые «Р_» 0.14.x (редактируемые вручную), которые ещё привязаны в проекте.</summary>
+        private static List<SharedParameterElement> LegacyBound(Document doc)
+        {
+            var result = new List<SharedParameterElement>();
+            foreach (Guid guid in ParamProfile.LegacyOwnGuids.Keys)
+            {
+                SharedParameterElement? shared = SharedParameterElement.Lookup(doc, guid);
+                if (shared != null) result.Add(shared);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 0.15.0: перенос со старых «Р_» на нередактируемые вручную — значения элементов (экземпляр), графы спецификаций (место, ширины,
+        /// сортировка, фильтры, комбинированные), затем старые параметры удаляются. Настройки модели со старыми GUID читаются как новые
+        /// (<see cref="ParamProfile.Current"/>). Ошибка — причина, вызывающий откатывает транзакцию.
+        /// </summary>
+        private static string? MigrateLegacy(Document doc, List<string> notes)
+        {
+            List<SharedParameterElement> legacy = LegacyBound(doc);
+            if (legacy.Count == 0) return null;
+            int values = 0;
+            var failed = new List<string>();
+            var elements = new List<Element>();
+            foreach (BuiltInCategory bic in Categories)
+            {
+                elements.AddRange(new FilteredElementCollector(doc).OfCategory(bic).WhereElementIsNotElementType());
+            }
+            foreach (SharedParameterElement old in legacy)
+            {
+                ParamRole role = ParamProfile.LegacyOwnGuids[old.GuidValue];
+                Guid target = ParamProfile.Own(role).Guid;
+                foreach (Element e in elements)
+                {
+                    Parameter? from = e.get_Parameter(old.GuidValue);
+                    if (from == null || !from.HasValue) continue;
+                    Parameter? to = e.get_Parameter(target);
+                    if (to == null || to.StorageType != from.StorageType) continue;
+                    bool ok;
+                    switch (from.StorageType)
+                    {
+                        case StorageType.String:
+                            string text = from.AsString() ?? string.Empty;
+                            if (text.Length == 0) continue;
+                            ok = to.Set(text);
+                            break;
+                        case StorageType.Double:
+                            ok = to.Set(from.AsDouble());
+                            break;
+                        case StorageType.Integer:
+                            ok = to.Set(from.AsInteger());
+                            break;
+                        default:
+                            continue;
+                    }
+                    if (ok) values++;
+                    else if (failed.Count < 20) failed.Add($"{old.Name} · Id {e.Id.ToLong()}");
+                }
+            }
+            var scheduleNotes = new List<string>();
+            foreach (ViewSchedule schedule in new FilteredElementCollector(doc).OfClass(typeof(ViewSchedule)).Cast<ViewSchedule>())
+            {
+                if (schedule.IsTitleblockRevisionSchedule || schedule.Definition == null) continue;
+                var result = new Schedules.ScheduleResult();
+                Schedules.ScheduleBuilder.RemapToOwn(doc, schedule, result, legacyOnly: true);
+                foreach (string n in result.Notes) scheduleNotes.Add($"«{schedule.Name}»: {n}");
+            }
+            if (failed.Count > 0) Host.Log.Warn("Перенос на нередактируемые «Р_»: не записано — " + string.Join("; ", failed));
+            foreach (string n in scheduleNotes) Host.Log.Info("Перенос на нередактируемые «Р_»: " + n);
+            doc.Delete(legacy.Select(x => x.Id).ToList());
+            notes.Add($"«Р_» переведены на нередактируемые вручную: значений перенесено {values}, спецификаций с правкой граф {scheduleNotes.Count}, старых параметров удалено {legacy.Count}"
+                + (failed.Count > 0 ? $", не записалось {failed.Count} (в логе)" : string.Empty));
             return null;
         }
 
