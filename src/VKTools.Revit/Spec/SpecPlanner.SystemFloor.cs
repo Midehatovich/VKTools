@@ -4,6 +4,7 @@ using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Plumbing;
 using VKTools.Core.Checks;
+using VKTools.Core.Config;
 using VKTools.Core.Progress;
 using VKTools.Core.Spec;
 using VKTools.Revit.Compat;
@@ -52,7 +53,9 @@ namespace VKTools.Revit.Spec
             SystemFloorSettings sf = options.SystemFloor;
             if (options.IsDefault(defaults))
             {
-                _plan.RuleSources.Add("Система и этаж: по умолчанию (VK_Сокращение системы и LSR_Имя системы, где он есть; ADSK_Этаж; категории NestedParamSync v2.1)");
+                _plan.RuleSources.Add(ParamProfile.IsOwn
+                    ? "Система и этаж: по умолчанию, свои параметры (Р_Сокращение системы, Р_Этаж, копия ADSK_ → Р_; категории NestedParamSync v2.1)"
+                    : "Система и этаж: по умолчанию (VK_Сокращение системы и LSR_Имя системы, где он есть; ADSK_Этаж; категории NestedParamSync v2.1)");
             }
             else
             {
@@ -193,6 +196,8 @@ namespace VKTools.Revit.Spec
                     PlanSelf(M, ins, floorKey, value, problem == null ? null : "основа: " + problem, $"основа {hostId}", hostId);
                 }
             }
+
+            PlanOwnCopy(defaults);
 
             List<FloorRename> renames = sf.EffectiveFloors().ToList();
             _plan.Notes.Add($"Система и этаж: элементов {elements.Count - parents} в {categories.Count} категориях, родителей других категорий с вложенными {parents}, "

@@ -147,9 +147,11 @@ namespace VKTools.Core.Spec
 
         public string Rules { get; set; } = DefaultRules;
 
+        /// <summary>Свой набор «Р_»: имена пишутся сразу — BIM2B пишет только ADSK_Наименование, Р_Наименование ему не мешает.</summary>
         public static PipeNameSettings Default() => new PipeNameSettings
         {
-            NameParam = ParamKey.Shared(KnownParameters.AdskName.Name, KnownParameters.AdskName.Guid),
+            NameParam = ParamProfile.TargetKey(ParamRole.Name),
+            WriteName = ParamProfile.IsOwn,
         };
 
         public PipeNameSettings Clone() => (PipeNameSettings)MemberwiseClone();

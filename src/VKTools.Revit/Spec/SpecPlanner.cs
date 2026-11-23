@@ -327,7 +327,7 @@ namespace VKTools.Revit.Spec
             if (!ParamAccess.IsTransferable(p)) return null;
             ParamKey? key = _access.KeyOf(p);
             if (key == null) return null;
-            return key.Kind == ParamKeyKind.Shared && key.Guid == KnownParameters.AdskGrouping.Guid ? null : key;
+            return key.Kind == ParamKeyKind.Shared && (key.Guid == KnownParameters.AdskGrouping.Guid || key.Guid == ParamProfile.Own(ParamRole.Group).Guid) ? null : key;
         }
 
         private void EvaluatePair(ParamSlot source, Parameter target, FamilyInstance child, bool clearEmpty, bool isSelected,
@@ -464,7 +464,7 @@ namespace VKTools.Revit.Spec
         private void PlanGrouping(SpecOptions options, SpecDefaults defaults)
         {
             const SpecModule M = SpecModule.Grouping;
-            var target = ParamKey.Shared(KnownParameters.AdskGrouping.Name, KnownParameters.AdskGrouping.Guid);
+            ParamKey target = ParamProfile.TargetKey(ParamRole.Group);
             Source(options, defaults, "Таблица групп", defaults.GroupingSource, defaults.GroupingBlocked);
             _plan.RuleSources.Add(options.Kits.Rules.Count == 0 ? "Комплекты проекта: нет (шкафы ПК — автоматически)"
                 : $"Комплекты проекта: правил {options.Kits.Rules.Count} ({options.KitsStamp ?? "в модели не сохранены"})");
@@ -540,11 +540,11 @@ namespace VKTools.Revit.Spec
                     if (TypeOf(element)?.get_Parameter(target.Guid) != null)
                     {
                         _plan.AddIssue(M, Severity.Warning, target.Name, "параметр ТИПА — не пишется (изменил бы все экземпляры типа)", FamilyLabel(element), id)
-                            .Action = "Сделайте ADSK_Группирование параметром экземпляра (Управление → Параметры проекта).";
+                            .Action = $"Сделайте {target.Name} параметром экземпляра (Управление → Параметры проекта).";
                     }
                     else if (kit || groups.IsListed(category))
                     {
-                        _plan.AddIssue(M, Severity.Info, target.Name, "у категории нет параметра ADSK_Группирование", element.Category?.Name ?? "?", id)
+                        _plan.AddIssue(M, Severity.Info, target.Name, $"у категории нет параметра {target.Name}", element.Category?.Name ?? "?", id)
                             .Action = "Назначьте параметр категории (Управление → Параметры проекта), если она нужна в спецификации.";
                     }
                     continue;
@@ -569,7 +569,7 @@ namespace VKTools.Revit.Spec
                 {
                     // Как в adsk_grouping v2: значение задано в семействе намеренно или формулой — не ошибка модели, но в спецификации будет своё
                     _plan.AddIssue(M, Severity.Warning, target.Name, "только для чтения (задан формулой или связан в семействе)", FamilyLabel(element), id)
-                        .Action = "Уберите формулу или связь у ADSK_Группирование в семействе — или поставьте семейству «не трогать» в таблице групп.";
+                        .Action = $"Уберите формулу или связь у {target.Name} в семействе — или поставьте семейству «не трогать» в таблице групп.";
                     continue;
                 }
                 if (Guard(M, element, p, target.Name, FamilyLabel(element))) continue;
@@ -688,7 +688,7 @@ namespace VKTools.Revit.Spec
 
         private void AddKitIssue(KitIssue issue, string subject)
         {
-            PlanIssue row = _plan.AddIssue(SpecModule.Grouping, issue.Severity, KnownParameters.AdskGrouping.Name, issue.Message, subject, null, Math.Max(1, issue.Ids.Count));
+            PlanIssue row = _plan.AddIssue(SpecModule.Grouping, issue.Severity, ParamProfile.Target(ParamRole.Group).Name, issue.Message, subject, null, Math.Max(1, issue.Ids.Count));
             row.Ids.AddRange(issue.Ids);
             row.Action = issue.Action;
         }
@@ -708,7 +708,7 @@ namespace VKTools.Revit.Spec
             foreach (KitRule rule in kits.Rules.Where(r => _cabinetFamilies.Contains(r.Family)))
             {
                 active.Rules.Remove(rule);
-                _plan.AddIssue(SpecModule.Grouping, Severity.Warning, KnownParameters.AdskGrouping.Name,
+                _plan.AddIssue(SpecModule.Grouping, Severity.Warning, ParamProfile.Target(ParamRole.Group).Name,
                     $"«{rule.Label}» — шкаф ПК: его комплект собирается по Комплект_Номер, правило проекта не действует", "Комплекты проекта")
                     .Action = "Удалите правило во вкладке «Комплекты».";
             }
@@ -906,6 +906,8 @@ namespace VKTools.Revit.Spec
         {
             try
             {
+                // Материалы, трубопроводные системы и элементы узлов на видах — не позиции спецификации (Пушкарев 0.13.0: им ставилось «8»)
+                if (e is Material || e is MEPSystem || e.OwnerViewId != ElementId.InvalidElementId) return false;
                 return e.Category != null && e.Category.CategoryType == CategoryType.Model;
             }
             catch (Autodesk.Revit.Exceptions.ApplicationException)

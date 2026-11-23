@@ -63,6 +63,8 @@ namespace VKTools.Revit.Spec
                 }
             }
             storage ??= DataStorage.Create(doc);
+            // Набор параметров закрепляется при первом сохранении: иначе модель «Р_» с сохранёнными настройками читалась бы как ADSK
+            if (settings.Get(ParamProfile.SettingsKey) == null) settings.Set(ParamProfile.SettingsKey, ParamProfile.Store(ParamProfile.Active));
             var entity = new Entity(schema);
             entity.Set<IDictionary<string, string>>(schema.GetField(FieldValues), new Dictionary<string, string>(settings.Values));
             storage.SetEntity(entity);
@@ -122,8 +124,10 @@ namespace VKTools.Revit.Spec
         public static (SpecOptions Options, SpecDefaults Defaults) Load(Document doc, SpecModule module)
         {
             ConfigLoader loader = Host.CreateConfigLoader(Host.LoadSettings());
-            SpecDefaults defaults = LoadDefaults(loader);
             SpecProjectSettings stored = SpecSettingsStore.Read(doc, out int storages);
+            // Набор параметров модели — до умолчаний: от него зависят параметры по умолчанию всех модулей
+            ParamProfile.Active = ParamProfile.Resolve(stored);
+            SpecDefaults defaults = LoadDefaults(loader);
             var issues = new List<ConfigIssue>();
             SpecOptions options = SpecOptions.Load(module, stored, defaults, issues, out string? blocked);
             defaults.Issues.AddRange(issues);
@@ -146,7 +150,8 @@ namespace VKTools.Revit.Spec
             {
                 ParsedRules<ParameterRef> parsed = SpecRuleTables.ParseNestedParameters(nested.Table);
                 defaults.Issues.AddRange(parsed.Issues);
-                defaults.NestedParams.AddRange(parsed.Items.Select(p => ParamKey.Shared(p.Name, p.Guid)));
+                // Свой набор «Р_»: ADSK_Этаж → Р_Этаж, VK_Сокращение системы → Р_Сокращение системы, LSR_* — не переносятся
+                defaults.NestedParams.AddRange(parsed.Items.Select(ParamProfile.MapToActive).Where(p => p != null).Select(p => ParamKey.Shared(p!.Name, p.Guid)).Distinct());
             }
 
             LoadedTable grouping = loader.Load(SpecRuleTables.Grouping);

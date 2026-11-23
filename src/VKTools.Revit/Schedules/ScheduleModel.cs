@@ -85,6 +85,13 @@ namespace VKTools.Revit.Schedules
         {
             if (ScheduleFields.Is(doc, parameterId, SystemParam) || ScheduleFields.Is(doc, parameterId, FloorParam)) return true;
             if (MirrorParam != null && ScheduleFields.Is(doc, parameterId, MirrorParam)) return true;
+            // Свой набор «Р_»: фильтры эталона КрМа3 по ADSK_Этаж, VK_Сокращение системы и LSR_* тоже снимаются
+            if (ParamProfile.IsOwn && doc.GetElement(parameterId) is SharedParameterElement shared
+                && (shared.GuidValue == KnownParameters.AdskLevel.Guid || shared.GuidValue == KnownParameters.VkSystem.Guid
+                    || shared.Name.StartsWith("LSR_", StringComparison.Ordinal)))
+            {
+                return true;
+            }
             long id = parameterId.ToLong();
             return SystemBuiltIns.Any(b => (long)b == id);
         }
@@ -140,6 +147,8 @@ namespace VKTools.Revit.Schedules
         public static ScheduleModelData Collect(Document doc)
         {
             var data = new ScheduleModelData();
+            // Сначала настройки модели: они ставят набор параметров (ADSK_ или «Р_»), от него зависят графы формы
+            (SpecOptions options, _) = SpecSettingsLoader.Load(doc, SpecModule.SystemFloor);
             ConfigLoader loader = Host.CreateConfigLoader(Host.LoadSettings());
             LoadedTable form = loader.Load(ScheduleRules.Form);
             data.Issues.AddRange(form.Issues);
@@ -151,7 +160,6 @@ namespace VKTools.Revit.Schedules
             if (groups.Table != null) data.Groups.AddRange(ScheduleRules.ParseGroups(groups.Table, data.Issues));
 
             // Параметры системы и этажа — те же, что пишет «Система и этаж» (настройка проекта или по умолчанию)
-            (SpecOptions options, _) = SpecSettingsLoader.Load(doc, SpecModule.SystemFloor);
             SystemFloorSettings sf = options.SystemFloor;
             if (sf.SystemParam != null) data.SystemParam = sf.SystemParam;
             if (sf.FloorParam != null) data.FloorParam = sf.FloorParam;

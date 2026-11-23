@@ -71,15 +71,17 @@ namespace VKTools.Core.Spec
 
         public List<FloorRename> Floors { get; set; } = new List<FloorRename>();
 
+        /// <summary>Умолчание по активному набору: ADSK — VK_Сокращение системы, ADSK_Этаж, второй LSR_Имя системы; свои — Р_*, без LSR.</summary>
         public static SystemFloorSettings Default() => new SystemFloorSettings
         {
-            SystemParam = ParamKey.Shared(KnownParameters.VkSystem.Name, KnownParameters.VkSystem.Guid),
-            FloorParam = ParamKey.Shared(KnownParameters.AdskLevel.Name, KnownParameters.AdskLevel.Guid),
-            MirrorParam = ParamKey.Shared(KnownParameters.LsrSystemName.Name, KnownParameters.LsrSystemName.Guid),
+            SystemParam = ParamProfile.TargetKey(ParamRole.System),
+            FloorParam = ParamProfile.TargetKey(ParamRole.Floor),
+            MirrorParam = ParamProfile.IsOwn ? null : ParamKey.Shared(KnownParameters.LsrSystemName.Name, KnownParameters.LsrSystemName.Guid),
         };
 
         /// <summary>Параметр системы — свой параметр VK Tools: плагин может сам добавить его в проект.</summary>
-        public bool UsesVkSystem => SystemParam != null && SystemParam.Kind == ParamKeyKind.Shared && SystemParam.Guid == KnownParameters.VkSystem.Guid;
+        public bool UsesVkSystem => SystemParam != null && SystemParam.Kind == ParamKeyKind.Shared
+            && (SystemParam.Guid == KnownParameters.VkSystem.Guid || ParamProfile.OwnDefinitions.Any(d => d.Guid == SystemParam.Guid));
 
         public SystemFloorSettings Clone() => new SystemFloorSettings
         {

@@ -136,12 +136,28 @@ namespace VKTools.Core.Spec
         public static readonly IReadOnlyList<string> Columns = new[] { MaskColumn, BaseColumn, FormatColumn, ThicknessColumn, CylinderColumn };
 
         /// <summary>Как InsulationPipeOD v1.1.2: ROCKWOOL 100, марка — ТУ (ТЗ главного специалиста 2026-10-22), завод ROCKWOOL, кода нет.</summary>
-        public const string DefaultProducts =
+        public const string AdskDefaultProducts =
             "#schema=1\n"
             + "Маска типа;Основа имени;Формат имени;Толщины;Ряд Dвн;ADSK_Марка;ADSK_Завод-изготовитель;ADSK_Код изделия\n"
             + "ROCKWOOL;;" + InsulationText.DefaultNameFormat + ";20 25 30 40 50 60 70 80 90 100;"
             + "18 21 25 28 32 35 38 42 45 48 54 57 60 64 70 76 83 89 102 108 114 133 140 159 169 194 205 219 245 273;"
             + "ТУ 5762-050-45757503-15;ROCKWOOL;\n";
+
+        /// <summary>
+        /// Свои параметры «Р_» (объект «Пушкарев», 2026-11-23): те же графы в Р_*, плюс трубки K-FLEX ST (каучук) и K-FLEX PE (вспененный ПЭ)
+        /// по вендор-листу. Марка (ТУ) у K-FLEX пустая, пока нет данных каталога. Порядок строк — первое совпадение сверху.
+        /// </summary>
+        public const string OwnDefaultProducts =
+            "#schema=1\n"
+            + "Маска типа;Основа имени;Формат имени;Толщины;Ряд Dвн;Р_Марка;Р_Завод-изготовитель;Р_Код изделия\n"
+            + "K-Flex ST;;" + InsulationText.DefaultNameFormat + ";6 9 13 19 25 32 40 50;;;K-FLEX;\n"
+            + "K-Flex PE;;" + InsulationText.DefaultNameFormat + ";6 9 13 20 25;;;K-FLEX;\n"
+            + "ROCKWOOL;;" + InsulationText.DefaultNameFormat + ";20 25 30 40 50 60 70 80 90 100;"
+            + "18 21 25 28 32 35 38 42 45 48 54 57 60 64 70 76 83 89 102 108 114 133 140 159 169 194 205 219 245 273;"
+            + "ТУ 5762-050-45757503-15;ROCKWOOL;\n";
+
+        /// <summary>Таблица «Изделия» по умолчанию для активного набора параметров.</summary>
+        public static string DefaultProducts => ParamProfile.IsOwn ? OwnDefaultProducts : AdskDefaultProducts;
 
         private const string FlagsKey = "ins.flags";
         private const string OdKey = "ins.odParam";
@@ -164,9 +180,11 @@ namespace VKTools.Core.Spec
         /// <summary>Таблица «Изделия» текстом CSV.</summary>
         public string Products { get; set; } = DefaultProducts;
 
+        /// <summary>Свой набор «Р_»: наименование пишется сразу (ADSK_Наименование не трогается, с BIM2B не спорит).</summary>
         public static InsulationSettings Default() => new InsulationSettings
         {
-            NameParam = ParamKey.Shared(KnownParameters.AdskName.Name, KnownParameters.AdskName.Guid),
+            NameParam = ParamProfile.TargetKey(ParamRole.Name),
+            WriteName = ParamProfile.IsOwn,
         };
 
         public InsulationSettings Clone() => (InsulationSettings)MemberwiseClone();

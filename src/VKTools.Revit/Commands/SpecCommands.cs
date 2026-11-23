@@ -79,10 +79,11 @@ namespace VKTools.Revit.Commands
                 var timings = new OperationTimings { Trace = line => Host.Log.Info("  этап " + line) };
                 (SpecOptions options, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, module);
                 string? parameterNote = null;
-                if (module == SpecModule.SystemFloor && options.SystemFloor.WriteSystem && options.SystemFloor.UsesVkSystem)
+                // Свой набор «Р_»: параметры нужны всем модулям; набор ADSK — только «VK_Сокращение системы» для «Системы и этажа»
+                if (Core.Config.ParamProfile.IsOwn || (module == SpecModule.SystemFloor && options.SystemFloor.WriteSystem && options.SystemFloor.UsesVkSystem))
                 {
                     string? refused = VkParameters.Ensure(doc, app.Application, out parameterNote);
-                    if (refused != null) parameterNote = $"«{Core.Config.KnownParameters.VkSystem.Name}» не добавлен: {refused}. Система в него писаться не будет.";
+                    if (refused != null) parameterNote = $"свои параметры VK Tools не добавлены: {refused}. В них ничего писаться не будет.";
                 }
                 options.Scope = SpecParamsHost.LastScope(module);
                 List<ElementId>? scope = SpecScope.Resolve(uidoc, options, out string scopeLabel);

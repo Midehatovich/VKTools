@@ -27,6 +27,7 @@ namespace VKTools.Revit.Calc
             defaults.CordText = LoadText(loader, CalcTables.Cord, defaults);
             defaults.ReserveText = LoadText(loader, CalcTables.Reserve, defaults);
             SpecProjectSettings stored = SpecSettingsStore.Read(doc, out int storages);
+            ParamProfile.Active = ParamProfile.Resolve(stored);
             var issues = new List<ConfigIssue>();
             CalcOptions options = CalcOptions.Load(stored, defaults, issues, out string? blocked);
             defaults.Issues.AddRange(issues);

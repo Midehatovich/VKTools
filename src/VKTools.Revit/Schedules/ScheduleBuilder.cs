@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
+using VKTools.Core.Config;
 using VKTools.Core.Schedules;
 using VKTools.Core.Spec;
 using VKTools.Revit.Compat;
@@ -86,6 +87,7 @@ namespace VKTools.Revit.Schedules
                             schedule.ViewTemplateId = ElementId.InvalidElementId;
                             result.Notes.Add($"копия отвязана от шаблона вида «{templateName}»: иначе шаблон не дал бы поставить фильтры (эталон не тронут)");
                         }
+                        if (ParamProfile.IsOwn) RemapToOwn(doc, schedule, result);
                     }
                     if (!ApplyFilters(doc, schedule, data, request, set, result))
                     {
@@ -227,6 +229,94 @@ namespace VKTools.Revit.Schedules
             {
                 result.Notes.Add("высота строк на листе — 8 мм");
             }
+        }
+
+        /// <summary>
+        /// Свой набор «Р_» (0.14.0): в копии эталона КрМа3 графы ADSK_* заменяются на Р_* той же роли — место, заголовок, ширины,
+        /// выравнивание, формат, стиль, итоги, скрытость, сортировка и фильтры переносятся на новую графу. Эталон не меняется.
+        /// Вычисляемые графы (формулы с ADSK_*) Revit пересобрать не даёт — о них замечание.
+        /// </summary>
+        private static void RemapToOwn(Document doc, ViewSchedule schedule, ScheduleResult result)
+        {
+            ScheduleDefinition definition = schedule.Definition;
+            var replaced = new List<string>();
+            var failed = new List<string>();
+            IList<ScheduleFieldId> order = definition.GetFieldOrder();
+            for (int index = 0; index < order.Count; index++)
+            {
+                ScheduleField old = definition.GetField(order[index]);
+                if (old.IsCalculatedField)
+                {
+                    if (old.GetName().IndexOf("ADSK_", StringComparison.Ordinal) >= 0) failed.Add($"«{old.ColumnHeading}» (вычисляемая)");
+                    continue;
+                }
+                if (!(doc.GetElement(old.ParameterId) is SharedParameterElement shared)) continue;
+                ParamRole? role = ParamProfile.RoleOf(shared.GuidValue);
+                if (role == null) continue;
+                OwnParamDef own = ParamProfile.Own(role.Value);
+                if (shared.GuidValue == own.Guid) continue;
+                SchedulableField? candidate = definition.GetSchedulableFields()
+                    .Where(c => doc.GetElement(c.ParameterId) is SharedParameterElement sp && sp.GuidValue == own.Guid)
+                    .OrderBy(c => c.FieldType == ScheduleFieldType.Instance ? 0 : 1).FirstOrDefault();
+                if (candidate == null)
+                {
+                    failed.Add($"«{old.ColumnHeading}» ({own.Name} нет у категорий спецификации)");
+                    continue;
+                }
+                try
+                {
+                    ScheduleField field = definition.InsertField(candidate, index);
+                    field.ColumnHeading = old.ColumnHeading;
+                    field.IsHidden = old.IsHidden;
+                    field.HorizontalAlignment = old.HorizontalAlignment;
+                    field.GridColumnWidth = old.GridColumnWidth;
+                    field.SetStyle(old.GetStyle());
+                    try
+                    {
+                        field.SetFormatOptions(old.GetFormatOptions());
+                    }
+                    catch (Autodesk.Revit.Exceptions.ApplicationException)
+                    {
+                        // формат числа к тексту не подходит — как в проекте
+                    }
+                    if (old.DisplayType == ScheduleFieldDisplayType.Totals && field.CanTotal()) field.DisplayType = ScheduleFieldDisplayType.Totals;
+
+                    ScheduleFieldId oldId = old.FieldId;
+                    ScheduleFieldId newId = field.FieldId;
+                    IList<ScheduleSortGroupField> sorts = definition.GetSortGroupFields();
+                    var remapped = new List<ScheduleSortGroupField>();
+                    foreach (ScheduleSortGroupField sg in sorts)
+                    {
+                        if (sg.FieldId != oldId)
+                        {
+                            remapped.Add(sg);
+                            continue;
+                        }
+                        remapped.Add(new ScheduleSortGroupField(newId, sg.SortOrder)
+                        {
+                            ShowHeader = sg.ShowHeader,
+                            ShowFooter = sg.ShowFooter,
+                            ShowBlankLine = sg.ShowBlankLine,
+                        });
+                    }
+                    definition.SetSortGroupFields(remapped);
+                    IList<ScheduleFilter> filters = definition.GetFilters();
+                    foreach (ScheduleFilter f in filters)
+                    {
+                        if (f.FieldId == oldId) f.FieldId = newId;
+                    }
+                    definition.SetFilters(filters);
+                    definition.RemoveField(oldId);
+                    replaced.Add($"{shared.Name} → {own.Name}");
+                    order = definition.GetFieldOrder();
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+                {
+                    failed.Add($"«{old.ColumnHeading}» ({ex.Message})");
+                }
+            }
+            if (replaced.Count > 0) result.Notes.Add("графы эталона на свои параметры: " + string.Join(", ", replaced));
+            if (failed.Count > 0) result.Notes.Add("графы остались на ADSK_ — проверьте вручную: " + string.Join("; ", failed));
         }
 
         /// <summary>Текст ячеек графы — по центру строки по вертикали (в многострочном наименовании соседние графы не прилипают к верху).</summary>

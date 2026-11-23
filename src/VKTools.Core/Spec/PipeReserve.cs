@@ -230,7 +230,7 @@ namespace VKTools.Core.Spec
 
         public static PipeReserveSettings Default() => new PipeReserveSettings
         {
-            QtyParam = ParamKey.Shared(KnownParameters.AdskQuantity.Name, KnownParameters.AdskQuantity.Guid),
+            QtyParam = ParamProfile.TargetKey(ParamRole.Quantity),
         };
 
         public PipeReserveSettings Clone() => (PipeReserveSettings)MemberwiseClone();

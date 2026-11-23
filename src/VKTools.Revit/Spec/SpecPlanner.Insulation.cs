@@ -180,13 +180,16 @@ namespace VKTools.Revit.Spec
                 {
                     foreach (KeyValuePair<string, string> column in product.Values)
                     {
+                        // Свой набор «Р_»: колонка ADSK_Марка старой таблицы пишется в Р_Марка, LSR_* — не пишется
+                        string? columnParam = ParamProfile.MapNameToActive(column.Key);
+                        if (columnParam == null) continue;
                         string value = InsulationText.Render(column.Value, product.BaseName.Length > 0 ? product.BaseName : comment, thickness, od, cylinder, out string? error);
                         if (error != null)
                         {
-                            _plan.AddIssue(M, Severity.Warning, column.Key, error, subject, id);
+                            _plan.AddIssue(M, Severity.Warning, columnParam, error, subject, id);
                             continue;
                         }
-                        PlanProductValue(insulation, type, column.Key, column.Value, value, subject, source, typeDone);
+                        PlanProductValue(insulation, type, columnParam, column.Value, value, subject, source, typeDone);
                     }
                 }
 

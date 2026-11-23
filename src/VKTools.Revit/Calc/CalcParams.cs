@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Autodesk.Revit.DB;
 using VKTools.Core.Calc;
+using VKTools.Core.Config;
 using VKTools.Core.Spec;
 using VKTools.Revit.Compat;
 
@@ -21,10 +22,11 @@ namespace VKTools.Revit.Calc
         public const string Manual = "SYS_Кол-во вручную";
         public const string Mode = "SYS_Способ";
         public const string Basis = "SYS_Основание";
-        public const string Quantity = "ADSK_Количество";
-        public const string Name = "ADSK_Наименование";
-        public const string Unit = "ADSK_Единица измерения";
-        public const string Group = "ADSK_Группирование";
+        // Набор параметров модели (ADSK_ или свои «Р_», ParamProfile): ставит CalcSettingsLoader до анализа
+        public static string Quantity => ParamProfile.Target(ParamRole.Quantity).Name;
+        public static string Name => ParamProfile.Target(ParamRole.Name).Name;
+        public static string Unit => ParamProfile.Target(ParamRole.Unit).Name;
+        public static string Group => ParamProfile.Target(ParamRole.Group).Name;
 
         /// <summary>Параметр по имени; null и причина, если его нет или их несколько.</summary>
         public static Parameter? Find(Element? element, string name, out string? problem)
