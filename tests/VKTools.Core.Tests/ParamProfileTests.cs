@@ -21,6 +21,7 @@ namespace VKTools.Core.Tests
         public void Dispose()
         {
             ParamProfile.Active = ParamSetKind.Adsk;
+            GC.SuppressFinalize(this);
         }
 
         [Fact]
