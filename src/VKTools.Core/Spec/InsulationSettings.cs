@@ -139,7 +139,7 @@ namespace VKTools.Core.Spec
         public const string AdskDefaultProducts =
             "#schema=1\n"
             + "Маска типа;Основа имени;Формат имени;Толщины;Ряд Dвн;ADSK_Марка;ADSK_Завод-изготовитель;ADSK_Код изделия\n"
-            + "ROCKWOOL;;" + InsulationText.DefaultNameFormat + ";20 25 30 40 50 60 70 80 90 100;"
+            + "Цилиндры;Цилиндры минераловатные кашированные фольгой ROCKWOOL 100 (НГ);" + InsulationText.DefaultNameFormat + ";20 25 30 40 50 60 70 80 90 100;"
             + "18 21 25 28 32 35 38 42 45 48 54 57 60 64 70 76 83 89 102 108 114 133 140 159 169 194 205 219 245 273;"
             + "ТУ 5762-050-45757503-15;ROCKWOOL;\n";
 
@@ -150,9 +150,9 @@ namespace VKTools.Core.Spec
         public const string OwnDefaultProducts =
             "#schema=1\n"
             + "Маска типа;Основа имени;Формат имени;Толщины;Ряд Dвн;Р_Марка;Р_Завод-изготовитель;Р_Код изделия\n"
-            + "K-Flex ST;;" + InsulationText.DefaultNameFormat + ";6 9 13 19 25 32 40 50;;;K-FLEX;\n"
-            + "K-Flex PE;;" + InsulationText.DefaultNameFormat + ";6 9 13 20 25;;;K-FLEX;\n"
-            + "ROCKWOOL;;" + InsulationText.DefaultNameFormat + ";20 25 30 40 50 60 70 80 90 100;"
+            + "K-Flex ST;Трубки теплоизоляционные из вспененного каучука K-FLEX ST;" + InsulationText.DefaultNameFormat + ";6 9 13 19 25 32 40 50;;;K-FLEX;\n"
+            + "K-Flex PE;Трубки теплоизоляционные из вспененного полиэтилена K-FLEX PE;" + InsulationText.DefaultNameFormat + ";6 9 13 20 25;;;K-FLEX;\n"
+            + "Цилиндры;Цилиндры минераловатные кашированные фольгой ROCKWOOL 100 (НГ);" + InsulationText.DefaultNameFormat + ";20 25 30 40 50 60 70 80 90 100;"
             + "18 21 25 28 32 35 38 42 45 48 54 57 60 64 70 76 83 89 102 108 114 133 140 159 169 194 205 219 245 273;"
             + "ТУ 5762-050-45757503-15;ROCKWOOL;\n";
 

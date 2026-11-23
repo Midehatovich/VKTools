@@ -124,9 +124,10 @@ namespace VKTools.Core.Tests
             InsulationProduct st = InsulationSettings.Match(products, "K-Flex ST", "")!;
             Assert.Equal("K-Flex ST", st.Mask);
             Assert.Contains(st.Values, v => v.Key == "Р_Завод-изготовитель" && v.Value == "K-FLEX");
-            Assert.Equal("ROCKWOOL", InsulationSettings.Match(products, "ADSK_Цилиндры некашированные(ROCKWOOL)", "")!.Mask);
+            Assert.Equal("Цилиндры", InsulationSettings.Match(products, "ADSK_Цилиндры некашированные", "")!.Mask);
+            Assert.Equal("Трубки теплоизоляционные из вспененного каучука K-FLEX ST", st.BaseName);
             Assert.Equal("K-Flex PE", InsulationSettings.Match(products, "Изоляция K-Flex PE", "")!.Mask);
-            Assert.Contains(InsulationSettings.Match(products, "ADSK_Цилиндры некашированные(ROCKWOOL)", "")!.Values,
+            Assert.Contains(InsulationSettings.Match(products, "ADSK_Цилиндры некашированные", "")!.Values,
                 v => v.Key == "Р_Марка" && v.Value == "ТУ 5762-050-45757503-15");
         }
 
