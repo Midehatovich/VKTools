@@ -49,6 +49,19 @@ namespace VKTools.Revit.Compat
 #endif
         }
 
+        /// <summary>Параметр семейства (не общий) с именем и типом данных определения ФОП: текст или число.</summary>
+        public static FamilyParameter AddPlainParameter(this FamilyManager manager, ExternalDefinition definition, bool instance)
+        {
+#if REVIT2022_OR_GREATER
+            ForgeTypeId spec = definition.GetDataType();
+            if (spec == null || spec.Empty()) spec = SpecTypeId.String.Text;
+            return manager.AddParameter(definition.Name, GroupTypeId.Data, spec, instance);
+#else
+            ParameterType type = definition.ParameterType == ParameterType.Number ? ParameterType.Number : ParameterType.Text;
+            return manager.AddParameter(definition.Name, BuiltInParameterGroup.PG_DATA, type, instance);
+#endif
+        }
+
         /// <summary>Перепривязать параметр проекта к другому набору категорий, не меняя группу параметра.</summary>
         public static bool ReInsertKeepingGroup(this BindingMap map, Definition definition, ElementBinding binding)
         {

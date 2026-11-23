@@ -46,7 +46,9 @@ namespace VKTools.Revit.Calc
             (SpecOptions sfOptions, _) = SpecSettingsLoader.Load(doc, SpecModule.SystemFloor);
             SystemFloorSettings sf = sfOptions.SystemFloor;
             Dictionary<string, List<(Definition Definition, ElementBinding Binding)>> bindings = CalcParams.ProjectBindings(doc);
-            if (stored.Get("calc.systemParam") == null && !bindings.ContainsKey(options.SystemParameter.Trim()) && sf.SystemParam != null)
+            // Свой набор «Р_» (0.14.2, Пушкарев): LSR_ не пишется и может быть привязан пустым — система позиций только из Р_Сокращение системы.
+            bool ownSet = ParamProfile.IsOwn && options.SystemParameter.Trim().StartsWith("LSR_", StringComparison.Ordinal);
+            if (sf.SystemParam != null && (ownSet || (stored.Get("calc.systemParam") == null && !bindings.ContainsKey(options.SystemParameter.Trim()))))
             {
                 options.SystemParameter = sf.SystemParam.Name;
             }
