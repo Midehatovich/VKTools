@@ -226,4 +226,61 @@ namespace VKTools.Revit.UI
             options.PipeNames = pn;
         }
     }
+
+    /// <summary>Вкладка «Настройка» окна «Марки и поставщики»: перезапись, параметр наименования и таблица правил.</summary>
+    internal sealed class VendorPanel : PipeTablePanel
+    {
+        private readonly CheckBox _overwrite;
+        private readonly ComboBox _name;
+
+        public VendorPanel(string documentTitle)
+            : base("vendor.csv", documentTitle,
+                "Правила: первая подходящая строка сверху. «Маска наименования» — часть наименования элемента или «Семейство : Тип» (с * — маска целиком, "
+                + "например «*SML*», «Хомут соединительный*»). Марка, код, завод — что записать; пустая графа — не трогать. Строка без всех трёх — "
+                + "исключение (элемент не трогается). Наименования не меняются. Колонка «Примечание» — для себя.",
+                VendorSettings.Columns, "Правила → сколько элементов; ниже — наименования без правила с пустыми графами (по последнему «Обновить»)")
+        {
+            var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
+            row.Children.Add(new TextBlock { Text = "Маску искать в", Width = 110, VerticalAlignment = VerticalAlignment.Center });
+            _name = new ComboBox { Width = 360, ToolTip = "Обычно наименование (Р_Наименование или ADSK_Наименование); пустое у экземпляра — берётся у типа." };
+            _name.SelectionChanged += (s, e) => RaiseChanged();
+            row.Children.Add(_name);
+            _overwrite = new CheckBox
+            {
+                Content = "Перезаписывать заполненные",
+                Margin = new Thickness(16, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = "Выключено — пишутся только пустые: марка из семейства (ADSK_) и ручная правка остаются. Включено — таблица главнее.",
+            };
+            _overwrite.Click += (s, e) => RaiseChanged();
+            row.Children.Add(_overwrite);
+            Top.Children.Add(row);
+            Top.Children.Add(new TextBlock
+            {
+                Text = "Запускайте после «Имён труб»: маска ищется по готовому наименованию. Служебные позиции (_SYS_) не трогаются — их завод задаётся "
+                    + "в «Расчётных позициях» (колонка «Завод-изготовитель» таблицы ресурсов).",
+                Foreground = Brushes.DimGray,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        protected override ComboBox ParamBox => _name;
+
+        protected override ParamKey? Param(SpecOptions options) => options.Vendor.NameParam;
+
+        protected override string TableText(SpecOptions options) => options.Vendor.Rules;
+
+        protected override void LoadOwn(SpecOptions options) => _overwrite.IsChecked = options.Vendor.Overwrite;
+
+        protected override void Parse(string text, List<ConfigIssue> issues) => VendorSettings.ParseRules(text, issues);
+
+        public override void ApplyTo(SpecOptions options)
+        {
+            VendorSettings vd = options.Vendor.Clone();
+            vd.Overwrite = _overwrite.IsChecked == true;
+            vd.NameParam = SelectedParam;
+            vd.Rules = Table.Text();
+            options.Vendor = vd;
+        }
+    }
 }

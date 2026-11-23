@@ -238,6 +238,8 @@ namespace VKTools.Revit.UI
             string what = options.Module == SpecModule.SystemFloor ? SystemFloorText(options.SystemFloor)
                 : options.Module == SpecModule.PipeReserve
                     ? $"параметр количества {options.Reserve.QtyParam?.Name ?? "не выбран"}, строк таблицы «Коэффициенты» {PipeReserveSettings.ParseRules(options.Reserve.Table, new List<ConfigIssue>()).Count}"
+                : options.Module == SpecModule.Vendor
+                    ? $"{(options.Vendor.Overwrite ? "перезапись заполненных" : "только пустые")}, поиск по {options.Vendor.NameParam?.Name ?? "не выбран"}, правил {VendorSettings.ParseRules(options.Vendor.Rules, new List<ConfigIssue>()).Count}"
                 : options.Module == SpecModule.PipeNames
                     ? $"имена {(options.PipeNames.WriteName ? "пишутся" : "только проверка")} в {options.PipeNames.NameParam?.Name ?? "не выбран"}, правил {PipeNameSettings.ParseRules(options.PipeNames.Rules, new List<ConfigIssue>()).Count}"
                 : options.Module == SpecModule.Insulation

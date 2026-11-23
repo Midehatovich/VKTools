@@ -25,6 +25,9 @@ namespace VKTools.Core.Spec
 
         /// <summary>Р5: ADSK_Наименование труб по правилу типа (Ду×S / Dнар×S), по умолчанию только проверка (VgpNameDuS v1.1).</summary>
         PipeNames = 5,
+
+        /// <summary>0.15.0: марка, код изделия и завод-изготовитель по маске наименования (таблица «Марки и поставщики»).</summary>
+        Vendor = 6,
     }
 
     public static class SpecModuleText
@@ -36,6 +39,7 @@ namespace VKTools.Core.Spec
             SpecModule.Insulation => "Изоляция",
             SpecModule.PipeReserve => "Запас труб",
             SpecModule.PipeNames => "Имена труб",
+            SpecModule.Vendor => "Марки и поставщики",
             _ => "Группирование",
         };
     }

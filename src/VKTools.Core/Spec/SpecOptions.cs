@@ -41,6 +41,9 @@ namespace VKTools.Core.Spec
         /// <summary>«Имена труб»: встроенное умолчание (стиль бюро, только проверка).</summary>
         public PipeNameSettings PipeNames { get; } = PipeNameSettings.Default();
 
+        /// <summary>«Марки и поставщики»: встроенное умолчание (пустая таблица, только пустые значения).</summary>
+        public VendorSettings Vendor { get; } = VendorSettings.Default();
+
         /// <summary>Настройка проекта в модели повреждена: запись запрещена, пока её не сохранят заново.</summary>
         public string? ProjectBlocked { get; set; }
 
@@ -85,6 +88,9 @@ namespace VKTools.Core.Spec
         /// <summary>«Имена труб»: писать ли, параметр и таблица «Правила».</summary>
         public PipeNameSettings PipeNames { get; set; } = PipeNameSettings.Default();
 
+        /// <summary>«Марки и поставщики»: перезапись, параметр наименования и таблица правил.</summary>
+        public VendorSettings Vendor { get; set; } = VendorSettings.Default();
+
         /// <summary>«Система и этаж» с переносом: настройка переноса есть в модели (иначе — по умолчанию).</summary>
         public bool NestedSavedInProject { get; set; }
 
@@ -108,6 +114,7 @@ namespace VKTools.Core.Spec
             SpecModule.Insulation => Insulation.Signature(),
             SpecModule.PipeReserve => Reserve.Signature(),
             SpecModule.PipeNames => PipeNames.Signature(),
+            SpecModule.Vendor => Vendor.Signature(),
             _ => TableSignature() + "|" + Kits.Signature(),
         };
 
@@ -119,6 +126,7 @@ namespace VKTools.Core.Spec
             SpecModule.Insulation => Insulation.Signature(),
             SpecModule.PipeReserve => Reserve.Signature(),
             SpecModule.PipeNames => PipeNames.Signature(),
+            SpecModule.Vendor => Vendor.Signature(),
             _ => TableSignature() + "|" + Kits.Signature() + "|" + Kits.Words,
         };
 
@@ -142,6 +150,7 @@ namespace VKTools.Core.Spec
                 Insulation = defaults.Insulation.Clone(),
                 Reserve = defaults.Reserve.Clone(),
                 PipeNames = defaults.PipeNames.Clone(),
+                Vendor = defaults.Vendor.Clone(),
             };
             return Module == SpecModule.Grouping ? TableSignature() == asDefault.TableSignature() : SettingsSignature() == asDefault.SettingsSignature();
         }
@@ -155,6 +164,7 @@ namespace VKTools.Core.Spec
                 case SpecModule.Insulation: Insulation = defaults.Insulation.Clone(); break;
                 case SpecModule.PipeReserve: Reserve = defaults.Reserve.Clone(); break;
                 case SpecModule.PipeNames: PipeNames = defaults.PipeNames.Clone(); break;
+                case SpecModule.Vendor: Vendor = defaults.Vendor.Clone(); break;
             }
         }
 
@@ -170,6 +180,7 @@ namespace VKTools.Core.Spec
             Insulation = Insulation.Clone(),
             Reserve = Reserve.Clone(),
             PipeNames = PipeNames.Clone(),
+            Vendor = Vendor.Clone(),
             NestedSavedInProject = NestedSavedInProject,
             SavedInProject = SavedInProject,
             SavedStamp = SavedStamp,
@@ -188,6 +199,13 @@ namespace VKTools.Core.Spec
                 Reserve.StoreTo(settings, isDefault);
                 if (isDefault) settings.ClearStamp(SpecProjectSettings.ReserveSection);
                 else settings.SetStamp(SpecProjectSettings.ReserveSection, user, when);
+                return;
+            }
+            if (Module == SpecModule.Vendor)
+            {
+                Vendor.StoreTo(settings, isDefault);
+                if (isDefault) settings.ClearStamp(SpecProjectSettings.VendorSection);
+                else settings.SetStamp(SpecProjectSettings.VendorSection, user, when);
                 return;
             }
             if (Module == SpecModule.PipeNames)
@@ -253,6 +271,7 @@ namespace VKTools.Core.Spec
                 Insulation = defaults.Insulation.Clone(),
                 Reserve = defaults.Reserve.Clone(),
                 PipeNames = defaults.PipeNames.Clone(),
+                Vendor = defaults.Vendor.Clone(),
             };
             var parseIssues = new List<ConfigIssue>();
             bool broken = false;
@@ -266,6 +285,23 @@ namespace VKTools.Core.Spec
                         options.Reserve = parsed;
                         options.SavedInProject = true;
                         options.SavedStamp = settings.Stamp(SpecProjectSettings.ReserveSection);
+                    }
+                    else
+                    {
+                        broken = true;
+                    }
+                }
+            }
+            else if (module == SpecModule.Vendor)
+            {
+                if (VendorSettings.IsStored(settings))
+                {
+                    VendorSettings? parsed = VendorSettings.Parse(settings, parseIssues);
+                    if (parsed != null)
+                    {
+                        options.Vendor = parsed;
+                        options.SavedInProject = true;
+                        options.SavedStamp = settings.Stamp(SpecProjectSettings.VendorSection);
                     }
                     else
                     {

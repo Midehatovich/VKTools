@@ -62,6 +62,14 @@ namespace VKTools.Revit.Commands
             SpecLauncher.Run(commandData.Application, SpecModule.PipeNames);
     }
 
+    /// <summary>«Марки и поставщики» (0.15.0): марка, код изделия, завод по маске наименования из таблицы проекта.</summary>
+    [Transaction(TransactionMode.ReadOnly)]
+    public sealed class VendorCommand : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements) =>
+            SpecLauncher.Run(commandData.Application, SpecModule.Vendor);
+    }
+
     /// <summary>
     /// Общий запуск модулей Р2: настройки из модели (или по умолчанию) → анализ → окно. Сама команда только анализирует;
     /// пробный прогон, запись и сохранение настройки идут из окна через ExternalEvent.

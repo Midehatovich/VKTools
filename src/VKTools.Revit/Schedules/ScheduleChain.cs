@@ -20,6 +20,7 @@ namespace VKTools.Revit.Schedules
         Calc,
         PipeReserve,
         PipeNames,
+        Vendor,
     }
 
     internal sealed class ChainStepResult
@@ -48,7 +49,7 @@ namespace VKTools.Revit.Schedules
     /// </summary>
     internal static class ScheduleChain
     {
-        public static readonly IReadOnlyList<ChainStep> Order = new[] { ChainStep.Insulation, ChainStep.Grouping, ChainStep.Calc, ChainStep.PipeReserve, ChainStep.PipeNames };
+        public static readonly IReadOnlyList<ChainStep> Order = new[] { ChainStep.Insulation, ChainStep.Grouping, ChainStep.Calc, ChainStep.PipeReserve, ChainStep.PipeNames, ChainStep.Vendor };
 
         public static string Title(ChainStep step) => step switch
         {
@@ -56,6 +57,7 @@ namespace VKTools.Revit.Schedules
             ChainStep.Grouping => "Группирование",
             ChainStep.Calc => "Расчётные позиции",
             ChainStep.PipeReserve => "Запас труб",
+            ChainStep.Vendor => "Марки и поставщики",
             _ => "Имена труб",
         };
 
@@ -68,6 +70,7 @@ namespace VKTools.Revit.Schedules
                 ChainStep.Insulation => SpecModule.Insulation,
                 ChainStep.Grouping => SpecModule.Grouping,
                 ChainStep.PipeReserve => SpecModule.PipeReserve,
+                ChainStep.Vendor => SpecModule.Vendor,
                 _ => SpecModule.PipeNames,
             };
             return RunSpec(doc, module, Title(step), progress, timings);

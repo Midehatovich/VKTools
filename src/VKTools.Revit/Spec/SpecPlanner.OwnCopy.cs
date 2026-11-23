@@ -110,8 +110,12 @@ namespace VKTools.Revit.Spec
                         _plan.AddIssue(M, Severity.Warning, own.Name, $"{adsk.Name}: {problem} — не копируем", subject, e.Id.ToLong());
                         continue;
                     }
-                    value ??= target.StorageType == StorageType.String ? ParamValue.OfText(string.Empty) : null;
-                    if (value == null) continue;   // числа нет ни в ADSK_, ни в Р_ — нечего менять (число не «очищается»)
+                    if (value == null || (value.Kind == ParamValueKind.Text && value.Text.Trim().Length == 0))
+                    {
+                        // 0.15.0: пустое ADSK_ не стирает заполненное Р_ — ручная правка и «Марки и поставщики» остаются (Пушкарев 2026-11-23)
+                        if (target.StorageType == StorageType.String && !IsBlank(target)) Skipped("пустое ADSK_ не стирает заполненное Р_");
+                        continue;
+                    }
                     copied++;
                     ParamValue? current = ParamAccess.Read(target);
                     if (current != null && current.SameAs(value))

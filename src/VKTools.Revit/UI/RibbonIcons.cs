@@ -50,6 +50,10 @@ namespace VKTools.Revit.UI
         public static ImageSource PipeNames(int size) =>
             Draw(size, Green, "M 5,8 L 27,8 M 5,15 L 27,15 M 7,22 L 13,22 M 17,22 L 25,22 M 7,26.5 L 20,26.5");
 
+        /// <summary>Ярлык с отверстием: марка и поставщик.</summary>
+        public static ImageSource Vendor(int size) =>
+            Draw(size, Green, "M 6,10 L 18,10 L 26,16 L 18,22 L 6,22 Z M 18.5,16 L 19.5,16 M 9,14 L 14,14 M 9,18 L 14,18");
+
         /// <summary>Знак суммы: расчётные позиции.</summary>
         public static ImageSource Calc(int size) =>
             Draw(size, Green, "M 23,8 L 9,8 L 16,16 L 9,24 L 23,24");
