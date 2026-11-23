@@ -91,7 +91,13 @@ namespace VKTools.Revit.Commands
                 if (Core.Config.ParamProfile.IsOwn || (module == SpecModule.SystemFloor && options.SystemFloor.WriteSystem && options.SystemFloor.UsesVkSystem))
                 {
                     string? refused = VkParameters.Ensure(doc, app.Application, out parameterNote);
-                    if (refused != null) parameterNote = $"свои параметры VK Tools не добавлены: {refused}. В них ничего писаться не будет.";
+                    if (refused != null)
+                    {
+                        // Окно открывается командой только для чтения: параметры (и перевод «Р_» 0.14 → 0.15) добавятся при «Применить»
+                        parameterNote = doc.IsReadOnly || refused.Contains("только для чтения")
+                            ? "свои параметры VK Tools добавятся (или переведутся на нередактируемые) при «Применить»; до этого анализ покажет «нет у категории»."
+                            : $"свои параметры VK Tools не добавлены: {refused}. В них ничего писаться не будет.";
+                    }
                 }
                 options.Scope = SpecParamsHost.LastScope(module);
                 List<ElementId>? scope = SpecScope.Resolve(uidoc, options, out string scopeLabel);

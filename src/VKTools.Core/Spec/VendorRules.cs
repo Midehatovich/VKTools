@@ -64,6 +64,11 @@ namespace VKTools.Core.Spec
             "#schema=1\n"
             + "Маска наименования;Марка;Код изделия;Завод-изготовитель;Примечание\n";
 
+        /// <summary>Значение графы «очистить» (например, лишний код изделия из семейства): пишется пустое, даже без «Перезаписывать».</summary>
+        public const string ClearToken = "<пусто>";
+
+        public static bool IsClear(string value) => string.Equals((value ?? string.Empty).Trim(), ClearToken, StringComparison.OrdinalIgnoreCase);
+
         private const string FlagsKey = "vd.flags";
         private const string NameKey = "vd.nameParam";
         private const string RulesKey = "vd.rules";

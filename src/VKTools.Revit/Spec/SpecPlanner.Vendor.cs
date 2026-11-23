@@ -142,12 +142,14 @@ namespace VKTools.Revit.Spec
                         continue;
                     }
                     string current = (target.AsString() ?? string.Empty).Trim();
+                    bool clear = VendorSettings.IsClear(value);
+                    if (clear) value = string.Empty;   // «<пусто>»: очистить всегда (лишний код из семейства), без галки перезаписи
                     if (string.Equals(current, value, StringComparison.Ordinal))
                     {
                         _plan.CountUnchanged(M);
                         continue;
                     }
-                    if (current.Length > 0 && !vd.Overwrite)
+                    if (current.Length > 0 && !vd.Overwrite && !clear)
                     {
                         kept++;
                         continue;
@@ -175,7 +177,7 @@ namespace VKTools.Revit.Spec
             foreach (VendorRule rule in rules)
             {
                 byRule.TryGetValue(rule, out int n);
-                string fills = string.Join(", ", VendorSettings.Roles.Where(r => rule.Value(r).Length > 0).Select(r => rule.Value(r)));
+                string fills = string.Join(", ", VendorSettings.Roles.Where(r => rule.Value(r).Length > 0).Select(r => VendorSettings.IsClear(rule.Value(r)) ? "очистить " + ParamProfile.TargetKey(r).Name : rule.Value(r)));
                 _plan.Preview.Add($"строка {rule.Line} «{rule.Mask}» → {(fills.Length > 0 ? fills : "не трогать")}: {n} шт.");
             }
             if (unmatched.Count > 0)

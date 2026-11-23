@@ -79,6 +79,15 @@ namespace VKTools.Core.Tests
         }
 
         [Fact]
+        public void Токен_пусто_значит_очистить()
+        {
+            Assert.True(VendorSettings.IsClear("<пусто>"));
+            Assert.True(VendorSettings.IsClear(" <ПУСТО> "));
+            Assert.False(VendorSettings.IsClear(""));
+            Assert.False(VendorSettings.IsClear("ГОСТ 6948-75*"));
+        }
+
+        [Fact]
         public void По_умолчанию_пустая_таблица_и_только_пустые()
         {
             VendorSettings vd = VendorSettings.Default();
