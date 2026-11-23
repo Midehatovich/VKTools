@@ -152,6 +152,8 @@ namespace VKTools.Revit.Schedules
                         schedule.ViewTemplateId = ElementId.InvalidElementId;
                         result.Notes.Add("спецификация отвязана от шаблона вида");
                     }
+                    // 0.14.3: графы, оставшиеся на ADSK_ (в т. ч. комбинированные), переводятся на «Р_» и при «Обновить».
+                    if (ParamProfile.IsOwn) RemapToOwn(doc, schedule, result);
                     if (!ApplyFilters(doc, schedule, data, request, set, result))
                     {
                         t.RollBack();
@@ -250,6 +252,13 @@ namespace VKTools.Revit.Schedules
                     if (old.GetName().IndexOf("ADSK_", StringComparison.Ordinal) >= 0) failed.Add($"«{old.ColumnHeading}» (вычисляемая)");
                     continue;
                 }
+#if REVIT2022_OR_GREATER
+                if (old.IsCombinedParameterField)
+                {
+                    RemapCombined(doc, old, replaced, failed);
+                    continue;
+                }
+#endif
                 if (!(doc.GetElement(old.ParameterId) is SharedParameterElement shared)) continue;
                 ParamRole? role = ParamProfile.RoleOf(shared.GuidValue);
                 if (role == null) continue;
@@ -318,6 +327,55 @@ namespace VKTools.Revit.Schedules
             if (replaced.Count > 0) result.Notes.Add("графы эталона на свои параметры: " + string.Join(", ", replaced));
             if (failed.Count > 0) result.Notes.Add("графы остались на ADSK_ — проверьте вручную: " + string.Join("; ", failed));
         }
+
+#if REVIT2022_OR_GREATER
+        /// <summary>
+        /// Графа «Комбинировать параметры» (Пушкарев 2026-11-23: наименование эталона КрМа3 показывало ADSK_, а сортировка уже шла по Р_ —
+        /// в строках «‹варианты›» и пустые имена): части ADSK_ роли заменяются своими «Р_», префиксы и разделители сохраняются.
+        /// </summary>
+        private static void RemapCombined(Document doc, ScheduleField field, List<string> replaced, List<string> failed)
+        {
+            IList<TableCellCombinedParameterData> parts = field.GetCombinedParameters();
+            var updated = new List<TableCellCombinedParameterData>();
+            var names = new List<string>();
+            bool changed = false;
+            foreach (TableCellCombinedParameterData part in parts)
+            {
+                ElementId id = part.ParamId;
+                if (doc.GetElement(id) is SharedParameterElement shared && ParamProfile.RoleOf(shared.GuidValue) is ParamRole role
+                    && shared.GuidValue != ParamProfile.Own(role).Guid)
+                {
+                    OwnParamDef own = ParamProfile.Own(role);
+                    SharedParameterElement? target = SharedParameterElement.Lookup(doc, own.Guid);
+                    if (target == null)
+                    {
+                        failed.Add($"«{field.ColumnHeading}» (комбинированная: {own.Name} нет в проекте)");
+                        return;
+                    }
+                    id = target.Id;
+                    names.Add($"{shared.Name} → {own.Name}");
+                    changed = true;
+                }
+                TableCellCombinedParameterData copy = TableCellCombinedParameterData.Create();
+                copy.ParamId = id;
+                copy.Prefix = part.Prefix;
+                copy.Suffix = part.Suffix;
+                copy.Separator = part.Separator;
+                copy.SampleValue = part.SampleValue;
+                updated.Add(copy);
+            }
+            if (!changed) return;
+            try
+            {
+                field.SetCombinedParameters(updated);
+                replaced.Add($"«{field.ColumnHeading}» (комбинированная): " + string.Join(", ", names));
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+            {
+                failed.Add($"«{field.ColumnHeading}» (комбинированная: {ex.Message})");
+            }
+        }
+#endif
 
         /// <summary>Текст ячеек графы — по центру строки по вертикали (в многострочном наименовании соседние графы не прилипают к верху).</summary>
         private static void MiddleVertically(ScheduleField field)
