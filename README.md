@@ -33,7 +33,7 @@
 
 | Для кого | Документ |
 |---|---|
-| Пользователю | [INSTALL](docs/INSTALL.md) — установка, обновление, удаление · [CONFIGURATION](docs/CONFIGURATION.md) — правила и папка отдела |
+| Пользователю | [Инструкция пользователя](docs/USER_GUIDE.md) — все кнопки, порядок перед выпуском, ограничения, шаблон отзыва · [INSTALL](docs/INSTALL.md) — установка, обновление, удаление · [CONFIGURATION](docs/CONFIGURATION.md) — правила и папка отдела |
 | Требования | [REQUIREMENTS](docs/REQUIREMENTS.md) · [QUESTIONS](docs/QUESTIONS.md) · [Discovery](docs/discovery/README.md) |
 | Разработчику | [ARCHITECTURE](docs/ARCHITECTURE.md) · [TECH_STACK](docs/TECH_STACK.md) · [DEPENDENCIES](docs/DEPENDENCIES.md) · [DEVELOPMENT](docs/DEVELOPMENT.md) · [TESTING](docs/TESTING.md) · [CHANGELOG](CHANGELOG.md) |
 
