@@ -60,7 +60,7 @@ namespace VKTools.Core.Tests
             Assert.Equal(4, set.Cord.Count);
             Assert.Equal(new[] { "ADSK_Марка", "ADSK_Техническая характеристика", "ADSK_Завод-изготовитель" }, set.ExtraParameters);
             Assert.Equal(12, set.Supports.Count);
-            Assert.Equal(30, set.Rules.Count);
+            Assert.Equal(31, set.Rules.Count);
             PipeRule pvc = set.Rules.Single(r => r.NameMask == "*НПВХ*" && r.Matches("Сталь", "Труба НПВХ 110", 110, false));
             Assert.Equal(new[] { "METAL" }, pvc.Codes);
             Assert.Equal(1.1, pvc.StepHorizontal);
@@ -91,6 +91,14 @@ namespace VKTools.Core.Tests
             // DN20 неизол.: шаг 3 м → ⌈7/3⌉ = 3 шт × 0,36 кг = 1,08 кг → округление 0,1 → 1,1
             Assert.Equal(1.08, r.Targets[0].Base, 9);
             Assert.Equal(1.1, r.Targets[0].Auto, 6);
+        }
+
+        [Fact]
+        public void Неоцинкованные_окрашиваются()
+        {
+            // «неоцинкованная» содержит «оцинкованная» — правило для чёрной стали должно сработать раньше
+            CalcResult r = Run(Rules(), Pipe(1, "В21.1", "Труба стальная электросварная прямошовная неоцинкованная ø108x4", 100, 108, 3));
+            Assert.Equal(new[] { "METAL", "PAINT", "PRIMER" }, r.Targets.Select(t => t.Code).OrderBy(c => c));
         }
 
         [Fact]
