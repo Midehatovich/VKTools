@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Autodesk.Revit.DB;
 using VKTools.Core.Calc;
 using VKTools.Core.Config;
@@ -31,7 +32,26 @@ namespace VKTools.Revit.Calc
             defaults.Issues.AddRange(issues);
             defaults.ProjectBlocked = blocked;
             if (storages > 1) Host.Log.Warn($"В модели «{doc.Title}» хранилищ настроек VK Tools: {storages}; читается последнее созданное.");
+            SystemParametersFromSystemFloor(doc, stored, options);
             return (options, defaults);
+        }
+
+        /// <summary>
+        /// Система позиций согласована с «Системой и этажом»: её параметры (VK_Сокращение системы и второй) тоже получают систему,
+        /// если привязаны в проекте. В проекте без LSR_Имя системы и без своей настройки Р3 основной параметр — параметр «Системы и этажа».
+        /// </summary>
+        private static void SystemParametersFromSystemFloor(Document doc, SpecProjectSettings stored, CalcOptions options)
+        {
+            (SpecOptions sfOptions, _) = SpecSettingsLoader.Load(doc, SpecModule.SystemFloor);
+            SystemFloorSettings sf = sfOptions.SystemFloor;
+            Dictionary<string, List<(Definition Definition, ElementBinding Binding)>> bindings = CalcParams.ProjectBindings(doc);
+            if (stored.Get("calc.systemParam") == null && !bindings.ContainsKey(options.SystemParameter.Trim()) && sf.SystemParam != null)
+            {
+                options.SystemParameter = sf.SystemParam.Name;
+            }
+            options.ExtraSystemParameters = new[] { sf.SystemParam?.Name, sf.MirrorParam?.Name }
+                .Where(n => !string.IsNullOrWhiteSpace(n) && n != options.SystemParameter.Trim() && bindings.ContainsKey(n!))
+                .Select(n => n!).Distinct(StringComparer.Ordinal).ToList();
         }
 
         private static string LoadText(ConfigLoader loader, RuleFileSpec spec, CalcDefaults defaults)

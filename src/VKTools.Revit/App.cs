@@ -177,6 +177,20 @@ namespace VKTools.Revit
             spec.AddItem(reserve);
             spec.AddItem(pipeNames);
 
+            RibbonPanel schedules = application.CreateRibbonPanel(TabName, "Выпуск");
+            var createSchedule = new PushButtonData("VKTools.CreateSchedule", "Создать\nспецификацию", assembly, typeof(CreateScheduleCommand).FullName)
+            {
+                ToolTip = "Новая спецификация по выбранным системам и этажам: фильтры ставит плагин, название — по выбору. Форма ГОСТ 21.110 или копия вашей спецификации.",
+                LongDescription =
+                    "Быстрый выбор: все системы, водоснабжение, канализация; все этажи, ниже 1 этажа, 1 этаж и выше. " +
+                    "Фильтры Revit соединяются только через «И» — плагин сам подбирает условия («не начинается с К» и т. п.). " +
+                    "Созданные кнопкой спецификации можно обновить, когда в модели появятся новые системы или этажи. Элементы модели не меняются.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.Schedule(32),
+                Image = RibbonIcons.Schedule(16),
+            };
+            schedules.AddItem(createSchedule);
+
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)
             {

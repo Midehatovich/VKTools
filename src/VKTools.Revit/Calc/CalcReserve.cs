@@ -7,6 +7,7 @@ using VKTools.Core.Calc;
 using VKTools.Core.Checks;
 using VKTools.Core.Spec;
 using VKTools.Revit.Compat;
+using VKTools.Revit.Schedules;
 
 namespace VKTools.Revit.Calc
 {
@@ -48,6 +49,11 @@ namespace VKTools.Revit.Calc
                 string itemKey = CalcParams.Find(item, CalcParams.Key, out _)?.AsString() ?? string.Empty;
                 if (itemKey.Length > 0 && !existing.ContainsKey(itemKey)) existing[itemKey] = item;
             }
+            // Спецификации кнопки «Создать спецификацию» в расчёт не отмечаются (их трубы уже считаются в отмеченных), но позиции запаса
+            // видны и в них — их колонки (ADSK_Масса в форме ГОСТ) тоже копируются, иначе там «<варианты>»
+            List<ScheduleDefinition> ownSchedules = new FilteredElementCollector(doc).OfClass(typeof(ViewSchedule)).Cast<ViewSchedule>()
+                .Where(v => !v.IsTemplate && ScheduleStore.Read(v) != null).Select(v => v.Definition).ToList();
+            var missingOptional = new SortedSet<string>(StringComparer.Ordinal);
             foreach (CalcScope scope in scopes)
             {
                 ViewSchedule schedule = scope.Schedule!;
@@ -60,7 +66,11 @@ namespace VKTools.Revit.Calc
                 var ids = sortFields.ToDictionary(f => f.Name, f => f.Id, StringComparer.Ordinal);
                 plan.ReserveFields.UnionWith(fields.Where(f => f != systemName && !IsTypeOf(f)));
                 // Остальные видимые текстовые колонки (ADSK_Масса_Текст…) — тоже с позиции, иначе в слитой строке «<варианты>»
-                List<string> visible = VisibleFields(scope, fields, systemName);
+                List<string> visible = VisibleFields(scope.Schedule!.Definition, fields, systemName);
+                foreach (ScheduleDefinition own in ownSchedules)
+                {
+                    visible.AddRange(VisibleFields(own, fields, systemName).Where(f => !visible.Contains(f)));
+                }
                 plan.Notes.Add($"Запас, «{scope.Name}»: строка спецификации — по полям {string.Join(", ", fields.Take(sortCount).Select(f => "«" + f + "»"))}; позиция запаса получает их значения"
                     + (fields.Count > sortCount ? $", поля фильтров {string.Join(", ", fields.Skip(sortCount).Select(f => "«" + f + "»"))} — с первой позиции строки" : string.Empty)
                     + (visible.Count > 0 ? $", а также колонок {string.Join(", ", visible.Select(f => "«" + f + "»"))}." : "."));
@@ -119,10 +129,24 @@ namespace VKTools.Revit.Calc
                     }
                     foreach (string field in visible)
                     {
-                        if (Value(first, field) is ParamValue shownValue && shownValue.Kind == ParamValueKind.Text && !extras.Any(e => e.Key == field))
+                        if (!(Value(first, field) is ParamValue shownValue) || extras.Any(e => e.Key == field) || copy.ContainsKey(field)) continue;
+                        if (shownValue.Kind == ParamValueKind.Text)
                         {
                             extras.Add(new KeyValuePair<string, string>(field, CalcParams.Display(shownValue)));
+                            continue;
                         }
+                        // Число (ADSK_Масса): копией в экземпляр позиции, если параметр у неё есть; в тип числом не пишется
+                        bool numberTypeBound = (bindings.TryGetValue(field, out var fieldBindings) && fieldBindings.Count == 1 && fieldBindings[0].Binding is TypeBinding)
+                            || CalcParams.Has(baseSymbol, field);
+                        bool onItem = bindings.TryGetValue(field, out var itemBindings) && itemBindings.Any(b => b.Binding is InstanceBinding
+                            && b.Binding.Categories.Cast<Category>().Any(c => c.Id.ToLong() == (long)BuiltInCategory.OST_GenericModel));
+                        if (numberTypeBound || !onItem)
+                        {
+                            missingOptional.Add(field);
+                            continue;
+                        }
+                        copy[field] = shownValue;
+                        plan.OptionalCopy.Add(field);
                     }
                     string code = TypeName(name.Trim().Length > 0 ? name : first.Symbol.FamilyName + " " + first.Symbol.Name, group.Key);
                     if (!resources.TryGetValue(code, out CalcResource? resource))
@@ -167,7 +191,12 @@ namespace VKTools.Revit.Calc
                     }
                 }
             }
-            if (rows > 0) plan.Notes.Add($"Запас на штучные: строк спецификаций с запасом {rows}" + (unmerged > 0 ? $", из них записанный запас не совпадает со строкой по полям: {unmerged}" : string.Empty) + ".");
+            if (rows > 0 && missingOptional.Count > 0)
+            {
+                plan.Issues.Add(Severity.Info, $"у позиций запаса нет параметра экземпляра {string.Join(", ", missingOptional.Select(f => "«" + f + "»"))} — в строках с запасом в этой графе будет «<варианты>»",
+                    "Добавьте параметру категорию «Обобщенные модели» (Управление → Параметры проекта, параметр экземпляра) и примените «Расчётные позиции» снова.");
+            }
+                        if (rows > 0) plan.Notes.Add($"Запас на штучные: строк спецификаций с запасом {rows}" + (unmerged > 0 ? $", из них записанный запас не совпадает со строкой по полям: {unmerged}" : string.Empty) + ".");
         }
 
         /// <summary>Поля сортировки и группировки (и фильтров) спецификации — то, по чему Revit сливает строки. null — запас по ней невозможен.</summary>
@@ -208,9 +237,8 @@ namespace VKTools.Revit.Calc
         private static ElementId Id(Dictionary<string, ElementId> ids, string name) => ids.TryGetValue(name, out ElementId? id) ? id : ElementId.InvalidElementId;
 
         /// <summary>Видимые колонки спецификации с параметром (не итоговые, не поля строки) — их текст копируется в запас, необязательно.</summary>
-        private static List<string> VisibleFields(CalcScope scope, List<string> rowFields, string systemName)
+        private static List<string> VisibleFields(ScheduleDefinition definition, List<string> rowFields, string systemName)
         {
-            ScheduleDefinition definition = scope.Schedule!.Definition;
             var result = new List<string>();
             for (int i = 0; i < definition.GetFieldCount(); i++)
             {

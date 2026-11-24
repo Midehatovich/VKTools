@@ -33,10 +33,13 @@ namespace VKTools.Core.Tests
         }
 
         [Fact]
-        public void Умолчание_LSR_и_ADSK_Этаж_и_категории_v21()
+        public void Умолчание_VK_система_LSR_вторым_ADSK_Этаж_и_категории_v21()
         {
             var sf = SystemFloorSettings.Default();
-            Assert.Equal(KnownParameters.LsrSystemName.Guid, sf.SystemParam!.Guid);
+            // 0.13.0: свой параметр без LSR; LSR_Имя системы — вторым, где он есть (старые спецификации КрМа3)
+            Assert.Equal(KnownParameters.VkSystem.Guid, sf.SystemParam!.Guid);
+            Assert.True(sf.UsesVkSystem);
+            Assert.Equal(KnownParameters.LsrSystemName.Guid, sf.MirrorParam!.Guid);
             Assert.Equal(KnownParameters.AdskLevel.Guid, sf.FloorParam!.Guid);
             Assert.True(sf.WriteSystem && sf.WriteFloor && sf.Insulation && sf.ChainNested);
             Assert.Equal(7, sf.Categories.Count);
@@ -116,7 +119,29 @@ namespace VKTools.Core.Tests
             Assert.NotNull(blocked);
             Assert.NotEmpty(issues);
             Assert.False(loaded.SavedInProject);
-            Assert.Equal(KnownParameters.LsrSystemName.Guid, loaded.SystemFloor.SystemParam!.Guid);
+            Assert.Equal(KnownParameters.VkSystem.Guid, loaded.SystemFloor.SystemParam!.Guid);
+        }
+
+        [Fact]
+        public void Второй_параметр_системы_сохраняется_старая_настройка_без_него()
+        {
+            var sf = SystemFloorSettings.Default();
+            var settings = new SpecProjectSettings();
+            sf.StoreTo(settings, false);
+            var issues = new List<ConfigIssue>();
+            SystemFloorSettings back = SystemFloorSettings.Parse(settings, issues)!;
+            Assert.Empty(issues);
+            Assert.Equal(KnownParameters.LsrSystemName.Guid, back.MirrorParam!.Guid);
+            Assert.Equal(sf.Signature(), back.Signature());
+
+            // Настройка до 0.13.0: LSR основным, второго нет — так и остаётся, VK не появляется сам
+            var old = new SpecProjectSettings();
+            old.Set("sf.flags", "system=1;floor=1;insulation=1;nested=1");
+            old.Set("sf.systemParam", KnownParameters.LsrSystemName.Guid.ToString("D") + ";LSR_Имя системы");
+            SystemFloorSettings legacy = SystemFloorSettings.Parse(old, issues)!;
+            Assert.Equal(KnownParameters.LsrSystemName.Guid, legacy.SystemParam!.Guid);
+            Assert.Null(legacy.MirrorParam);
+            Assert.False(legacy.UsesVkSystem);
         }
     }
 }

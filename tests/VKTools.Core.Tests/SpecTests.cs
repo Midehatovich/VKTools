@@ -69,7 +69,7 @@ namespace VKTools.Core.Tests
             LoadedTable loaded = new ConfigLoader(new ConfigLocations(RepoPaths.ConfigDirectory(), null)).Load(SpecRuleTables.NestedParameters);
             ParsedRules<ParameterRef> parsed = SpecRuleTables.ParseNestedParameters(loaded.Table!);
             Assert.Empty(parsed.Issues);
-            Assert.Equal(new[] { "ADSK_Этаж", "LSR_Имя системы", "LSR_Тип системы" }, parsed.Items.Select(p => p.Name));
+            Assert.Equal(new[] { "ADSK_Этаж", "LSR_Имя системы", "LSR_Тип системы", "VK_Сокращение системы" }, parsed.Items.Select(p => p.Name));
             Assert.Equal(KnownParameters.AdskLevel.Guid, parsed.Items[0].Guid);
             Assert.Equal(KnownParameters.LsrSystemName.Guid, parsed.Items[1].Guid);
 

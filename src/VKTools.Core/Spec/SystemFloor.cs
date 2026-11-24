@@ -45,10 +45,17 @@ namespace VKTools.Core.Spec
         private const string FlagsKey = "sf.flags";
         private const string CategoriesKey = "sf.categories";
         private const string FloorsKey = "sf.floors";
+        private const string MirrorKey = "sf.mirrorParam";
 
         public ParamKey? SystemParam { get; set; }
 
         public ParamKey? FloorParam { get; set; }
+
+        /// <summary>
+        /// Тем же значением системы — ещё один параметр, если он есть у элемента (по умолчанию LSR_Имя системы: старые спецификации
+        /// КрМа3 фильтруются по нему). Нет параметра в проекте — молча не пишется. null — не писать.
+        /// </summary>
+        public ParamKey? MirrorParam { get; set; }
 
         public bool WriteSystem { get; set; } = true;
 
@@ -66,14 +73,19 @@ namespace VKTools.Core.Spec
 
         public static SystemFloorSettings Default() => new SystemFloorSettings
         {
-            SystemParam = ParamKey.Shared(KnownParameters.LsrSystemName.Name, KnownParameters.LsrSystemName.Guid),
+            SystemParam = ParamKey.Shared(KnownParameters.VkSystem.Name, KnownParameters.VkSystem.Guid),
             FloorParam = ParamKey.Shared(KnownParameters.AdskLevel.Name, KnownParameters.AdskLevel.Guid),
+            MirrorParam = ParamKey.Shared(KnownParameters.LsrSystemName.Name, KnownParameters.LsrSystemName.Guid),
         };
+
+        /// <summary>Параметр системы — свой параметр VK Tools: плагин может сам добавить его в проект.</summary>
+        public bool UsesVkSystem => SystemParam != null && SystemParam.Kind == ParamKeyKind.Shared && SystemParam.Guid == KnownParameters.VkSystem.Guid;
 
         public SystemFloorSettings Clone() => new SystemFloorSettings
         {
             SystemParam = SystemParam,
             FloorParam = FloorParam,
+            MirrorParam = MirrorParam,
             WriteSystem = WriteSystem,
             WriteFloor = WriteFloor,
             Insulation = Insulation,
@@ -87,7 +99,7 @@ namespace VKTools.Core.Spec
             Floors.Where(f => f.Level.Length > 0 && f.Value.Length > 0 && f.Value != f.Level);
 
         public string Signature() =>
-            $"{SystemParam?.Id}|{FloorParam?.Id}|{Flags()}|"
+            $"{SystemParam?.Id}|{FloorParam?.Id}|{MirrorParam?.Id}|{Flags()}|"
             + string.Join(",", Categories.OrderBy(c => c, StringComparer.Ordinal)) + "|"
             + string.Join("\n", EffectiveFloors().OrderBy(f => f.Level, StringComparer.Ordinal).Select(f => f.Level + "\t" + f.Value));
 
@@ -109,11 +121,12 @@ namespace VKTools.Core.Spec
         {
             if (isDefault)
             {
-                foreach (string key in new[] { SystemKey, FloorKey, FlagsKey, CategoriesKey, FloorsKey }) settings.Set(key, null);
+                foreach (string key in new[] { SystemKey, FloorKey, FlagsKey, CategoriesKey, FloorsKey, MirrorKey }) settings.Set(key, null);
                 return;
             }
             settings.Set(SystemKey, SystemParam == null ? string.Empty : SystemParam.Id + ";" + SystemParam.Name);
             settings.Set(FloorKey, FloorParam == null ? string.Empty : FloorParam.Id + ";" + FloorParam.Name);
+            settings.Set(MirrorKey, MirrorParam == null ? string.Empty : MirrorParam.Id + ";" + MirrorParam.Name);
             settings.Set(FlagsKey, Flags());
             settings.Set(CategoriesKey, string.Join(",", Categories));
             List<FloorRename> floors = EffectiveFloors().ToList();
@@ -132,6 +145,8 @@ namespace VKTools.Core.Spec
             bool ok = true;
             result.SystemParam = ParseKey(settings.Get(SystemKey), "параметр системы", issues, ref ok);
             result.FloorParam = ParseKey(settings.Get(FloorKey), "параметр этажа", issues, ref ok);
+            // Настройка до 0.13.0 (ключа нет): второго параметра не было
+            result.MirrorParam = ParseKey(settings.Get(MirrorKey), "второй параметр системы", issues, ref ok);
             foreach (string part in (settings.Get(FlagsKey) ?? string.Empty).Split(';'))
             {
                 string[] pair = part.Split('=');

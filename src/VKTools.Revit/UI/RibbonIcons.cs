@@ -54,6 +54,12 @@ namespace VKTools.Revit.UI
         public static ImageSource Calc(int size) =>
             Draw(size, Green, "M 23,8 L 9,8 L 16,16 L 9,24 L 23,24");
 
+        private static readonly Color Violet = Color.FromRgb(0x6A, 0x3D, 0x9A);
+
+        /// <summary>Таблица: шапка и графы.</summary>
+        public static ImageSource Schedule(int size) =>
+            Draw(size, Violet, "M 6,7 L 26,7 L 26,25 L 6,25 Z M 6,12 L 26,12 M 11,7 L 11,25 M 20,7 L 20,25");
+
         public static ImageSource Settings(int size) =>
             Draw(size, Gray, "M 7,10 L 25,10 M 7,16 L 25,16 M 7,22 L 25,22 M 12,7.5 L 12,12.5 M 20,13.5 L 20,18.5 M 14,19.5 L 14,24.5");
 

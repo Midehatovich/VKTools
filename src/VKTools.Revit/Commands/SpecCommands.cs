@@ -27,8 +27,11 @@ namespace VKTools.Revit.Commands
             SpecLauncher.Run(commandData.Application, SpecModule.Grouping);
     }
 
-    /// <summary>«Система и этаж» (Р4): параметр системы из сокращения, этаж из уровня, изоляция от основы, затем перенос во вложенные.</summary>
-    [Transaction(TransactionMode.ReadOnly)]
+    /// <summary>
+    /// «Система и этаж» (Р4): параметр системы из сокращения, этаж из уровня, изоляция от основы, затем перенос во вложенные.
+    /// Manual: если параметр системы — свой «VK_Сокращение системы» и его нет в проекте, плагин добавляет его до анализа.
+    /// </summary>
+    [Transaction(TransactionMode.Manual)]
     public sealed class SystemFloorCommand : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements) =>
@@ -75,6 +78,12 @@ namespace VKTools.Revit.Commands
                 Host.Log.Info($"{title}: анализ «{doc.Title}».");
                 var timings = new OperationTimings { Trace = line => Host.Log.Info("  этап " + line) };
                 (SpecOptions options, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, module);
+                string? parameterNote = null;
+                if (module == SpecModule.SystemFloor && options.SystemFloor.WriteSystem && options.SystemFloor.UsesVkSystem)
+                {
+                    string? refused = VkParameters.Ensure(doc, app.Application, out parameterNote);
+                    if (refused != null) parameterNote = $"«{Core.Config.KnownParameters.VkSystem.Name}» не добавлен: {refused}. Система в него писаться не будет.";
+                }
                 options.Scope = SpecParamsHost.LastScope(module);
                 List<ElementId>? scope = SpecScope.Resolve(uidoc, options, out string scopeLabel);
                 ParamPlan plan;
@@ -82,6 +91,7 @@ namespace VKTools.Revit.Commands
                 {
                     plan = SpecPlanner.Build(doc, options, defaults, scope, progress, timings);
                 }
+                if (parameterNote != null) plan.Notes.Insert(0, parameterNote);
                 SpecParamsHandler.LogPlan(doc, plan, timings);
                 SpecParamsHost.Show(app, doc, options, defaults, plan, scope, scopeLabel);
                 return Result.Succeeded;
