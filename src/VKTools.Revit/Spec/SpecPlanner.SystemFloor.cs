@@ -197,6 +197,7 @@ namespace VKTools.Revit.Spec
                 }
             }
 
+            PlanRooms(sf, elements, insulations);
             PlanOwnCopy(defaults);
 
             List<FloorRename> renames = sf.EffectiveFloors().ToList();

@@ -203,6 +203,9 @@ namespace VKTools.Revit.Calc
                     ScheduleField field = definition.GetField(filter.FieldId);
                     string fieldName = field.GetName();
                     if (managed.Contains(fieldName) || scope.CopyNames.Contains(fieldName)) continue;
+                    // «Р_Номер помещения не равно …» (помещение со своей спецификацией): позиции без помещения проходят и так — не копировать,
+                    // иначе позиции общей спецификации делились бы по сотне помещений АР
+                    if (fieldName == Core.Config.ParamProfile.RoomName && filter.FilterType == ScheduleFilterType.NotEqual) continue;
                     if (field.ParameterId.ToLong() < 0)
                     {
                         plan.Issues.Add(Severity.Warning, $"«{name}»: фильтр по системному полю «{fieldName}» — позиции не получат его значение",

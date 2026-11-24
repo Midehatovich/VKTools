@@ -30,6 +30,9 @@ namespace VKTools.Core.Config
         Group,
         Floor,
         System,
+
+        /// <summary>Помещение АР (0.16.0): спецификация по помещению, например насосной. Один параметр в обоих наборах.</summary>
+        Room,
     }
 
     /// <summary>Своё определение параметра VK Tools: имя, GUID (навсегда), тип данных ФОП.</summary>
@@ -72,6 +75,11 @@ namespace VKTools.Core.Config
 
         public const string OwnPrefix = "Р_";
 
+        public const string RoomName = "Р_Номер помещения";
+
+        /// <summary>Выше <see cref="OwnDefinitions"/>: статические поля инициализируются по порядку текста.</summary>
+        public static readonly Guid RoomGuid = new Guid("5b0f7d4e-93c2-4a8e-b1d6-2e7f4c9a0d31");
+
         public static readonly IReadOnlyList<OwnParamDef> OwnDefinitions = new[]
         {
             new OwnParamDef(ParamRole.Position, "Р_Позиция", new Guid("876103ca-8bd4-4792-8f2f-02e29d454967"), false, "VK Tools: позиция (копия ADSK_Позиция)"),
@@ -86,6 +94,7 @@ namespace VKTools.Core.Config
             new OwnParamDef(ParamRole.Group, "Р_Группирование", new Guid("0dcd461e-2cd7-4fb5-8254-43d0ee67fe3a"), false, "VK Tools: сортировка разделов спецификации"),
             new OwnParamDef(ParamRole.Floor, "Р_Этаж", new Guid("2f253eb9-0bac-474d-bf7c-d4738b276f3e"), false, "VK Tools: этаж (имя уровня)"),
             new OwnParamDef(ParamRole.System, "Р_Сокращение системы", new Guid("e7686104-a64d-4e99-8466-9fef98d7e175"), false, "VK Tools: сокращение системы для фильтров спецификаций"),
+            new OwnParamDef(ParamRole.Room, RoomName, RoomGuid, false, "VK Tools: помещение АР (номер; при повторе номера — с именем) для спецификации по помещению"),
         };
 
         /// <summary>
@@ -125,6 +134,8 @@ namespace VKTools.Core.Config
             [ParamRole.Group] = KnownParameters.AdskGrouping,
             [ParamRole.Floor] = KnownParameters.AdskLevel,
             [ParamRole.System] = KnownParameters.VkSystem,
+            // У ADSK_ своего параметра помещения нет: в обоих наборах — «Р_Номер помещения»
+            [ParamRole.Room] = new ParameterRef(RoomName, RoomGuid),
         };
 
         /// <summary>Роли, значения которых «Система и этаж» копирует из ADSK_* (остальные считает плагин).</summary>

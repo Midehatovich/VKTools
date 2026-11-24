@@ -61,8 +61,46 @@ namespace VKTools.Revit.Schedules
     /// Что нужно окну: системы и этажи модели (значения параметров «Системы и этажа» у элементов ВК), форма ГОСТ,
     /// группы систем, спецификации-эталоны и уже созданные кнопкой спецификации.
     /// </summary>
+    /// <summary>Помещение АР с элементами ВК: для выбора «Спецификация помещения».</summary>
+    internal sealed class RoomEntry
+    {
+        public RoomEntry(string key, string title, int count, List<string> systems)
+        {
+            Key = key;
+            Title = title;
+            Count = count;
+            Systems = systems;
+        }
+
+        /// <summary>Значение «Р_Номер помещения».</summary>
+        public string Key { get; }
+
+        /// <summary>«2 «Помещение насосных станций»» — для названия.</summary>
+        public string Title { get; }
+
+        public int Count { get; }
+
+        public List<string> Systems { get; }
+
+        public override string ToString() => (Title.Length > 0 && Title != Key ? Title + "  [" + Key + "]" : Key) + $"  — {Count} эл.";
+    }
+
     internal sealed class ScheduleModelData
     {
+        /// <summary>«Р_Номер помещения» (в обоих наборах): спецификация помещения и исключение помещения из остальных.</summary>
+        public ParamKey RoomParam { get; } = ParamKey.Shared(ParamProfile.RoomName, ParamProfile.RoomGuid);
+
+        /// <summary>Помещения, где есть элементы ВК (по «Р_Номер помещения»).</summary>
+        public List<RoomEntry> Rooms { get; } = new List<RoomEntry>();
+
+        /// <summary>Помещения со своей спецификацией «только в своей»: остальные созданные кнопкой их исключают.</summary>
+        public List<string> ExcludedRooms { get; } = new List<string>();
+
+        /// <summary>Условия по помещению для выбора: своё помещение — «равно», иначе исключить помещения со своими спецификациями.</summary>
+        public List<FilterCondition> RoomConditions(ScheduleRequest request) => request.IsRoom
+            ? new List<FilterCondition> { new FilterCondition(ConditionKind.Equal, request.Room) }
+            : ExcludedRooms.Select(r => new FilterCondition(ConditionKind.NotEqual, r)).ToList();
+
         public ParamKey SystemParam { get; set; } = ParamKey.Shared(KnownParameters.LsrSystemName.Name, KnownParameters.LsrSystemName.Guid);
 
         public ParamKey FloorParam { get; set; } = ParamKey.Shared(KnownParameters.AdskLevel.Name, KnownParameters.AdskLevel.Guid);
@@ -84,6 +122,7 @@ namespace VKTools.Revit.Schedules
         public bool IsReplaced(Document doc, ElementId parameterId)
         {
             if (ScheduleFields.Is(doc, parameterId, SystemParam) || ScheduleFields.Is(doc, parameterId, FloorParam)) return true;
+            if (ScheduleFields.Is(doc, parameterId, RoomParam)) return true;
             if (MirrorParam != null && ScheduleFields.Is(doc, parameterId, MirrorParam)) return true;
             // Свой набор «Р_»: фильтры эталона КрМа3 по ADSK_Этаж, VK_Сокращение системы и LSR_* тоже снимаются
             if (ParamProfile.IsOwn && doc.GetElement(parameterId) is SharedParameterElement shared
@@ -103,7 +142,7 @@ namespace VKTools.Revit.Schedules
         public List<FloorInfo> Floors { get; } = new List<FloorInfo>();
 
         /// <summary>Элементов на пару «система → этаж» (пустое — без значения): для подсчёта в окне.</summary>
-        public Dictionary<(string System, string Floor), int> Pairs { get; } = new Dictionary<(string, string), int>();
+        public Dictionary<(string System, string Floor, string Room), int> Pairs { get; } = new Dictionary<(string, string, string), int>();
 
         public int Elements { get; set; }
 
@@ -128,15 +167,16 @@ namespace VKTools.Revit.Schedules
         public List<string> KnownFloorValues => Floors.Select(f => f.Value).ToList();
 
         /// <summary>Сколько элементов покажет спецификация (без расчётных позиций Р3).</summary>
-        public int Count(ICollection<string> systems, bool allSystems, ICollection<string> floors, bool allFloors) =>
-            Pairs.Where(p => (allSystems || systems.Contains(p.Key.System)) && (allFloors || floors.Contains(p.Key.Floor))).Sum(p => p.Value);
+        public int Count(ICollection<string> systems, bool allSystems, ICollection<string> floors, bool allFloors, IReadOnlyList<FilterCondition> rooms) =>
+            Pairs.Where(p => (allSystems || systems.Contains(p.Key.System)) && (allFloors || floors.Contains(p.Key.Floor))
+                && (rooms.Count == 0 || ScheduleFilterPlanner.Matches(rooms, p.Key.Room))).Sum(p => p.Value);
 
         /// <summary>Пересчитать фильтры выбора на текущей модели.</summary>
         public ScheduleFilterSet Plan(ScheduleRequest request, int otherFilters, out List<string> systems, out List<string> floors)
         {
             systems = request.ResolveSystems(Systems, Groups);
             floors = request.ResolveFloors(Floors);
-            return ScheduleFilterSet.Build(Systems, systems, KnownFloorValues, floors, otherFilters);
+            return ScheduleFilterSet.Build(Systems, systems, KnownFloorValues, floors, otherFilters, RoomConditions(request));
         }
     }
 
@@ -186,6 +226,8 @@ namespace VKTools.Revit.Schedules
                 if (!floorElevation.TryGetValue(value, out double known) || elevation < known) floorElevation[value] = elevation;
             }
             var floorCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+            var roomCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+            var roomSystems = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
             var collector = new FilteredElementCollector(doc).WherePasses(new ElementMulticategoryFilter(categories.ToList())).WhereElementIsNotElementType();
             foreach (Element element in collector)
             {
@@ -199,7 +241,29 @@ namespace VKTools.Revit.Schedules
                 else data.SystemCounts[sys] = data.SystemCounts.TryGetValue(sys, out int n) ? n + 1 : 1;
                 if (floor.Length == 0) data.WithoutFloor++;
                 else floorCounts[floor] = floorCounts.TryGetValue(floor, out int f) ? f + 1 : 1;
-                data.Pairs[(sys, floor)] = data.Pairs.TryGetValue((sys, floor), out int p) ? p + 1 : 1;
+                Parameter? roomParam = access.Find(element, data.RoomParam);
+                string room = roomParam == null ? string.Empty : Text(roomParam);
+                if (room.Length > 0)
+                {
+                    roomCounts[room] = roomCounts.TryGetValue(room, out int r) ? r + 1 : 1;
+                    if (!roomSystems.TryGetValue(room, out HashSet<string>? set)) roomSystems[room] = set = new HashSet<string>(StringComparer.Ordinal);
+                    if (sys.Length > 0) set.Add(sys);
+                }
+                data.Pairs[(sys, floor, room)] = data.Pairs.TryGetValue((sys, floor, room), out int p) ? p + 1 : 1;
+            }
+            if (roomCounts.Count > 0)
+            {
+                // Подписи помещений — из АР (без контуров: только номер и имя), ключи те же, что пишет «Система и этаж»
+                var titles = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (RoomShape shape in RoomCatalog.Read(doc, geometry: false).Rooms)
+                {
+                    if (!titles.ContainsKey(shape.Label.Key)) titles[shape.Label.Key] = shape.Label.Title;
+                }
+                foreach (KeyValuePair<string, int> kv in roomCounts.OrderBy(k => k.Key, NaturalComparer.Instance))
+                {
+                    data.Rooms.Add(new RoomEntry(kv.Key, titles.TryGetValue(kv.Key, out string? title) ? title : kv.Key, kv.Value,
+                        roomSystems[kv.Key].OrderBy(x => x, NaturalComparer.Instance).ToList()));
+                }
             }
             data.Systems.AddRange(data.SystemCounts.Keys.OrderBy(s => s, NaturalComparer.Instance));
             data.Floors.AddRange(FloorNames.Order(floorCounts.Select(kv =>
@@ -215,6 +279,7 @@ namespace VKTools.Revit.Schedules
             {
                 if (!view.IsTemplate) data.ViewNames.Add(view.Name);
             }
+            var own = new List<(ViewSchedule View, ScheduleRequest Request)>();
             foreach (ViewSchedule vs in new FilteredElementCollector(doc).OfClass(typeof(ViewSchedule)).Cast<ViewSchedule>())
             {
                 if (vs.IsTemplate || vs.IsTitleblockRevisionSchedule || vs.IsInternalKeynoteSchedule) continue;
@@ -230,12 +295,16 @@ namespace VKTools.Revit.Schedules
                 }
                 bool multi = definition.CategoryId == ElementId.InvalidElementId;
                 ScheduleRequest? request = ScheduleStore.Read(vs);
-                if (request != null)
-                {
-                    data.Own.Add(OwnState(vs, request, data));
-                }
+                if (request != null) own.Add((vs, request));
                 data.Templates.Add(new TemplateInfo(vs, multi, OtherFilters(doc, definition, data)));
             }
+            // Сначала все помещения «только в своей»: от них зависят фильтры остальных
+            foreach ((ViewSchedule _, ScheduleRequest request) in own)
+            {
+                if (request.IsRoom && request.RoomExclusive && !data.ExcludedRooms.Contains(request.Room, StringComparer.CurrentCultureIgnoreCase)) data.ExcludedRooms.Add(request.Room);
+            }
+            data.ExcludedRooms.Sort(NaturalComparer.Instance);
+            foreach ((ViewSchedule vs, ScheduleRequest request) in own) data.Own.Add(OwnState(vs, request, data));
             data.Templates.Sort((a, b) => StringComparer.CurrentCultureIgnoreCase.Compare(a.Name, b.Name));
             data.Own.Sort((a, b) => StringComparer.CurrentCultureIgnoreCase.Compare(a.Name, b.Name));
         }
@@ -245,14 +314,16 @@ namespace VKTools.Revit.Schedules
             int other = OtherFilters(vs.Document, vs.Definition, data);
             ScheduleFilterSet set = data.Plan(request, other, out _, out _);
             if (set.Error != null) return new OwnSchedule(vs.Id.ToLong(), vs.Name, request, "не обновить: " + set.Error, false);
-            string signature = string.Join("\n", set.Describe(data.SystemParam.Name, data.FloorParam.Name));
+            string signature = string.Join("\n", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name));
             var added = data.Systems.Where(s => !request.KnownSystems.Contains(s, StringComparer.Ordinal))
                 .Concat(data.KnownFloorValues.Where(f => !request.KnownFloors.Contains(f, StringComparer.Ordinal))).ToList();
             if (signature == request.FilterSignature)
             {
                 return new OwnSchedule(vs.Id.ToLong(), vs.Name, request, added.Count == 0 ? "фильтры актуальны" : "фильтры актуальны (новые значения учтены: " + string.Join(", ", added) + ")", false);
             }
-            string why = added.Count > 0 ? "в модели появились " + string.Join(", ", added.Take(6)) + (added.Count > 6 ? "…" : string.Empty) : "состав систем или этажей изменился";
+            string why = added.Count > 0 ? "в модели появились " + string.Join(", ", added.Take(6)) + (added.Count > 6 ? "…" : string.Empty)
+                : !request.IsRoom && data.ExcludedRooms.Count > 0 && !request.FilterSignature.Contains(data.RoomParam.Name) ? "есть спецификация помещения — исключить его отсюда"
+                : "состав систем, этажей или помещений изменился";
             return new OwnSchedule(vs.Id.ToLong(), vs.Name, request, "нужно обновить: " + why, true);
         }
 

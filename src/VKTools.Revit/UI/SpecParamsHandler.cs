@@ -109,7 +109,7 @@ namespace VKTools.Revit.UI
                 SpecRunMode mode = _request == SpecRequest.Apply ? SpecRunMode.Apply : SpecRunMode.Trial;
                 // Настройку переключили на «VK_Сокращение системы» в окне, а в проекте его ещё нет: при записи плагин добавляет его сам
                 // (отдельной операцией); пробный прогон модель не меняет — там запись в него покажется как «параметра нет».
-                if ((Core.Config.ParamProfile.IsOwn || (options.Module == SpecModule.SystemFloor && options.SystemFloor.WriteSystem && options.SystemFloor.UsesVkSystem))
+                if ((Core.Config.ParamProfile.IsOwn || (options.Module == SpecModule.SystemFloor && options.SystemFloor.NeedsVkParameters))
                     && VkParameters.NeedsSetup(doc, out _))
                 {
                     if (mode == SpecRunMode.Trial)
@@ -258,7 +258,7 @@ namespace VKTools.Revit.UI
 
         private static string SystemFloorText(SystemFloorSettings sf) =>
             $"система → {(sf.WriteSystem ? sf.SystemParam?.Name ?? "не выбран" : "не пишется")}, этаж → {(sf.WriteFloor ? sf.FloorParam?.Name ?? "не выбран" : "не пишется")}, "
-            + $"изоляция {(sf.Insulation ? "да" : "нет")}, перенос во вложенные {(sf.ChainNested ? "да" : "нет")}, категорий {sf.Categories.Count}, "
+            + $"изоляция {(sf.Insulation ? "да" : "нет")}, помещения {(sf.WriteRoom ? "да" : "нет")}, перенос во вложенные {(sf.ChainNested ? "да" : "нет")}, категорий {sf.Categories.Count}, "
             + $"переименований уровней {sf.EffectiveFloors().Count()}";
 
         internal static void LogPlan(Document doc, ParamPlan plan, OperationTimings timings)

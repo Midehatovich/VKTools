@@ -31,7 +31,7 @@ namespace VKTools.Revit.Spec
 
         /// <summary>Какие свои параметры нужны модели при активном наборе.</summary>
         public static IReadOnlyList<ParameterRef> Required() =>
-            ParamProfile.IsOwn ? ParamProfile.OwnDefinitions.Select(d => d.Ref).ToList() : new[] { KnownParameters.VkSystem };
+            ParamProfile.IsOwn ? ParamProfile.OwnDefinitions.Select(d => d.Ref).ToList() : new[] { KnownParameters.VkSystem, ParamProfile.Own(ParamRole.Room).Ref };
 
         /// <summary>Нужно ли что-то менять: какого-то параметра нет или он привязан не ко всем категориям.</summary>
         public static bool NeedsSetup(Document doc, out List<Category> missing)
@@ -107,7 +107,7 @@ namespace VKTools.Revit.Spec
                             if (!file.TryGetValue(param.Guid, out ExternalDefinition? definition)) throw new InvalidOperationException($"в своём ФОП VK Tools нет «{param.Name}»");
                             CategorySet set = app.Create.NewCategorySet();
                             foreach (Category c in missing) set.Insert(c);
-                            ok = ParamProfile.IsOwn && ParamProfile.RoleOf(param.Guid) != null
+                            ok = ParamProfile.OwnDefinitions.Any(d => d.Guid == param.Guid)
                                 ? doc.ParameterBindings.InsertInOwnGroup(definition, app.Create.NewInstanceBinding(set))
                                 : doc.ParameterBindings.InsertAsData(definition, app.Create.NewInstanceBinding(set));
                             notes.Add($"в проект добавлен параметр «{param.Name}» (экземпляра)");

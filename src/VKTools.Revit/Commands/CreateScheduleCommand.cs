@@ -86,7 +86,7 @@ namespace VKTools.Revit.Commands
         {
             string title = SpecModule.SystemFloor.Title();
             (SpecOptions options, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, SpecModule.SystemFloor);
-            bool needsParameter = (ParamProfile.IsOwn || (options.SystemFloor.WriteSystem && options.SystemFloor.UsesVkSystem)) && VkParameters.NeedsSetup(doc, out _);
+            bool needsParameter = (ParamProfile.IsOwn || options.SystemFloor.NeedsVkParameters) && VkParameters.NeedsSetup(doc, out _);
             ParamPlan? plan = null;
             if (!needsParameter)
             {
@@ -165,6 +165,20 @@ namespace VKTools.Revit.Commands
                     return Result.Failed;
                 }
                 report.Add("Спецификация: " + string.Join(" ", created.Lines) + (created.Notes.Count > 0 ? " Заметки: " + string.Join("; ", created.Notes) + "." : string.Empty));
+
+                // Помещение «только в своей»: до расчётных позиций убрать его из остальных созданных кнопкой (иначе расчёт увидит
+                // трубы насосной и в общей спецификации, и в новой)
+                if (request.IsRoom && request.RoomExclusive)
+                {
+                    if (!data.ExcludedRooms.Contains(request.Room, StringComparer.CurrentCultureIgnoreCase)) data.ExcludedRooms.Add(request.Room);
+                    var excluded = new List<string>();
+                    foreach (OwnSchedule other in data.Own.Where(o => !o.Request.IsRoom))
+                    {
+                        ScheduleResult updated = ScheduleBuilder.Update(doc, data, other.Id);
+                        excluded.Add(updated.Error == null ? $"«{other.Name}»" : $"«{other.Name}» — не обновлена: {updated.Error}");
+                    }
+                    if (excluded.Count > 0) report.Add("Помещение убрано из: " + string.Join("; ", excluded) + ".");
+                }
 
                 string? failed = null;
                 try

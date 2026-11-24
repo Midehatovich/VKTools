@@ -61,6 +61,12 @@ namespace VKTools.Core.Spec
 
         public bool WriteFloor { get; set; } = true;
 
+        /// <summary>
+        /// «Р_Номер помещения» по помещениям АР (модель и загруженные связи), 0.16.0: для спецификации по помещению (насосная).
+        /// Помещений нет нигде — ничего не пишется.
+        /// </summary>
+        public bool WriteRoom { get; set; } = true;
+
         /// <summary>Изоляция труб получает систему и этаж своей основы.</summary>
         public bool Insulation { get; set; } = true;
 
@@ -83,8 +89,12 @@ namespace VKTools.Core.Spec
         public bool UsesVkSystem => SystemParam != null && SystemParam.Kind == ParamKeyKind.Shared
             && (SystemParam.Guid == KnownParameters.VkSystem.Guid || ParamProfile.OwnDefinitions.Any(d => d.Guid == SystemParam.Guid));
 
+        /// <summary>Нужны свои параметры VK Tools в проекте (их плагин добавляет сам).</summary>
+        public bool NeedsVkParameters => (WriteSystem && UsesVkSystem) || WriteRoom;
+
         public SystemFloorSettings Clone() => new SystemFloorSettings
         {
+            WriteRoom = WriteRoom,
             SystemParam = SystemParam,
             FloorParam = FloorParam,
             MirrorParam = MirrorParam,
@@ -114,7 +124,7 @@ namespace VKTools.Core.Spec
         }
 
         private string Flags() =>
-            $"system={B(WriteSystem)};floor={B(WriteFloor)};insulation={B(Insulation)};nested={B(ChainNested)}";
+            $"system={B(WriteSystem)};floor={B(WriteFloor)};insulation={B(Insulation)};nested={B(ChainNested)};room={B(WriteRoom)}";
 
         private static string B(bool value) => value ? "1" : "0";
 
@@ -160,6 +170,7 @@ namespace VKTools.Core.Spec
                     case "floor": result.WriteFloor = on; break;
                     case "insulation": result.Insulation = on; break;
                     case "nested": result.ChainNested = on; break;
+                    case "room": result.WriteRoom = on; break;
                 }
             }
             string? categories = settings.Get(CategoriesKey);

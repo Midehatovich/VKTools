@@ -88,6 +88,7 @@ namespace VKTools.Revit.UI
         private readonly CheckBox _writeFloor;
         private readonly ComboBox _floorParam;
         private readonly CheckBox _insulation;
+        private readonly CheckBox _writeRoom;
         private readonly CheckBox _chainNested;
         private readonly TextBlock _nestedNote;
         private readonly WrapPanel _categoryPanel;
@@ -127,6 +128,14 @@ namespace VKTools.Revit.UI
 
             _insulation = new CheckBox { Content = "Изоляция труб получает систему и этаж своей трубы или фитинга (основы)", Margin = new Thickness(0, 0, 0, 4) };
             top.Children.Add(_insulation);
+            _writeRoom = new CheckBox
+            {
+                Content = $"Писать «{Core.Config.ParamProfile.RoomName}» по помещениям АР (модель и загруженные связи)",
+                ToolTip = "Для спецификации по помещению (например, насосной) в «Создать спецификацию». Номер помещения; если номер в АР повторяется — с именем,"
+                    + " а если повторяется и так — с уровнем. Элемент вне помещений получает пустое значение.",
+                Margin = new Thickness(0, 0, 0, 4),
+            };
+            top.Children.Add(_writeRoom);
             _chainNested = new CheckBox { Content = "Затем перенести во вложенные в той же операции", Margin = new Thickness(0, 0, 0, 0) };
             top.Children.Add(_chainNested);
             _nestedNote = new TextBlock { Foreground = Brushes.DimGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(20, 0, 0, 6) };
@@ -176,7 +185,7 @@ namespace VKTools.Revit.UI
             _floors.Columns.Add(result);
             Children.Add(_floors);
 
-            foreach (CheckBox box in new[] { _writeSystem, _writeFloor, _insulation, _chainNested }) box.Click += (s, e) => RaiseChanged();
+            foreach (CheckBox box in new[] { _writeSystem, _writeFloor, _insulation, _writeRoom, _chainNested }) box.Click += (s, e) => RaiseChanged();
             _systemParam.SelectionChanged += (s, e) => RaiseChanged();
             _floorParam.SelectionChanged += (s, e) => RaiseChanged();
             _mirrorParam.SelectionChanged += (s, e) => RaiseChanged();
@@ -212,6 +221,7 @@ namespace VKTools.Revit.UI
                 _writeSystem.IsChecked = sf.WriteSystem;
                 _writeFloor.IsChecked = sf.WriteFloor;
                 _insulation.IsChecked = sf.Insulation;
+                _writeRoom.IsChecked = sf.WriteRoom;
                 _chainNested.IsChecked = sf.ChainNested;
                 _nestedNote.Text = (options.NestedParams.Count == 0 ? "Параметры переноса не выбраны" : "Переносятся: " + string.Join(", ", options.NestedParams.Select(k => k.Name)))
                     + (options.NestedSavedInProject ? " (настройка «Перенос во вложенные» в модели)." : " (по умолчанию). Изменить — в окне «Перенос во вложенные».");
@@ -249,6 +259,7 @@ namespace VKTools.Revit.UI
             sf.WriteSystem = _writeSystem.IsChecked == true;
             sf.WriteFloor = _writeFloor.IsChecked == true;
             sf.Insulation = _insulation.IsChecked == true;
+            sf.WriteRoom = _writeRoom.IsChecked == true;
             sf.ChainNested = _chainNested.IsChecked == true;
             sf.Categories = _categories.Where(c => c.Box.IsChecked == true).Select(c => c.Name).ToList();
             sf.Floors = _rows.Where(r => r.Value.Length > 0).Select(r => new FloorRename(r.Level, r.Value)).ToList();
