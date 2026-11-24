@@ -62,6 +62,14 @@ namespace VKTools.Revit.Commands
             SpecLauncher.Run(commandData.Application, SpecModule.PipeNames);
     }
 
+    /// <summary>«Марки и поставщики» (0.15.0): марка, код изделия, завод по маске наименования из таблицы проекта.</summary>
+    [Transaction(TransactionMode.ReadOnly)]
+    public sealed class VendorCommand : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements) =>
+            SpecLauncher.Run(commandData.Application, SpecModule.Vendor);
+    }
+
     /// <summary>
     /// Общий запуск модулей Р2: настройки из модели (или по умолчанию) → анализ → окно. Сама команда только анализирует;
     /// пробный прогон, запись и сохранение настройки идут из окна через ExternalEvent.
@@ -79,10 +87,17 @@ namespace VKTools.Revit.Commands
                 var timings = new OperationTimings { Trace = line => Host.Log.Info("  этап " + line) };
                 (SpecOptions options, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, module);
                 string? parameterNote = null;
-                if (module == SpecModule.SystemFloor && options.SystemFloor.WriteSystem && options.SystemFloor.UsesVkSystem)
+                // Свой набор «Р_»: параметры нужны всем модулям; набор ADSK — только «VK_Сокращение системы» для «Системы и этажа»
+                if (Core.Config.ParamProfile.IsOwn || (module == SpecModule.SystemFloor && options.SystemFloor.NeedsVkParameters))
                 {
                     string? refused = VkParameters.Ensure(doc, app.Application, out parameterNote);
-                    if (refused != null) parameterNote = $"«{Core.Config.KnownParameters.VkSystem.Name}» не добавлен: {refused}. Система в него писаться не будет.";
+                    if (refused != null)
+                    {
+                        // Окно открывается командой только для чтения: параметры (и перевод «Р_» 0.14 → 0.15) добавятся при «Применить»
+                        parameterNote = doc.IsReadOnly || refused.Contains("только для чтения")
+                            ? "свои параметры VK Tools добавятся (или переведутся на нередактируемые) при «Применить»; до этого анализ покажет «нет у категории»."
+                            : $"свои параметры VK Tools не добавлены: {refused}. В них ничего писаться не будет.";
+                    }
                 }
                 options.Scope = SpecParamsHost.LastScope(module);
                 List<ElementId>? scope = SpecScope.Resolve(uidoc, options, out string scopeLabel);

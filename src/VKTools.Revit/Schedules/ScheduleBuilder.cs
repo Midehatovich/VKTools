@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
+using VKTools.Core.Config;
 using VKTools.Core.Schedules;
 using VKTools.Core.Spec;
 using VKTools.Revit.Compat;
@@ -86,6 +87,7 @@ namespace VKTools.Revit.Schedules
                             schedule.ViewTemplateId = ElementId.InvalidElementId;
                             result.Notes.Add($"копия отвязана от шаблона вида «{templateName}»: иначе шаблон не дал бы поставить фильтры (эталон не тронут)");
                         }
+                        if (ParamProfile.IsOwn) RemapToOwn(doc, schedule, result);
                     }
                     if (!ApplyFilters(doc, schedule, data, request, set, result))
                     {
@@ -114,7 +116,8 @@ namespace VKTools.Revit.Schedules
             }
             result.Lines.Add($"Системы: {(set.Systems.All ? "все" : ScheduleRequest.JoinAnd(systems))}.");
             result.Lines.Add($"Этажи: {(set.Floors.All ? "все" : ScheduleRequest.JoinAnd(floors))}.");
-            result.Lines.Add("Фильтры: " + string.Join("; ", set.Describe(data.SystemParam.Name, data.FloorParam.Name)) + ".");
+            if (request.IsRoom) result.Lines.Add($"Помещение: {(request.RoomTitle.Length > 0 ? request.RoomTitle : request.Room)}" + (request.RoomExclusive ? " — только в этой спецификации." : "."));
+            result.Lines.Add("Фильтры: " + string.Join("; ", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name)) + ".");
             return result;
         }
 
@@ -150,6 +153,8 @@ namespace VKTools.Revit.Schedules
                         schedule.ViewTemplateId = ElementId.InvalidElementId;
                         result.Notes.Add("спецификация отвязана от шаблона вида");
                     }
+                    // 0.14.3: графы, оставшиеся на ADSK_ (в т. ч. комбинированные), переводятся на «Р_» и при «Обновить».
+                    if (ParamProfile.IsOwn) RemapToOwn(doc, schedule, result);
                     if (!ApplyFilters(doc, schedule, data, request, set, result))
                     {
                         t.RollBack();
@@ -169,7 +174,7 @@ namespace VKTools.Revit.Schedules
                     Host.Log.Error("Обновить фильтры спецификации: Revit отказал.", ex);
                 }
             }
-            result.Lines.Add("Фильтры: " + string.Join("; ", set.Describe(data.SystemParam.Name, data.FloorParam.Name)) + ".");
+            result.Lines.Add("Фильтры: " + string.Join("; ", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name)) + ".");
             return result;
         }
 
@@ -179,7 +184,7 @@ namespace VKTools.Revit.Schedules
             request.KnownFloors = data.KnownFloorValues;
             request.SystemParam = data.SystemParam.Id;
             request.FloorParam = data.FloorParam.Id;
-            request.FilterSignature = string.Join("\n", set.Describe(data.SystemParam.Name, data.FloorParam.Name));
+            request.FilterSignature = string.Join("\n", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name));
         }
 
         /// <summary>Графы формы: заголовок, ширина, выравнивание, итог. Неразвёрнутые строки, без общего итога.</summary>
@@ -228,6 +233,151 @@ namespace VKTools.Revit.Schedules
                 result.Notes.Add("высота строк на листе — 8 мм");
             }
         }
+
+        /// <summary>
+        /// Свой набор «Р_» (0.14.0): в копии эталона КрМа3 графы ADSK_* заменяются на Р_* той же роли — место, заголовок, ширины,
+        /// выравнивание, формат, стиль, итоги, скрытость, сортировка и фильтры переносятся на новую графу. Эталон не меняется.
+        /// Вычисляемые графы (формулы с ADSK_*) Revit пересобрать не даёт — о них замечание.
+        /// </summary>
+        internal static void RemapToOwn(Document doc, ViewSchedule schedule, ScheduleResult result, bool legacyOnly = false)
+        {
+            ScheduleDefinition definition = schedule.Definition;
+            var replaced = new List<string>();
+            var failed = new List<string>();
+            IList<ScheduleFieldId> order = definition.GetFieldOrder();
+            for (int index = 0; index < order.Count; index++)
+            {
+                ScheduleField old = definition.GetField(order[index]);
+                if (old.IsCalculatedField)
+                {
+                    if (old.GetName().IndexOf("ADSK_", StringComparison.Ordinal) >= 0) failed.Add($"«{old.ColumnHeading}» (вычисляемая)");
+                    continue;
+                }
+#if REVIT2022_OR_GREATER
+                if (old.IsCombinedParameterField)
+                {
+                    RemapCombined(doc, old, replaced, failed, legacyOnly);
+                    continue;
+                }
+#endif
+                if (!(doc.GetElement(old.ParameterId) is SharedParameterElement shared)) continue;
+                ParamRole? role = ParamProfile.RoleOf(shared.GuidValue);
+                if (role == null) continue;
+                if (legacyOnly && !ParamProfile.LegacyOwnGuids.ContainsKey(shared.GuidValue)) continue;   // перенос «Р_» 0.14 → 0.15: ADSK_ графы не трогать
+                OwnParamDef own = ParamProfile.Own(role.Value);
+                if (shared.GuidValue == own.Guid) continue;
+                SchedulableField? candidate = definition.GetSchedulableFields()
+                    .Where(c => doc.GetElement(c.ParameterId) is SharedParameterElement sp && sp.GuidValue == own.Guid)
+                    .OrderBy(c => c.FieldType == ScheduleFieldType.Instance ? 0 : 1).FirstOrDefault();
+                if (candidate == null)
+                {
+                    failed.Add($"«{old.ColumnHeading}» ({own.Name} нет у категорий спецификации)");
+                    continue;
+                }
+                try
+                {
+                    ScheduleField field = definition.InsertField(candidate, index);
+                    field.ColumnHeading = old.ColumnHeading;
+                    field.IsHidden = old.IsHidden;
+                    field.HorizontalAlignment = old.HorizontalAlignment;
+                    field.GridColumnWidth = old.GridColumnWidth;
+                    field.SetStyle(old.GetStyle());
+                    try
+                    {
+                        field.SetFormatOptions(old.GetFormatOptions());
+                    }
+                    catch (Autodesk.Revit.Exceptions.ApplicationException)
+                    {
+                        // формат числа к тексту не подходит — как в проекте
+                    }
+                    if (old.DisplayType == ScheduleFieldDisplayType.Totals && field.CanTotal()) field.DisplayType = ScheduleFieldDisplayType.Totals;
+
+                    ScheduleFieldId oldId = old.FieldId;
+                    ScheduleFieldId newId = field.FieldId;
+                    IList<ScheduleSortGroupField> sorts = definition.GetSortGroupFields();
+                    var remapped = new List<ScheduleSortGroupField>();
+                    foreach (ScheduleSortGroupField sg in sorts)
+                    {
+                        if (sg.FieldId != oldId)
+                        {
+                            remapped.Add(sg);
+                            continue;
+                        }
+                        remapped.Add(new ScheduleSortGroupField(newId, sg.SortOrder)
+                        {
+                            ShowHeader = sg.ShowHeader,
+                            ShowFooter = sg.ShowFooter,
+                            ShowBlankLine = sg.ShowBlankLine,
+                        });
+                    }
+                    definition.SetSortGroupFields(remapped);
+                    IList<ScheduleFilter> filters = definition.GetFilters();
+                    foreach (ScheduleFilter f in filters)
+                    {
+                        if (f.FieldId == oldId) f.FieldId = newId;
+                    }
+                    definition.SetFilters(filters);
+                    definition.RemoveField(oldId);
+                    replaced.Add($"{shared.Name} → {own.Name}");
+                    order = definition.GetFieldOrder();
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+                {
+                    failed.Add($"«{old.ColumnHeading}» ({ex.Message})");
+                }
+            }
+            if (replaced.Count > 0) result.Notes.Add("графы эталона на свои параметры: " + string.Join(", ", replaced));
+            if (failed.Count > 0) result.Notes.Add("графы остались на ADSK_ — проверьте вручную: " + string.Join("; ", failed));
+        }
+
+#if REVIT2022_OR_GREATER
+        /// <summary>
+        /// Графа «Комбинировать параметры» (Пушкарев 2026-11-23: наименование эталона КрМа3 показывало ADSK_, а сортировка уже шла по Р_ —
+        /// в строках «‹варианты›» и пустые имена): части ADSK_ роли заменяются своими «Р_», префиксы и разделители сохраняются.
+        /// </summary>
+        private static void RemapCombined(Document doc, ScheduleField field, List<string> replaced, List<string> failed, bool legacyOnly)
+        {
+            IList<TableCellCombinedParameterData> parts = field.GetCombinedParameters();
+            var updated = new List<TableCellCombinedParameterData>();
+            var names = new List<string>();
+            bool changed = false;
+            foreach (TableCellCombinedParameterData part in parts)
+            {
+                ElementId id = part.ParamId;
+                if (doc.GetElement(id) is SharedParameterElement shared && ParamProfile.RoleOf(shared.GuidValue) is ParamRole role
+                    && shared.GuidValue != ParamProfile.Own(role).Guid && (!legacyOnly || ParamProfile.LegacyOwnGuids.ContainsKey(shared.GuidValue)))
+                {
+                    OwnParamDef own = ParamProfile.Own(role);
+                    SharedParameterElement? target = SharedParameterElement.Lookup(doc, own.Guid);
+                    if (target == null)
+                    {
+                        failed.Add($"«{field.ColumnHeading}» (комбинированная: {own.Name} нет в проекте)");
+                        return;
+                    }
+                    id = target.Id;
+                    names.Add($"{shared.Name} → {own.Name}");
+                    changed = true;
+                }
+                TableCellCombinedParameterData copy = TableCellCombinedParameterData.Create();
+                copy.ParamId = id;
+                copy.Prefix = part.Prefix;
+                copy.Suffix = part.Suffix;
+                copy.Separator = part.Separator;
+                copy.SampleValue = part.SampleValue;
+                updated.Add(copy);
+            }
+            if (!changed) return;
+            try
+            {
+                field.SetCombinedParameters(updated);
+                replaced.Add($"«{field.ColumnHeading}» (комбинированная): " + string.Join(", ", names));
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+            {
+                failed.Add($"«{field.ColumnHeading}» (комбинированная: {ex.Message})");
+            }
+        }
+#endif
 
         /// <summary>Текст ячеек графы — по центру строки по вертикали (в многострочном наименовании соседние графы не прилипают к верху).</summary>
         private static void MiddleVertically(ScheduleField field)
@@ -293,6 +443,17 @@ namespace VKTools.Revit.Schedules
                 }
             }
 
+            ScheduleField? room = null;
+            if (set.Rooms.Count > 0)
+            {
+                room = ScheduleFields.Ensure(doc, definition, data.RoomParam, true);
+                if (room == null)
+                {
+                    result.Error = $"параметра «{data.RoomParam.Name}» нет среди полей спецификации: запустите «Система и этаж» — плагин добавит его";
+                    return false;
+                }
+            }
+
             var keep = new List<ScheduleFilter>();
             var removed = new List<string>();
             foreach (ScheduleFilter filter in definition.GetFilters())
@@ -300,7 +461,8 @@ namespace VKTools.Revit.Schedules
                 ScheduleField field = definition.GetField(filter.FieldId);
                 if (data.IsReplaced(doc, field.ParameterId))
                 {
-                    if (!ScheduleFields.Is(doc, field.ParameterId, data.SystemParam) && !ScheduleFields.Is(doc, field.ParameterId, data.FloorParam))
+                    if (!ScheduleFields.Is(doc, field.ParameterId, data.SystemParam) && !ScheduleFields.Is(doc, field.ParameterId, data.FloorParam)
+                        && !ScheduleFields.Is(doc, field.ParameterId, data.RoomParam))
                     {
                         removed.Add($"«{field.GetName()}» {FilterText(filter)}");
                     }
@@ -321,6 +483,15 @@ namespace VKTools.Revit.Schedules
                 foreach (FilterCondition c in set.Floors.Conditions)
                 {
                     ScheduleFilter? f = Make(definition, floor.FieldId, c, data.FloorParam.Name, result);
+                    if (f == null) return false;
+                    filters.Add(f);
+                }
+            }
+            if (room != null)
+            {
+                foreach (FilterCondition c in set.Rooms)
+                {
+                    ScheduleFilter? f = Make(definition, room.FieldId, c, data.RoomParam.Name, result);
                     if (f == null) return false;
                     filters.Add(f);
                 }

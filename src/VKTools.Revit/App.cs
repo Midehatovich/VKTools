@@ -169,6 +169,16 @@ namespace VKTools.Revit
                 LargeImage = RibbonIcons.PipeNames(32),
                 Image = RibbonIcons.PipeNames(16),
             };
+            var vendor = new PushButtonData("VKTools.Vendor", "Марки и\nпоставщики", assembly, typeof(VendorCommand).FullName)
+            {
+                ToolTip = "Марка, код изделия и завод-изготовитель по маске наименования из таблицы проекта (вендор-лист). Наименования не меняются.",
+                LongDescription =
+                    "Таблица в окне хранится в модели: маска наименования (или «Семейство : Тип»), марка, код, завод; пустая графа — не трогать. " +
+                    "По умолчанию пишутся только пустые значения: марка из семейства и ручная правка остаются. Запускать после «Имён труб». Запись — одна операция в журнале отмены.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.Vendor(32),
+                Image = RibbonIcons.Vendor(16),
+            };
             spec.AddItem(systemFloor);
             spec.AddItem(insulation);
             spec.AddItem(nested);
@@ -176,6 +186,7 @@ namespace VKTools.Revit
             spec.AddItem(calc);
             spec.AddItem(reserve);
             spec.AddItem(pipeNames);
+            spec.AddItem(vendor);
 
             RibbonPanel schedules = application.CreateRibbonPanel(TabName, "Выпуск");
             var createSchedule = new PushButtonData("VKTools.CreateSchedule", "Создать\nспецификацию", assembly, typeof(CreateScheduleCommand).FullName)

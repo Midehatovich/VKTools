@@ -86,7 +86,7 @@ namespace VKTools.Revit.Commands
         {
             string title = SpecModule.SystemFloor.Title();
             (SpecOptions options, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, SpecModule.SystemFloor);
-            bool needsParameter = options.SystemFloor.WriteSystem && options.SystemFloor.UsesVkSystem && VkParameters.NeedsSetup(doc, out _);
+            bool needsParameter = (ParamProfile.IsOwn || options.SystemFloor.NeedsVkParameters) && VkParameters.NeedsSetup(doc, out _);
             ParamPlan? plan = null;
             if (!needsParameter)
             {
@@ -105,7 +105,9 @@ namespace VKTools.Revit.Commands
             {
                 MainInstruction = "Сначала обновить «Система и этаж»?",
                 MainContent = (needsParameter
-                        ? $"В проекте нет параметра «{KnownParameters.VkSystem.Name}» (или он не у всех категорий ВК). Плагин добавит его и заполнит из «Сокращения для системы». "
+                        ? (ParamProfile.IsOwn
+                            ? "В проекте нет своих параметров VK Tools «Р_…» (или они не у всех категорий ВК). Плагин добавит их и заполнит: система, этаж, копии ADSK_. "
+                            : $"В проекте нет параметра «{KnownParameters.VkSystem.Name}» (или он не у всех категорий ВК). Плагин добавит его и заполнит из «Сокращения для системы». ")
                         : $"У {plan!.Changes.Count} значений система или этаж не совпадают с моделью. ")
                     + "Без обновления новые элементы не попадут в фильтры спецификации, а в окне не будет новых систем.\n\n"
                     + "Обновление — отдельная операция (отменяется своим Ctrl+Z).",
@@ -123,7 +125,7 @@ namespace VKTools.Revit.Commands
                 string? refused = VkParameters.Ensure(doc, app.Application, out parameterNote);
                 if (refused != null)
                 {
-                    TaskDialog.Show("VK Tools", $"«{KnownParameters.VkSystem.Name}» не добавлен: {refused}.\n\nСпецификация не создаётся: фильтровать не по чему. Модель не изменялась.");
+                    TaskDialog.Show("VK Tools", $"Свои параметры VK Tools не добавлены: {refused}.\n\nСпецификация не создаётся: фильтровать не по чему. Модель не изменялась.");
                     return Cancel;
                 }
             }
@@ -163,6 +165,20 @@ namespace VKTools.Revit.Commands
                     return Result.Failed;
                 }
                 report.Add("Спецификация: " + string.Join(" ", created.Lines) + (created.Notes.Count > 0 ? " Заметки: " + string.Join("; ", created.Notes) + "." : string.Empty));
+
+                // Помещение «только в своей»: до расчётных позиций убрать его из остальных созданных кнопкой (иначе расчёт увидит
+                // трубы насосной и в общей спецификации, и в новой)
+                if (request.IsRoom && request.RoomExclusive)
+                {
+                    if (!data.ExcludedRooms.Contains(request.Room, StringComparer.CurrentCultureIgnoreCase)) data.ExcludedRooms.Add(request.Room);
+                    var excluded = new List<string>();
+                    foreach (OwnSchedule other in data.Own.Where(o => !o.Request.IsRoom))
+                    {
+                        ScheduleResult updated = ScheduleBuilder.Update(doc, data, other.Id);
+                        excluded.Add(updated.Error == null ? $"«{other.Name}»" : $"«{other.Name}» — не обновлена: {updated.Error}");
+                    }
+                    if (excluded.Count > 0) report.Add("Помещение убрано из: " + string.Join("; ", excluded) + ".");
+                }
 
                 string? failed = null;
                 try

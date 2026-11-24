@@ -49,6 +49,32 @@ namespace VKTools.Revit.Compat
 #endif
         }
 
+        /// <summary>Параметр семейства (не общий) с именем и типом данных определения ФОП: текст или число.</summary>
+        public static FamilyParameter AddPlainParameter(this FamilyManager manager, ExternalDefinition definition, bool instance)
+        {
+#if REVIT2022_OR_GREATER
+            ForgeTypeId spec = definition.GetDataType();
+            if (spec == null || spec.Empty()) spec = SpecTypeId.String.Text;
+            return manager.AddParameter(definition.Name, GroupTypeId.Data, spec, instance);
+#else
+            ParameterType type = definition.ParameterType == ParameterType.Number ? ParameterType.Number : ParameterType.Text;
+            return manager.AddParameter(definition.Name, BuiltInParameterGroup.PG_DATA, type, instance);
+#endif
+        }
+
+        /// <summary>
+        /// Свои «Р_» — в группе «Результаты анализа»: своей вкладки Revit не даёт (группы только встроенные), а эта в семействах ВК пустая,
+        /// поэтому «Р_» в свойствах стоят отдельным блоком (решение пользователя 2026-11-23: «отдельная вкладка»).
+        /// </summary>
+        public static bool InsertInOwnGroup(this BindingMap map, Definition definition, ElementBinding binding)
+        {
+#if REVIT2022_OR_GREATER
+            return map.Insert(definition, binding, GroupTypeId.AnalysisResults);
+#else
+            return map.Insert(definition, binding, BuiltInParameterGroup.PG_ANALYSIS_RESULTS);
+#endif
+        }
+
         /// <summary>Перепривязать параметр проекта к другому набору категорий, не меняя группу параметра.</summary>
         public static bool ReInsertKeepingGroup(this BindingMap map, Definition definition, ElementBinding binding)
         {

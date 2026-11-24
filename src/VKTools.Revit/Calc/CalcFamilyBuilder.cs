@@ -102,18 +102,41 @@ namespace VKTools.Revit.Calc
                 {
                     throw new InvalidOperationException($"шаблон «{Path.GetFileName(template)}» не «Обобщённая модель». Загрузите {familyName}.rfa вручную.");
                 }
-                List<ExternalDefinition> definitions = ReadDefinitions(app, parametersFile);
-                using (var t = new Transaction(family, "VK Tools: служебное семейство"))
+                // ФОП SYS держим текущим до конца добавления: определения из него. Путь ФОП приложения возвращается в finally.
+                string previous = app.SharedParametersFilename;
+                var fallback = new List<string>();
+                try
                 {
-                    t.Start();
-                    FamilyManager manager = family.FamilyManager;
-                    if (manager.CurrentType == null) manager.NewType(DefaultType);
-                    foreach (ExternalDefinition definition in definitions)
+                    List<ExternalDefinition> definitions = ReadDefinitions(app, parametersFile);
+                    using (var t = new Transaction(family, "VK Tools: служебное семейство"))
                     {
-                        if (manager.get_Parameter(definition.GUID) == null) manager.AddDataParameter(definition, true);
+                        t.Start();
+                        FamilyManager manager = family.FamilyManager;
+                        if (manager.CurrentType == null) manager.NewType(DefaultType);
+                        foreach (ExternalDefinition definition in definitions)
+                        {
+                            if (manager.get_Parameter(definition.GUID) != null || manager.get_Parameter(definition.Name) != null) continue;
+                            try
+                            {
+                                manager.AddDataParameter(definition, true);
+                            }
+                            catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+                            {
+                                // «Shared parameter creation failed» (Пушкарев, 2026-11-23): плагин читает SYS_ по имени, поэтому
+                                // параметр семейства с тем же именем и типом работает так же.
+                                log.Warn($"SYS_ «{definition.Name}» как общий не добавлен ({ex.Message}) — добавлен параметр семейства с тем же именем.");
+                                manager.AddPlainParameter(definition, true);
+                                fallback.Add(definition.Name);
+                            }
+                        }
+                        t.Commit();
                     }
-                    t.Commit();
                 }
+                finally
+                {
+                    app.SharedParametersFilename = previous ?? string.Empty;
+                }
+                if (fallback.Count > 0) log.Info("Служебное семейство: параметры семейства вместо общих — " + string.Join(", ", fallback));
                 family.SaveAs(path, new SaveAsOptions { OverwriteExistingFile = true, MaximumBackups = 1 });
             }
             finally
@@ -130,20 +153,12 @@ namespace VKTools.Revit.Calc
         /// </summary>
         private static List<ExternalDefinition> ReadDefinitions(Application app, string parametersFile)
         {
-            string previous = app.SharedParametersFilename;
-            try
-            {
-                app.SharedParametersFilename = parametersFile;
-                DefinitionFile? file = app.OpenSharedParameterFile();
-                List<ExternalDefinition> result = file?.Groups.Cast<DefinitionGroup>().SelectMany(g => g.Definitions.Cast<Definition>()).OfType<ExternalDefinition>().ToList()
-                    ?? new List<ExternalDefinition>();
-                if (result.Count != OwnParameters.Count) throw new InvalidOperationException("Revit не прочитал параметры SYS_ для служебного семейства.");
-                return result;
-            }
-            finally
-            {
-                app.SharedParametersFilename = previous;
-            }
+            app.SharedParametersFilename = parametersFile;
+            DefinitionFile? file = app.OpenSharedParameterFile();
+            List<ExternalDefinition> result = file?.Groups.Cast<DefinitionGroup>().SelectMany(g => g.Definitions.Cast<Definition>()).OfType<ExternalDefinition>().ToList()
+                ?? new List<ExternalDefinition>();
+            if (result.Count != OwnParameters.Count) throw new InvalidOperationException("Revit не прочитал параметры SYS_ для служебного семейства.");
+            return result;
         }
 
         /// <summary>Загрузка в проект (внутри открытой транзакции). Семейство с тем же именем не перезаписывается.</summary>

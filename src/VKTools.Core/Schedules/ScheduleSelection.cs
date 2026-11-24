@@ -185,7 +185,10 @@ namespace VKTools.Core.Schedules
                     if (double.TryParse(accuracyText, NumberStyles.Float, CultureInfo.InvariantCulture, out double a) && a > 0 && a <= 1000) accuracy = a;
                     else issues.Add(new ConfigIssue(Checks.Severity.Warning, Form.FileName, row.LineNumber, $"«{name}»: точность «{row.Get("Точность")}» — нужно число (0,1; 0,01; 1); графа как в проекте"));
                 }
-                result.Add(new FormColumn(heading.Length > 0 ? heading : name, new ParameterRef(name, guid), width,
+                // Свой набор «Р_»: графа ADSK_Наименование формы КрМа3 читает Р_Наименование (заголовок и ширина те же)
+                var parameter = new ParameterRef(name, guid);
+                parameter = ParamProfile.MapToActive(parameter) ?? parameter;
+                result.Add(new FormColumn(heading.Length > 0 ? heading : parameter.Name, parameter, width,
                     IsYes(row.Get("Итог")), IsYes(row.Get("Скрыть")), sort, string.Equals(row.Get("Выравнивание"), "центр", StringComparison.OrdinalIgnoreCase))
                 {
                     Accuracy = accuracy,

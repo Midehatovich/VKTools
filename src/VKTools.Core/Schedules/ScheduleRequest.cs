@@ -58,6 +58,20 @@ namespace VKTools.Core.Schedules
         /// <summary>Фильтры, которые плагин поставил (текстом): отличаются от пересчитанных — спецификация устарела.</summary>
         public string FilterSignature { get; set; } = string.Empty;
 
+        /// <summary>
+        /// Спецификация одного помещения АР (0.16.0): значение «Р_Номер помещения» (номер, при повторе номера — с именем). Пусто — по
+        /// системам и этажам, как раньше.
+        /// </summary>
+        public string Room { get; set; } = string.Empty;
+
+        /// <summary>Как помещение звучит в названии: «2 «Помещение насосных станций»».</summary>
+        public string RoomTitle { get; set; } = string.Empty;
+
+        /// <summary>Помещение только в своей спецификации: остальные созданные кнопкой его исключают (решение пользователя 2026-11-24).</summary>
+        public bool RoomExclusive { get; set; } = true;
+
+        public bool IsRoom => Room.Length > 0;
+
         public bool UsesForm => string.IsNullOrEmpty(Template);
 
         /// <summary>Системы для текущей модели.</summary>
@@ -119,6 +133,12 @@ namespace VKTools.Core.Schedules
         /// <summary>«Спецификация систем В1, Т3 и Т4 в уровнях 1, 2 и 3 этажа».</summary>
         public string AutoName(IReadOnlyList<string> systems, IReadOnlyList<string> floors, IReadOnlyList<SystemGroup> groups)
         {
+            if (IsRoom)
+            {
+                // Формулировка пользователя (2026-11-24): «Спецификации систем В1, К1 и К4Н в помещении 2 «Помещение насосных станций»»
+                string list = systems.Count == 0 ? string.Empty : (systems.Count == 1 ? "системы " + systems[0] : "систем " + JoinAnd(systems)) + " ";
+                return CleanName("Спецификации " + list + "в помещении " + (RoomTitle.Length > 0 ? RoomTitle : Room));
+            }
             var name = new StringBuilder("Спецификация ");
             SystemGroup? group = FindGroup(SystemPreset, groups);
             if (SystemPreset == PresetAll) name.Append("по всем системам");
@@ -185,6 +205,9 @@ namespace VKTools.Core.Schedules
                 ["systemParam"] = SystemParam,
                 ["floorParam"] = FloorParam,
                 ["filters"] = FilterSignature,
+                ["room"] = Room,
+                ["roomTitle"] = RoomTitle,
+                ["roomExclusive"] = B(RoomExclusive),
             };
         }
 
@@ -207,6 +230,9 @@ namespace VKTools.Core.Schedules
                 SystemParam = Get("systemParam"),
                 FloorParam = Get("floorParam"),
                 FilterSignature = Get("filters"),
+                Room = Get("room"),
+                RoomTitle = Get("roomTitle"),
+                RoomExclusive = Get("roomExclusive") != "0",
             };
             if (request.SystemPreset.Length == 0) request.SystemPreset = PresetManual;
             if (request.FloorPreset.Length == 0) request.FloorPreset = PresetManual;

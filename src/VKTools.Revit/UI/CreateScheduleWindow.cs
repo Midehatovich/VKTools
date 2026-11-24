@@ -33,6 +33,10 @@ namespace VKTools.Revit.UI
         private readonly Dictionary<string, RadioButton> _systemPresets = new Dictionary<string, RadioButton>(StringComparer.Ordinal);
         private readonly Dictionary<string, RadioButton> _floorPresets = new Dictionary<string, RadioButton>(StringComparer.Ordinal);
         private readonly ComboBox _firstFloor;
+        private const string NoRoomItem = "(нет — спецификация по системам и этажам)";
+        private readonly ComboBox _room;
+        private readonly CheckBox _roomOnly;
+        private readonly GroupBox _floorsBox;
         private readonly TextBox _name;
         private readonly CheckBox _autoName;
         private readonly ComboBox _template;
@@ -115,6 +119,37 @@ namespace VKTools.Revit.UI
             var scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
             root.Children.Add(scroll);
 
+            // Помещение (0.16.0): спецификация одного помещения АР по «Р_Номер помещения»
+            var roomPanel = new StackPanel();
+            body.Children.Add(new GroupBox { Header = "Помещение", Content = roomPanel, Padding = new Thickness(6), Margin = new Thickness(0, 0, 0, 8) });
+            var roomItems = new List<object> { NoRoomItem };
+            roomItems.AddRange(data.Rooms);
+            _room = new ComboBox { ItemsSource = roomItems, SelectedIndex = 0, MinWidth = 420, HorizontalAlignment = HorizontalAlignment.Left };
+            _room.ToolTip = $"Помещения АР, где есть элементы ВК (по «{data.RoomParam.Name}», его заполняет «Система и этаж» по помещениям модели и связей АР).";
+            _room.SelectionChanged += (s, e) => OnRoom();
+            roomPanel.Children.Add(_room);
+            _roomOnly = new CheckBox
+            {
+                Content = "Только в этой спецификации: из остальных, созданных кнопкой, помещение убрать (они обновятся сами)",
+                IsChecked = true,
+                IsEnabled = false,
+                Margin = new Thickness(0, 4, 0, 0),
+                ToolTip = "Спецификации, собранные вручную (не кнопкой), плагин не меняет — из них помещение не уберётся.",
+            };
+            _roomOnly.Checked += (s, e) => Recompute();
+            _roomOnly.Unchecked += (s, e) => Recompute();
+            roomPanel.Children.Add(_roomOnly);
+            if (data.Rooms.Count == 0)
+            {
+                roomPanel.Children.Add(new TextBlock
+                {
+                    Text = $"«{data.RoomParam.Name}» ни у одного элемента не заполнен: нет помещений в модели и связях АР, связь не загружена или «Система и этаж» ещё не запускалась.",
+                    Foreground = Brushes.DimGray,
+                    TextWrapping = TextWrapping.Wrap,
+                    Margin = new Thickness(0, 4, 0, 0),
+                });
+            }
+
             // Системы и этажи — рядом
             var pick = new Grid();
             pick.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -137,9 +172,9 @@ namespace VKTools.Revit.UI
                 data.Systems.Count == 0 ? $"В модели нет элементов ВК с заполненным «{data.SystemParam.Name}»." : null));
 
             var floors = new StackPanel();
-            var floorsBox = new GroupBox { Header = "Этажи", Content = floors, Padding = new Thickness(6) };
-            Grid.SetColumn(floorsBox, 2);
-            pick.Children.Add(floorsBox);
+            _floorsBox = new GroupBox { Header = "Этажи", Content = floors, Padding = new Thickness(6) };
+            Grid.SetColumn(_floorsBox, 2);
+            pick.Children.Add(_floorsBox);
             var floorPresets = new WrapPanel();
             AddPreset(floorPresets, _floorPresets, "floors", ScheduleRequest.PresetAll, "Все этажи", OnFloorPreset);
             AddPreset(floorPresets, _floorPresets, "floors", ScheduleRequest.PresetBelow, "Ниже 1 этажа", OnFloorPreset);
@@ -284,6 +319,7 @@ namespace VKTools.Revit.UI
         {
             ChainStep.Calc => " — новая спецификация добавится к отмеченным в «Расчётных позициях»",
             ChainStep.PipeNames => " — пишет, только если запись включена в окне «Имена труб» (пока имена пишет BIM2B)",
+            ChainStep.Vendor => " — по таблице окна «Марки и поставщики»; пустая таблица — ничего не пишет",
             _ => string.Empty,
         };
 
@@ -314,6 +350,26 @@ namespace VKTools.Revit.UI
         }
 
         private static List<string> Checked(Dictionary<string, CheckBox> map) => map.Where(kv => kv.Value.IsChecked == true).Select(kv => kv.Key).ToList();
+
+        private RoomEntry? SelectedRoom => _room?.SelectedItem as RoomEntry;
+
+        /// <summary>Помещение выбрано: этажи не нужны (помещение на своём этаже), фильтр — «равно» по помещению.</summary>
+        private void OnRoom()
+        {
+            if (_roomOnly == null || _floorsBox == null) return;
+            bool room = SelectedRoom != null;
+            _roomOnly.IsEnabled = room;
+            _floorsBox.IsEnabled = !room;
+            if (room && _floorPreset != ScheduleRequest.PresetAll)
+            {
+                _sync = true;
+                _floorPresets[ScheduleRequest.PresetAll].IsChecked = true;
+                _sync = false;
+                OnFloorPreset(ScheduleRequest.PresetAll);
+                return;
+            }
+            Recompute();
+        }
 
         private void OnSystemPreset(string preset)
         {
@@ -381,6 +437,9 @@ namespace VKTools.Revit.UI
                 GroupByFloor = _byFloor?.IsChecked == true,
                 KeepTemplateSort = _keepSort?.IsChecked == true,
                 HeaderInTitleBlock = _titleHeader?.IsChecked == true,
+                Room = SelectedRoom?.Key ?? string.Empty,
+                RoomTitle = SelectedRoom?.Title ?? string.Empty,
+                RoomExclusive = SelectedRoom != null && _roomOnly?.IsChecked == true,
             };
         }
 
@@ -393,7 +452,8 @@ namespace VKTools.Revit.UI
             if (_autoName.IsChecked == true)
             {
                 _sync = true;
-                _name.Text = request.AutoName(systems, floors, _data.Groups);
+                RoomEntry? room = SelectedRoom;
+                _name.Text = request.AutoName(room == null ? systems : systems.Where(room.Systems.Contains).ToList(), floors, _data.Groups);
                 _sync = false;
                 request.Name = _name.Text;
             }
@@ -409,7 +469,7 @@ namespace VKTools.Revit.UI
             if (problem == null && name.Length == 0) problem = "задайте название";
             if (problem == null && _data.ViewNames.Contains(name)) problem = $"вид «{name}» уже есть в модели — измените название (созданные кнопкой обновляются ниже)";
 
-            int count = _data.Count(systems, set.Systems.All, floors, set.Floors.All);
+            int count = _data.Count(systems, set.Systems.All, floors, set.Floors.All, set.Rooms);
             var lines = new List<string>
             {
                 $"Попадёт элементов ВК: {count.ToString(CultureInfo.CurrentCulture)} (без расчётных позиций). Название: «{name}».",
@@ -417,7 +477,18 @@ namespace VKTools.Revit.UI
             if (set.Error == null)
             {
                 lines.Add($"Фильтры ({set.Count} из {ScheduleFilterSet.MaxFilters}" + (set.OtherFilters > 0 ? $", из них эталона {set.OtherFilters}" : string.Empty) + "): "
-                    + string.Join("; ", set.Describe(_data.SystemParam.Name, _data.FloorParam.Name)) + ".");
+                    + string.Join("; ", set.Describe(_data.SystemParam.Name, _data.FloorParam.Name, _data.RoomParam.Name)) + ".");
+            }
+            if (request.IsRoom && request.RoomExclusive)
+            {
+                int others = _data.Own.Count(o => !o.Request.IsRoom);
+                lines.Add(others > 0
+                    ? $"Помещение уберётся из {others} спецификаций, созданных кнопкой: после «Создать» их фильтры обновятся (+1 фильтр «не равно» в каждой)."
+                    : "Других спецификаций, созданных кнопкой, нет — убирать помещение неоткуда. Будущие созданные кнопкой его исключат.");
+            }
+            else if (!request.IsRoom && _data.ExcludedRooms.Count > 0)
+            {
+                lines.Add("Исключены помещения со своими спецификациями: " + string.Join(", ", _data.ExcludedRooms) + ".");
             }
             _preview.Text = string.Join(Environment.NewLine, lines);
             _problem.Text = problem == null ? string.Empty : "Нельзя создать: " + problem + ".";

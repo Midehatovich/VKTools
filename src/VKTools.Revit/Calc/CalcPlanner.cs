@@ -203,6 +203,9 @@ namespace VKTools.Revit.Calc
                     ScheduleField field = definition.GetField(filter.FieldId);
                     string fieldName = field.GetName();
                     if (managed.Contains(fieldName) || scope.CopyNames.Contains(fieldName)) continue;
+                    // «Р_Номер помещения не равно …» (помещение со своей спецификацией): позиции без помещения проходят и так — не копировать,
+                    // иначе позиции общей спецификации делились бы по сотне помещений АР
+                    if (fieldName == Core.Config.ParamProfile.RoomName && filter.FilterType == ScheduleFilterType.NotEqual) continue;
                     if (field.ParameterId.ToLong() < 0)
                     {
                         plan.Issues.Add(Severity.Warning, $"«{name}»: фильтр по системному полю «{fieldName}» — позиции не получат его значение",
@@ -291,8 +294,8 @@ namespace VKTools.Revit.Calc
             CalcOptions options = plan.Options;
             string system = options.SystemParameter.Trim();
             var anyNames = new List<string> { CalcParams.Name, CalcParams.Unit, CalcParams.Group };
-            anyNames.AddRange(plan.Rules.ExtraParameters.Where(n => !anyNames.Contains(n)));
-            anyNames.AddRange(plan.Result.Targets.SelectMany(t => t.Resource.Extras.Select(e => e.Key)).Distinct().Where(n => !anyNames.Contains(n)).ToList());
+            anyNames.AddRange(plan.Rules.ExtraParameters.Select(Mapped).Where(n => !anyNames.Contains(n)));
+            anyNames.AddRange(plan.Result.Targets.SelectMany(t => t.Resource.Extras.Select(e => Mapped(e.Key))).Distinct().Where(n => !anyNames.Contains(n)).ToList());
             FamilySymbol? baseSymbol = symbols.FirstOrDefault();
             foreach (string name in anyNames)
             {
@@ -489,7 +492,7 @@ namespace VKTools.Revit.Calc
             op.Values.Add(new CalcItemValue(CalcParams.Calc, Math.Round(target.Quantity, 4), false));
             op.Values.Add(new CalcItemValue(CalcParams.Mode, CalcManual.ModeText(mode), false));
             op.Values.Add(new CalcItemValue(CalcParams.Basis, basis, false));
-            foreach (string name in new[] { CalcParams.Name, CalcParams.Unit, CalcParams.Group }.Concat(target.Resource.Extras.Select(e => e.Key)).Distinct())
+            foreach (string name in new[] { CalcParams.Name, CalcParams.Unit, CalcParams.Group }.Concat(target.Resource.Extras.Select(e => Mapped(e.Key))).Distinct())
             {
                 if (plan.TypeLevel.Contains(name)) continue;
                 op.Values.Add(new CalcItemValue(name, TypeValue(target.Resource, name), name == CalcParams.Name || name == CalcParams.Unit || name == CalcParams.Group));
@@ -501,11 +504,14 @@ namespace VKTools.Revit.Calc
         }
 
         /// <summary>Значение «любого» параметра ресурса: наименование, единица, группа; колонка таблицы перекрывает (например ADSK_Группирование).</summary>
+        /// <summary>Колонка таблицы (ADSK_Завод-изготовитель) в активном наборе: свой набор пишет в Р_Завод-изготовитель.</summary>
+        private static string Mapped(string column) => Core.Config.ParamProfile.MapNameToActive(column) ?? column;
+
         private static string TypeValue(CalcResource resource, string name)
         {
             foreach (KeyValuePair<string, string> extra in resource.Extras)
             {
-                if (string.Equals(extra.Key, name, StringComparison.Ordinal)) return extra.Value;
+                if (string.Equals(Mapped(extra.Key), name, StringComparison.Ordinal)) return extra.Value;
             }
             if (name == CalcParams.Name) return resource.Name;
             if (name == CalcParams.Unit) return resource.Unit;

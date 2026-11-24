@@ -41,7 +41,10 @@ namespace VKTools.Core.Spec
         {
             for (int i = 0; i < Targets.Count; i++)
             {
-                if (string.Equals(Targets[i], parameterName, StringComparison.OrdinalIgnoreCase)) return i;
+                // Свой набор «Р_»: правило, сохранённое с VK_Сокращение системы, действует на Р_Сокращение системы
+                string? target = ParamProfile.MapNameToActive(Targets[i]);
+                if (target == null) continue;   // LSR_* в своём наборе не пишутся
+                if (string.Equals(target, parameterName, StringComparison.OrdinalIgnoreCase)) return i;
             }
             return -1;
         }
@@ -67,7 +70,8 @@ namespace VKTools.Core.Spec
         /// </summary>
         public static List<OwnSystemRule> Defaults() => new List<OwnSystemRule>
         {
-            new OwnSystemRule("*Смеситель*", DefaultSource, new[] { KnownParameters.VkSystem.Name, KnownParameters.LsrSystemName.Name, "LSR_Тип системы" }),
+            new OwnSystemRule("*Смеситель*", DefaultSource, new[] { KnownParameters.VkSystem.Name, KnownParameters.LsrSystemName.Name, "LSR_Тип системы" }
+                .Select(ParamProfile.MapNameToActive).Where(n => n != null).Select(n => n!).ToArray()),
         };
 
         /// <summary>Первое правило, под маску которого подходит семейство; null — переносится как обычно.</summary>

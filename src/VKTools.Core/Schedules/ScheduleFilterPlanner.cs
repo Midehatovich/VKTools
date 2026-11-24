@@ -200,22 +200,24 @@ namespace VKTools.Core.Schedules
         /// <summary>Больше фильтров окно «Свойства спецификации» не показывает: дальше спецификацию не поправить руками.</summary>
         public const int MaxFilters = 8;
 
-        private ScheduleFilterSet(FilterPlan systems, FilterPlan floors, int otherFilters)
+        private ScheduleFilterSet(FilterPlan systems, FilterPlan floors, int otherFilters, IReadOnlyList<FilterCondition> rooms)
         {
             Systems = systems;
             Floors = floors;
             OtherFilters = otherFilters;
+            Rooms = rooms;
             // Без условий по системе спецификация нескольких категорий покажет и стены, и двери: «у элемента есть параметр системы»
             SystemConditions = systems.All
                 ? new List<FilterCondition> { new FilterCondition(ConditionKind.HasParameter) }
                 : systems.Conditions.ToList();
-            Count = SystemConditions.Count + floors.Conditions.Count + otherFilters;
+            Count = SystemConditions.Count + floors.Conditions.Count + rooms.Count + otherFilters;
             if (systems.Error != null) Error = "системы: " + systems.Error;
             else if (floors.Error != null) Error = "этажи: " + floors.Error;
             else if (Count > MaxFilters)
             {
                 Error = $"нужно {Count} фильтров, а в спецификации Revit их не больше {MaxFilters}"
                     + (otherFilters > 0 ? $" (из них {otherFilters} — фильтры эталона)" : string.Empty)
+                    + (rooms.Count > 1 ? $" (из них {rooms.Count} — исключение помещений со своими спецификациями)" : string.Empty)
                     + ". Выберите группу систем или этажи подряд — тогда хватит одного-двух условий";
             }
         }
@@ -226,6 +228,12 @@ namespace VKTools.Core.Schedules
 
         public IReadOnlyList<FilterCondition> SystemConditions { get; }
 
+        /// <summary>
+        /// По помещению (0.16.0): у спецификации помещения — «равно», у остальных созданных кнопкой — «не равно» для каждого помещения
+        /// со своей спецификацией (Revit пропускает пустые значения через «не равно» — проверено на Пушкареве 2026-11-24).
+        /// </summary>
+        public IReadOnlyList<FilterCondition> Rooms { get; }
+
         public int OtherFilters { get; }
 
         public int Count { get; }
@@ -233,20 +241,22 @@ namespace VKTools.Core.Schedules
         public string? Error { get; }
 
         public static ScheduleFilterSet Build(IEnumerable<string> knownSystems, IEnumerable<string> systems,
-            IEnumerable<string> knownFloors, IEnumerable<string> floors, int otherFilters)
+            IEnumerable<string> knownFloors, IEnumerable<string> floors, int otherFilters, IEnumerable<FilterCondition>? rooms = null)
         {
             List<string> floorKnown = knownFloors.ToList();
             List<string> floorChosen = floors.ToList();
             FilterPlan floorPlan = floorKnown.Count == 0 || floorKnown.All(f => floorChosen.Contains(f, StringComparer.Ordinal))
                 ? new FilterPlan(true, Array.Empty<FilterCondition>(), null)
                 : ScheduleFilterPlanner.Plan(floorKnown, floorChosen);
-            return new ScheduleFilterSet(ScheduleFilterPlanner.Plan(knownSystems, systems), floorPlan, otherFilters);
+            return new ScheduleFilterSet(ScheduleFilterPlanner.Plan(knownSystems, systems), floorPlan, otherFilters,
+                (rooms ?? Array.Empty<FilterCondition>()).ToList());
         }
 
-        public List<string> Describe(string systemField, string floorField)
+        public List<string> Describe(string systemField, string floorField, string roomField = Config.ParamProfile.RoomName)
         {
             var lines = SystemConditions.Select(c => c.Describe(systemField)).ToList();
             lines.AddRange(Floors.Conditions.Select(c => c.Describe(floorField)));
+            lines.AddRange(Rooms.Select(c => c.Describe(roomField)));
             return lines;
         }
     }

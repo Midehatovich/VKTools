@@ -95,6 +95,7 @@ namespace VKTools.Revit.UI
             bool ins = _module == SpecModule.Insulation;
             bool reserve = _module == SpecModule.PipeReserve;
             bool names = _module == SpecModule.PipeNames;
+            bool vendor = _module == SpecModule.Vendor;
 
             this.ApplyDefaultLook();
             Title = $"VK Tools — {_module.Title().ToLowerInvariant()}: {document.Title}";
@@ -110,7 +111,9 @@ namespace VKTools.Revit.UI
             DockPanel.SetDock(header, Dock.Top);
             header.Children.Add(new TextBlock
             {
-                Text = reserve
+                Text = vendor
+                    ? "Марки и поставщики: марка, код изделия и завод-изготовитель по маске наименования из таблицы проекта (вкладка «Настройка»). Наименования не меняются; по умолчанию пишутся только пустые."
+                    : reserve
                     ? "Запас: количество = длина × k жёстким трубам и изоляции на трубах по таблице «Коэффициенты» проекта (вкладка «Настройка»; по умолчанию 1,1 = +10 %)."
                     : names
                     ? "Имена труб: наименование по правилу типа из таблицы «Правила» (ВГП — по Ду, пластик — по Dнар…). По умолчанию только проверка — имена пишет BIM2B."
@@ -148,7 +151,9 @@ namespace VKTools.Revit.UI
             bottom.Children.Add(new Expander { Header = "Сводка, правила и сообщения Revit", Content = _details });
             var buttons = new DockPanel { Margin = new Thickness(0, 8, 0, 0), LastChildFill = false };
             _defaults = ReportWindow.MakeButton("По умолчанию", (s, e) => ResetToDefaults());
-            _defaults.ToolTip = reserve
+            _defaults.ToolTip = vendor
+                ? "Пустая таблица, только пустые значения, поиск по наименованию. В модели — после «Сохранить»."
+                : reserve
                 ? "ADSK_Количество, трубы и изоляция на трубах × 1,1. В модели — после «Сохранить»."
                 : names
                 ? "Стиль бюро: ВГП ГОСТ 3262 и чугун — «{base} ø{dn}x{s}», остальные — «{base} ø{od}x{s}»; только проверка. В модели — после «Сохранить»."
@@ -180,9 +185,10 @@ namespace VKTools.Revit.UI
             root.Children.Add(bottom);
 
             _tabs = new TabControl();
-            if (ins || reserve || names)
+            if (ins || reserve || names || vendor)
             {
-                FrameworkElement panel = reserve ? new PipeReservePanel(document.Title)
+                FrameworkElement panel = vendor ? new VendorPanel(document.Title)
+                    : reserve ? new PipeReservePanel(document.Title)
                     : names ? new PipeNamesPanel(document.Title)
                     : (FrameworkElement)new InsulationPanel(document.Title);
                 panel.Margin = new Thickness(6);
@@ -637,7 +643,7 @@ namespace VKTools.Revit.UI
             if (_report == null) return;
             string module = _module == SpecModule.Nested ? "перенос" : _module == SpecModule.SystemFloor ? "система-этаж"
                 : _module == SpecModule.Insulation ? "изоляция" : _module == SpecModule.PipeReserve ? "запас-труб"
-                : _module == SpecModule.PipeNames ? "имена-труб" : "группирование";
+                : _module == SpecModule.PipeNames ? "имена-труб" : _module == SpecModule.Vendor ? "марки-поставщики" : "группирование";
             var dialog = new SaveFileDialog
             {
                 Filter = "CSV для Excel (*.csv)|*.csv",
