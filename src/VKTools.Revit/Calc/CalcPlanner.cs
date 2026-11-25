@@ -467,6 +467,7 @@ namespace VKTools.Revit.Calc
             }
 
             CheckCrossScope(doc, plan, family);
+            if (guard.BusyBlockReason() is string busy) plan.WriteBlockedReason ??= busy;
             foreach (CalcOp op in plan.Ops.Where(o => o.Error != null))
             {
                 plan.Issues.Add(Severity.Error, $"«{op.Key}»: {op.Error}", "Позиция не будет изменена.", op.ItemId);

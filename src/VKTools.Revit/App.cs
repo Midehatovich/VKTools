@@ -69,6 +69,18 @@ namespace VKTools.Revit
                 Image = RibbonIcons.Check(16),
             };
             check.AddItem(checkModel);
+            var checkSchedule = new PushButtonData("VKTools.CheckSchedule", "Проверить\nспецификацию", assembly, typeof(CheckScheduleCommand).FullName)
+            {
+                ToolTip = "Проверка спецификаций перед выпуском: откуда «‹варианты›», пустые графы, дыры в позициях. Ничего не изменяет.",
+                LongDescription =
+                    "Открытая или все оформленные спецификации: «‹варианты›» с причиной (разные позиции, наименования, пустые графы у части элементов), " +
+                    "один типоразмер под разными наименованиями, пустые наименование/количество/позиция, количество, которое округлится в 0, " +
+                    "повторы и пропуски позиций, «м» и «пог.м» вперемешку, «Не найдены…» из таблиц семейств, элементы ВК вне спецификаций и в двух сразу.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.CheckSchedule(32),
+                Image = RibbonIcons.CheckSchedule(16),
+            };
+            check.AddItem(checkSchedule);
 
             RibbonPanel systems = application.CreateRibbonPanel(TabName, "Системы");
             var merge = new PushButtonData("VKTools.MergeSystems", "Объединить\nсистемы", assembly, typeof(MergeSystemsCommand).FullName)

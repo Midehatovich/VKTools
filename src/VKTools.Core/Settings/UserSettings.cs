@@ -16,6 +16,12 @@ namespace VKTools.Core.Settings
 
         public int LogRetentionDays { get; set; } = 30;
 
+        /// <summary>
+        /// Есть занятые коллегами или устаревшие элементы: false (по умолчанию) — не записывать ничего, чтобы спецификация
+        /// не разъехалась (позиции и группы частично старые); true — записать остальное, занятые — в отчёте.
+        /// </summary>
+        public bool PartialWriteWhenBusy { get; set; }
+
         public string? LoadError { get; private set; }
 
         public static UserSettings Load(string path)
@@ -30,6 +36,7 @@ namespace VKTools.Core.Settings
                 settings.DepartmentRulesFolder = (string?)root.Element("DepartmentRulesFolder") ?? string.Empty;
                 if (int.TryParse((string?)root.Element("LogRetentionDays"), out int days) && days > 0)
                     settings.LogRetentionDays = days;
+                settings.PartialWriteWhenBusy = string.Equals((string?)root.Element("PartialWriteWhenBusy"), "true", StringComparison.OrdinalIgnoreCase);
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException || ex is XmlException)
             {
@@ -46,7 +53,8 @@ namespace VKTools.Core.Settings
                 new XElement("VKToolsSettings",
                     new XAttribute("version", 1),
                     new XElement("DepartmentRulesFolder", DepartmentRulesFolder ?? string.Empty),
-                    new XElement("LogRetentionDays", LogRetentionDays)));
+                    new XElement("LogRetentionDays", LogRetentionDays),
+                    new XElement("PartialWriteWhenBusy", PartialWriteWhenBusy ? "true" : "false")));
             string tmp = path + ".tmp";
             doc.Save(tmp);
             if (File.Exists(path)) File.Delete(path);
