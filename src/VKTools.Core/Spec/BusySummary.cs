@@ -36,17 +36,29 @@ namespace VKTools.Core.Spec
         public IEnumerable<long> ElementIds() => _byOwner.Values.SelectMany(s => s).Concat(_outdated).Distinct();
 
         /// <summary>Причина запрета записи; null — запрещать нечего (или пользователь разрешил частичную запись).</summary>
+        /// <summary>Начало причины запрета: по нему отчёты подставляют свою подсказку.</summary>
+        public const string Marker = "часть элементов нельзя записать";
+
+        /// <summary>Где лежит галка частичной записи.</summary>
+        public const string SettingsPath = "вкладка VK Tools → панель «Сервис» → «Настройки» → раздел «Совместная работа»";
+
+        /// <summary>Подсказка «Что сделать» для строки «Запись запрещена» в отчётах.</summary>
+        public static string? ActionFor(string blockedReason) =>
+            blockedReason.Contains(Marker)
+                ? "Освободите элементы и запустите снова или поставьте галку «…записывать остальное»: " + SettingsPath + "."
+                : null;
+
         public string? BlockReason(bool partialAllowed)
         {
             if (IsEmpty || partialAllowed) return null;
             var parts = new List<string>();
             if (OwnedCount > 0) parts.Add($"заняты коллегами {OwnedCount} эл. ({Owners()})");
             if (OutdatedCount > 0) parts.Add($"изменены в хранилище {OutdatedCount} эл.");
-            return "часть элементов нельзя записать: " + string.Join("; ", parts) + ". Чтобы спецификация не разъехалась, не записывается ничего. "
+            return Marker + ": " + string.Join("; ", parts) + ". Чтобы спецификация не разъехалась, не записывается ничего. "
                 + (OwnedCount > 0 ? "Попросите освободить элементы (они синхронизируются с освобождением)" : string.Empty)
                 + (OwnedCount > 0 && OutdatedCount > 0 ? ", затем " : string.Empty)
                 + (OutdatedCount > 0 ? "«Совместная работа» → «Обновить до последней версии»" : string.Empty)
-                + " и запустите снова. Записать остальное без них можно галкой в «Настройках».";
+                + " и запустите снова. Записать остальное без них: " + SettingsPath + ", галка «…записывать остальное».";
         }
 
         /// <summary>Напоминание после записи в модели совместной работы.</summary>

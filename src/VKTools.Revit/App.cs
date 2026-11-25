@@ -217,7 +217,7 @@ namespace VKTools.Revit
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)
             {
-                ToolTip = "Папка правил отдела и срок хранения логов.",
+                ToolTip = "Папка правил отдела, срок хранения логов, запись при занятых коллегами элементах («Совместная работа»).",
                 AvailabilityClassName = typeof(AlwaysAvailable).FullName,
                 LargeImage = RibbonIcons.Settings(32),
                 Image = RibbonIcons.Settings(16),

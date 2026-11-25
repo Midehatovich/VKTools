@@ -110,6 +110,11 @@ namespace VKTools.Core.Schedules
         public const string Empty = "Пустые графы";
         public const string Zero = "Количество округляется в 0";
         public const string Numbering = "Нумерация позиций";
+
+        public const string Excluded = "Служебные элементы «!»";
+
+        /// <summary>Категория труб (как её отдаёт Revit на русском).</summary>
+        public const string PipeCategory = "Трубы";
         public const string Units = "Единицы измерения";
         public const string FamilyText = "Текст из таблицы семейства";
         public const string Outside = "Вне спецификаций";
@@ -150,8 +155,11 @@ namespace VKTools.Core.Schedules
         {
             var findings = new List<CheckFinding>();
             int rows = 0;
-            foreach (AuditSchedule schedule in schedules)
+            var checkedSchedules = new List<AuditSchedule>();
+            foreach (AuditSchedule original in schedules)
             {
+                AuditSchedule schedule = WithoutExcluded(original, findings);
+                checkedSchedules.Add(schedule);
                 List<Row> built = BuildRows(schedule);
                 rows += built.Count;
                 CheckVariants(schedule, built, findings);
@@ -162,13 +170,68 @@ namespace VKTools.Core.Schedules
                 CheckUnits(schedule, findings);
                 CheckFamilyText(schedule, findings);
             }
-            CheckTwice(schedules, findings);
+            CheckTwice(checkedSchedules, findings);
             if (outside != null) CheckOutside(outside, findings);
-            int elements = schedules.SelectMany(s => s.Elements).Select(e => e.Id).Distinct().Count();
+            int elements = checkedSchedules.SelectMany(s => s.Elements).Select(e => e.Id).Distinct().Count();
             findings.Add(new CheckFinding(Summary, Severity.Info,
                 $"Проверено спецификаций: {schedules.Count}, строк: {rows}, элементов: {elements}. "
                 + (findings.Any(f => f.Severity != Severity.Info) ? "Замечания выше: «Выделить» показывает элементы в модели." : "Замечаний нет.")));
             return findings;
+        }
+
+        /// <summary>
+        /// Элементы с наименованием на «!» («!Не учитывать») — служебные: в проверки не идут.
+        /// Если они всё же есть в спецификации, это отдельное замечание (строка видна на листе).
+        /// </summary>
+        private static AuditSchedule WithoutExcluded(AuditSchedule schedule, List<CheckFinding> findings)
+        {
+            int nameIdx = Index(schedule, AuditRole.Name);
+            if (nameIdx < 0) return schedule;
+            var excluded = schedule.Elements.Where(e => IsExcludedName(Value(e, nameIdx))).ToList();
+            if (excluded.Count == 0) return schedule;
+            var finding = new CheckFinding(Excluded, Severity.Warning,
+                $"«{schedule.Name}»: {excluded.Count} эл. с наименованием на «!» ({string.Join("; ", excluded.Select(e => Shorten(Value(e, nameIdx), 40)).Distinct(StringComparer.Ordinal).Take(MaxListed))}) — в остальных проверках не участвуют")
+            {
+                Current = "строка «!…» в спецификации",
+                Expected = "служебные элементы скрыты фильтром",
+                Action = $"Если строка видна на листе — добавьте в спецификацию фильтр «{schedule.Fields[nameIdx].Name} не начинается с !». Если скрыта иначе — ничего делать не нужно.",
+                Category = excluded[0].Category,
+                Family = excluded[0].Family,
+                Type = excluded[0].Type,
+            };
+            Attach(finding, excluded);
+            findings.Add(finding);
+            var kept = new AuditSchedule(schedule.Id, schedule.Name, schedule.Fields) { Itemized = schedule.Itemized };
+            kept.Elements.AddRange(schedule.Elements.Where(e => !IsExcludedName(Value(e, nameIdx))));
+            return kept;
+        }
+
+        public static bool IsExcludedName(string name) => name.StartsWith("!", StringComparison.Ordinal);
+
+        /// <summary>
+        /// Наименование без чисел: «Отвод 90° … Ду50» и «Отвод 45° … Ду50» → одно и то же.
+        /// Отличие только в числах у одного типоразмера — это разные изделия (угол, Ду у семейств без параметра размера,
+        /// диаметр трубы у изоляции), а не «разъехавшееся» имя.
+        /// </summary>
+        public static string WithoutNumbers(string name)
+        {
+            var sb = new StringBuilder(name.Length);
+            bool inNumber = false;
+            for (int i = 0; i < name.Length; i++)
+            {
+                char c = name[i];
+                bool digit = char.IsDigit(c);
+                bool joiner = inNumber && (c == ',' || c == '.') && i + 1 < name.Length && char.IsDigit(name[i + 1]);
+                if (digit || joiner)
+                {
+                    if (!inNumber) sb.Append('#');
+                    inNumber = true;
+                    continue;
+                }
+                inNumber = false;
+                sb.Append(c);
+            }
+            return sb.ToString();
         }
 
         // ---------------------------------------------------------------- строки
@@ -314,6 +377,10 @@ namespace VKTools.Core.Schedules
                 var names = group.Select(e => Value(e, nameIdx)).Where(v => v.Length > 0)
                     .GroupBy(v => v, StringComparer.Ordinal).Select(g => (Value: g.Key, Count: g.Count())).OrderByDescending(g => g.Count).ToList();
                 if (names.Count < 2) continue;
+                // У труб размер в ключе надёжный — там «ø15x2,8» и «ø21.3x2,8» одного Ду и есть ошибка.
+                // У фитингов, муфт и изоляции «размер» часто не тот (толщина, пусто) — отличие только в числах не считаем.
+                bool numbersMatter = string.Equals(group.First().Category, PipeCategory, StringComparison.OrdinalIgnoreCase);
+                if (!numbersMatter && names.Select(n => WithoutNumbers(n.Value)).Distinct(StringComparer.Ordinal).Count() < 2) continue;
                 string size = group.Key.Size.Length > 0 ? ", " + group.Key.Size : string.Empty;
                 var finding = new CheckFinding(NameSplit, Severity.Warning,
                     $"«{schedule.Name}»: «{group.Key.Family}: {group.Key.Type}{size}» — {names.Count} наименования, это {names.Count} строки вместо одной")

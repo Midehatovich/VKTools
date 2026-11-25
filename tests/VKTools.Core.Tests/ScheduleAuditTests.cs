@@ -111,6 +111,57 @@ namespace VKTools.Core.Tests
         }
 
         [Fact]
+        public void Отвод_90_и_45_одного_типоразмера_не_считается_разъехавшимся_именем()
+        {
+            // «Пушкарев», 25.11: угол и Ду в имени при одинаковом типоразмере — разные изделия
+            AuditSchedule s = Schedule();
+            for (int i = 0; i < 3; i++) s.Elements.Add(El("1", "Отвод 90° стальной крутоизогнутый бесшовный, Ду150, исп. 2", "ГОСТ 17375-2001", "шт.", 1));
+            s.Elements.Add(El("2", "Отвод 45° стальной крутоизогнутый бесшовный, Ду150, исп. 2", "ГОСТ 17375-2001", "шт.", 1));
+            s.Elements.Add(El("3", "Муфта грувлочная жесткая Ду200", "", "шт.", 1, family: "Муфта", type: "Муфта", size: ""));
+            s.Elements.Add(El("4", "Муфта грувлочная жесткая Ду150", "", "шт.", 1, family: "Муфта", type: "Муфта", size: ""));
+            s.Elements.Add(El("5", "Гибкая антивибрационная вставка ZKV EPDM PN16, DN50", "", "шт.", 1, family: "Вставка", type: "Вставка", size: "50 мм"));
+            s.Elements.Add(El("6", "Гибкая антивибрационная вставка PN16, DN50", "", "шт.", 1, family: "Вставка", type: "Вставка", size: "50 мм"));
+
+            CheckFinding split = Assert.Single(Of(ScheduleAudit.Run(new[] { s }), ScheduleAudit.NameSplit));
+            Assert.Equal("Вставка", split.Family);
+        }
+
+        [Fact]
+        public void У_труб_отличие_только_в_числах_остаётся_ошибкой_имени()
+        {
+            // ВГП Ду15: «ø15x2,8» (по Ду) и «ø21.3x2,8» (по Dнар) — одна труба, два имени
+            AuditSchedule s = Schedule();
+            AuditElement a = El("1", "Труба ВГП ø15x2,8", "ГОСТ 3262-75", "м", 3, family: "Типы трубопроводов", type: "ВГП", size: "15 мм");
+            AuditElement b = El("2", "Труба ВГП ø21.3x2,8", "ГОСТ 3262-75", "м", 2, family: "Типы трубопроводов", type: "ВГП", size: "15 мм");
+            a.Category = b.Category = ScheduleAudit.PipeCategory;
+            s.Elements.Add(a);
+            s.Elements.Add(b);
+
+            Assert.Single(Of(ScheduleAudit.Run(new[] { s }), ScheduleAudit.NameSplit));
+        }
+
+        [Fact]
+        public void Элементы_на_восклицательный_знак_не_дают_повтор_позиции_но_видны_отдельно()
+        {
+            AuditSchedule s = Schedule();
+            s.Elements.Add(El("83", "Кран шаровой PN40 DN50", "", "шт.", 1, family: "Кран", type: "Std", size: "50 мм"));
+            AuditElement hidden = El("83", "!Не учитывать", "", "шт.", 1, family: "Кран", type: "Std", size: "50 мм");
+            s.Elements.Add(hidden);
+
+            List<CheckFinding> all = ScheduleAudit.Run(new[] { s });
+            Assert.DoesNotContain(all, f => f.Check == ScheduleAudit.Numbering && f.Message.Contains("позиция 83"));
+            Assert.Empty(Of(all, ScheduleAudit.NameSplit));
+            CheckFinding excluded = Assert.Single(Of(all, ScheduleAudit.Excluded));
+            Assert.Equal(new[] { hidden.Id }, excluded.RelatedElementIds);
+        }
+
+        [Theory]
+        [InlineData("Отвод 90° Ду150", "Отвод #° Ду#")]
+        [InlineData("Труба ø21.3x2,8", "Труба ø#x#")]
+        [InlineData("Кран, DN50, PN16", "Кран, DN#, PN#")]
+        public void Наименование_без_чисел(string name, string expected) => Assert.Equal(expected, ScheduleAudit.WithoutNumbers(name));
+
+        [Fact]
         public void Пустое_наименование_и_нулевое_количество_у_спринклерных_труб_ошибка()
         {
             AuditSchedule s = Schedule("Спецификация выше 0,000");
