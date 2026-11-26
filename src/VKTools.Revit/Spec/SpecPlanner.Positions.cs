@@ -124,6 +124,15 @@ namespace VKTools.Revit.Spec
                 var row = new PositionRow(g.Select(e => e.Id).ToList(), PositionNumbering.Common(g.Select(e => ScheduleAudit.ValueOf(e, posField))));
                 string name = nameField >= 0 ? PositionNumbering.Common(g.Select(e => ScheduleAudit.ValueOf(e, nameField))) : string.Empty;
                 if (ScheduleAudit.IsExcludedName(name)) row.Skip = true;
+                else if (nameField >= 0 && name.Length == 0)
+                {
+                    // Пустое наименование (трубы без «Имён труб» и т. п.): номер не даём, чтобы не было номеров у пустых строк на листе
+                    row.Skip = true;
+                    AuditElement first = g[0];
+                    PlanIssue unnamed = _plan.AddIssue(M, Severity.Warning, posKey.Name, $"{title}: строка без наименования — номер не дан", $"{first.Family}: {first.Type}", first.Id, g.Count);
+                    unnamed.Action = "Заполните наименование («Имена труб», «Изоляция» или семейство) и запустите «Позиции» снова.";
+                    unnamed.Ids.AddRange(g.Skip(1).Select(e => e.Id));
+                }
                 rows.Add(row);
                 foreach (AuditElement e in g) rowOf[e.Id] = r;
             }

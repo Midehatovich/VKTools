@@ -290,14 +290,14 @@ namespace VKTools.Core.Schedules
         /// </summary>
         private static string GroupOf(AuditSchedule schedule, AuditElement e)
         {
+            // Поле сортировки, похожее на систему («UNI_Сокращение для системы», «Р_Сокращение системы»), а не «UNI_Сортировка» = 6
             for (int i = 0; i < schedule.Fields.Count; i++)
             {
                 AuditField f = schedule.Fields[i];
-                if (!f.Sort) continue;
-                if (f.Role != AuditRole.Other) break;
+                if (!f.Sort || f.Role != AuditRole.Other) continue;
+                if (f.Name.IndexOf("систем", StringComparison.OrdinalIgnoreCase) < 0) continue;
                 string v = Value(e, i);
                 if (v.Length > 0) return v;
-                break;
             }
             return e.System;
         }

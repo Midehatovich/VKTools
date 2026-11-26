@@ -161,13 +161,14 @@ namespace VKTools.Core.Tests
             // Начинка шкафа В21.1: своя система элемента «В21.2», а в спецификации она под шапкой «В21.1»
             var s = new AuditSchedule(1, "Ниже 0,000", new List<AuditField>
             {
-                new AuditField("Сокращение", AuditRole.Other) { Sort = true },
+                new AuditField("UNI_Сортировка", AuditRole.Other) { Sort = true },
+                new AuditField("UNI_Сокращение для системы", AuditRole.Other) { Sort = true },
                 new AuditField("Поз.", AuditRole.Position),
                 new AuditField("Наименование", AuditRole.Name) { Sort = true },
             });
             for (int i = 1; i <= 2; i++)
             {
-                s.Elements.Add(new AuditElement(5000 + i, new[] { "В21.1", "76." + i, "— огнетушитель порошковый" })
+                s.Elements.Add(new AuditElement(5000 + i, new[] { "6", "В21.1", "76." + i, "— огнетушитель порошковый" })
                 {
                     Family = "Шкаф", Type = "ОП-4", System = "В21.2",
                 });
