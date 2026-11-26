@@ -12,9 +12,10 @@ namespace VKTools.Revit.Commands
 {
     /// <summary>
     /// «Проверить спецификацию» (0.17.0): «‹варианты›» с причиной, пустые графы, ноль после округления, нумерация,
-    /// единицы, элементы вне спецификаций. ReadOnly — модель не меняется.
+    /// единицы, элементы вне спецификаций. Модель не меняется: таблицы читаются в транзакции, которая всегда откатывается
+    /// (0.17.3: в режиме ReadOnly Revit не отдаёт текст ячеек — «Changes are disabled», и проверка порядка номеров молчала).
     /// </summary>
-    [Transaction(TransactionMode.ReadOnly)]
+    [Transaction(TransactionMode.Manual)]
     public sealed class CheckScheduleCommand : IExternalCommand
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
@@ -54,7 +55,19 @@ namespace VKTools.Revit.Commands
                 else return Result.Cancelled;
 
                 Host.Log.Info($"Проверка спецификаций «{doc.Title}»: {chosen.Count} шт.");
-                CheckReport report = ScheduleAuditRunner.Run(doc, chosen, checkOutside: choice == TaskDialogResult.CommandLink2);
+                CheckReport report;
+                using (var read = new Transaction(doc, "VK Tools: чтение спецификаций"))
+                {
+                    bool opened = !doc.IsReadOnly && !doc.IsModifiable && read.Start() == TransactionStatus.Started;
+                    try
+                    {
+                        report = ScheduleAuditRunner.Run(doc, chosen, checkOutside: choice == TaskDialogResult.CommandLink2);
+                    }
+                    finally
+                    {
+                        if (opened) read.RollBack();
+                    }
+                }
                 Host.Log.Info($"Проверка спецификаций «{doc.Title}» завершена: {report.Summary}");
                 ReportWindowHost.Show(report, doc, app);
                 return Result.Succeeded;
