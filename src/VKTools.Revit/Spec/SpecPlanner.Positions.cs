@@ -119,6 +119,8 @@ namespace VKTools.Revit.Spec
             ElementId? keyParamId = PositionKeys.ParamId(_doc);
             int keyField = PositionKeys.FieldIndex(definition, keyParamId);
             List<(int Index, bool Desc)> naturalSort = PositionKeys.NaturalSort(definition, keyField);
+            // Блок строки — значения граф-шапок (обычно система), как на листе: пустая шапка — свой блок
+            List<int> headerFields = PositionKeys.HeaderFields(definition, keyField);
             var rows = new List<PositionRow>();
             var rowOf = new Dictionary<long, int>();
             List<List<AuditElement>> groups;
@@ -132,7 +134,7 @@ namespace VKTools.Revit.Spec
                     List<AuditElement> g = groups[r];
                     var row = new PositionRow(g.Select(e => e.Id).ToList(), PositionNumbering.Common(g.Select(e => ScheduleAudit.ValueOf(e, posField))))
                     {
-                        Group = ScheduleAudit.GroupOf(audit, g[0]),
+                        Group = string.Join("\u001f", headerFields.Select(i => ScheduleAudit.ValueOf(g[0], i))),
                     };
                     string name = nameField >= 0 ? PositionNumbering.Common(g.Select(e => ScheduleAudit.ValueOf(e, nameField))) : string.Empty;
                     if (ScheduleAudit.IsExcludedName(name)) row.Skip = true;
@@ -157,6 +159,8 @@ namespace VKTools.Revit.Spec
             // Порядок строк как в таблице Revit (без ключа позиции)
             bool sorted = definition.GetSortGroupFields().Any(f => f.FieldId == field.FieldId);
             List<int>? order = sorted ? null : TableOrder(vs, definition, posField, keyField, groups, posKey);
+            // Откат транзакции с изменённой сортировкой делает старый объект ScheduleDefinition недействительным
+            definition = vs.Definition;
             string orderNote;
             if (order == null)
             {

@@ -65,6 +65,17 @@ namespace VKTools.Revit.Spec
             return keys;
         }
 
+        /// <summary>Графы ключей сортировки с шапкой (кроме ключа позиции).</summary>
+        public static List<int> HeaderFields(ScheduleDefinition definition, int keyField)
+        {
+            var fieldIndex = new Dictionary<ScheduleFieldId, int>();
+            for (int i = 0; i < definition.GetFieldCount(); i++) fieldIndex[definition.GetField(i).FieldId] = i;
+            return definition.GetSortGroupFields()
+                .Where(f => f.ShowHeader && fieldIndex.ContainsKey(f.FieldId) && fieldIndex[f.FieldId] != keyField)
+                .Select(f => fieldIndex[f.FieldId])
+                .ToList();
+        }
+
         /// <summary>В откатываемой транзакции: убрать ключ из сортировки и вернуть снятый — таблица собирается как без VK Tools.</summary>
         public static void Detach(ScheduleDefinition definition, int keyField)
         {

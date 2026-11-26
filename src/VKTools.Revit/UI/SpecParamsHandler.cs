@@ -169,6 +169,12 @@ namespace VKTools.Revit.UI
                         {
                             run.Warnings.Add("Записано. Повторный анализ отменён — нажмите «Обновить».");
                         }
+                        catch (Exception ex) when (!(ex is OperationCanceledException))
+                        {
+                            // Запись уже зафиксирована: ошибка повторного анализа не значит «модель не изменена»
+                            Host.Log.Error($"{title}: повторный анализ после записи не удался.", ex);
+                            run.Warnings.Add("Записано. Повторный анализ не удался (" + ex.Message + ") — нажмите «Обновить»; Ctrl+Z отменяет запись.");
+                        }
                     }
                 }
                 run.Timings = timings.Summary();
