@@ -19,6 +19,7 @@ namespace VKTools.Core.Spec
         public const string ReserveSection = "rsv";
         public const string PipeNamesSection = "pn";
         public const string VendorSection = "vd";
+        public const string PositionsSection = "pos";
 
         private const string NestedParamsKey = "nested.params";
         private const string NestedClearKey = "nested.clearEmpty";

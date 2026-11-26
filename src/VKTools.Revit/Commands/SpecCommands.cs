@@ -71,6 +71,17 @@ namespace VKTools.Revit.Commands
     }
 
     /// <summary>
+    /// «Позиции» (0.17.1): своя нумерация с 1 в каждой оформленной спецификации. Manual: порядок строк читается из таблицы
+    /// через откатываемую транзакцию (метки в позиции), модель не меняется.
+    /// </summary>
+    [Transaction(TransactionMode.Manual)]
+    public sealed class PositionsCommand : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements) =>
+            SpecLauncher.Run(commandData.Application, SpecModule.Positions);
+    }
+
+    /// <summary>
     /// Общий запуск модулей Р2: настройки из модели (или по умолчанию) → анализ → окно. Сама команда только анализирует;
     /// пробный прогон, запись и сохранение настройки идут из окна через ExternalEvent.
     /// </summary>

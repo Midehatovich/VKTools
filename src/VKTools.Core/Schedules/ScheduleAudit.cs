@@ -247,6 +247,18 @@ namespace VKTools.Core.Schedules
             public string Label { get; set; } = string.Empty;
         }
 
+        /// <summary>Строки спецификации так, как их собирает Revit (по полям сортировки), в порядке первого элемента — для «Позиций».</summary>
+        public static List<List<AuditElement>> Rows(AuditSchedule schedule) => BuildRows(schedule).Select(r => r.Elements).ToList();
+
+        /// <summary>Значение графы элемента (пусто, если графы нет).</summary>
+        public static string ValueOf(AuditElement e, int fieldIndex) => fieldIndex < 0 ? string.Empty : Value(e, fieldIndex);
+
+        /// <summary>Индекс графы роли (видимые раньше скрытых); -1 — нет.</summary>
+        public static int FieldOf(AuditSchedule schedule, AuditRole role) => Index(schedule, role);
+
+        /// <summary>Сравнение «по-человечески»: «2» &lt; «10».</summary>
+        public static IComparer<string> Natural => NaturalOrder.Instance;
+
         private static List<Row> BuildRows(AuditSchedule schedule)
         {
             var sortIdx = Enumerable.Range(0, schedule.Fields.Count).Where(i => schedule.Fields[i].Sort).ToList();
@@ -371,7 +383,7 @@ namespace VKTools.Core.Schedules
             {
                 case AuditRole.Position:
                     return hasEmpty
-                        ? "У части одинаковых изделий позиция пустая: выделите их и дайте ту же позицию (или «Позиции» в 0.17.1 дозаполнит от соседей)."
+                        ? "У части одинаковых изделий позиция пустая: выделите их и дайте ту же позицию (или кнопка «Позиции» перенумерует спецификацию целиком)."
                         : "У одинаковых изделий разные позиции (например, начинка шкафов пронумерована по шкафам). Выровняйте позицию или решите, что это разные строки, и добавьте позицию в сортировку.";
                 case AuditRole.Name:
                     return "В одну строку слились разные наименования: графа наименования не входит в сортировку или показывает другой параметр, чем сортировка "
@@ -532,7 +544,7 @@ namespace VKTools.Core.Schedules
                     Current = string.Join("; ", kv.Value.Take(MaxListed).Select(r => "«" + r.Label + "»")),
                     Expected = "своя позиция у каждой строки",
                     Action = "Обычно это одно изделие под двумя наименованиями (см. «Один типоразмер — разные наименования») или ошибка нумерации. "
-                        + "Перенумерация по спецификации — «Позиции» (0.17.1).",
+                        + "Перенумерация по спецификации — кнопка «Позиции».",
                 };
                 Attach(finding, kv.Value.SelectMany(r => r.Elements));
                 findings.Add(finding);
@@ -547,8 +559,8 @@ namespace VKTools.Core.Schedules
                 Current = "нет: " + Ranges(missing),
                 Expected = "позиции подряд с 1 в каждой спецификации (решение 2026-11-24)",
                 Action = missing.Count > max / 2
-                    ? "Похоже, нумерация сквозная по модели, а не по спецификации. Перенумерацию с 1 сделает «Позиции» (0.17.1)."
-                    : "Номера заняты элементами, которых в этой спецификации нет, или освободились после правок. Перенумерацию без дыр сделает «Позиции» (0.17.1).",
+                    ? "Похоже, нумерация сквозная по модели, а не по спецификации. Перенумерацию с 1 сделает кнопка «Позиции»."
+                    : "Номера заняты элементами, которых в этой спецификации нет, или освободились после правок. Перенумерацию без дыр сделает кнопка «Позиции».",
             });
         }
 

@@ -28,6 +28,9 @@ namespace VKTools.Core.Spec
 
         /// <summary>0.15.0: марка, код изделия и завод-изготовитель по маске наименования (таблица «Марки и поставщики»).</summary>
         Vendor = 6,
+
+        /// <summary>0.17.1: позиции — своя нумерация с 1 в каждой оформленной спецификации, по порядку строк.</summary>
+        Positions = 7,
     }
 
     public static class SpecModuleText
@@ -40,6 +43,7 @@ namespace VKTools.Core.Spec
             SpecModule.PipeReserve => "Запас труб",
             SpecModule.PipeNames => "Имена труб",
             SpecModule.Vendor => "Марки и поставщики",
+            SpecModule.Positions => "Позиции",
             _ => "Группирование",
         };
     }

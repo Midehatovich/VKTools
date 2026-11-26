@@ -112,6 +112,11 @@ namespace VKTools.Revit.Spec
                 using (timings.Measure("анализ марок и поставщиков")) planner.PlanVendor(options, defaults);
                 return planner._plan;
             }
+            if (options.Module == SpecModule.Positions)
+            {
+                using (timings.Measure("анализ позиций")) planner.PlanPositions(options, defaults);
+                return planner._plan;
+            }
             if (options.Module == SpecModule.PipeNames)
             {
                 using (timings.Measure("анализ имён труб")) planner.PlanPipeNames(options, defaults);
