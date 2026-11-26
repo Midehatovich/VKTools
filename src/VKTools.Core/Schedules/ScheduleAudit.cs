@@ -95,6 +95,9 @@ namespace VKTools.Core.Schedules
         public bool Itemized { get; set; }
 
         public List<AuditElement> Elements { get; } = new List<AuditElement>();
+
+        /// <summary>Графа позиции сверху вниз, как в таблице Revit (шапки и пустые строки тоже); null — таблица не читалась.</summary>
+        public List<string>? TablePositions { get; set; }
     }
 
     /// <summary>
@@ -201,7 +204,7 @@ namespace VKTools.Core.Schedules
             };
             Attach(finding, excluded);
             findings.Add(finding);
-            var kept = new AuditSchedule(schedule.Id, schedule.Name, schedule.Fields) { Itemized = schedule.Itemized };
+            var kept = new AuditSchedule(schedule.Id, schedule.Name, schedule.Fields) { Itemized = schedule.Itemized, TablePositions = schedule.TablePositions };
             kept.Elements.AddRange(schedule.Elements.Where(e => !IsExcludedName(Value(e, nameIdx))));
             return kept;
         }
@@ -549,6 +552,7 @@ namespace VKTools.Core.Schedules
                 Attach(finding, kv.Value.SelectMany(r => r.Elements));
                 findings.Add(finding);
             }
+            CheckOrder(schedule, findings);
             if (numbers.Count == 0) return;
             int max = numbers.Max;
             var missing = Enumerable.Range(1, max).Where(n => !numbers.Contains(n)).ToList();
@@ -562,6 +566,56 @@ namespace VKTools.Core.Schedules
                     ? "Похоже, нумерация сквозная по модели, а не по спецификации. Перенумерацию с 1 сделает кнопка «Позиции»."
                     : "Номера заняты элементами, которых в этой спецификации нет, или освободились после правок. Перенумерацию без дыр сделает кнопка «Позиции».",
             });
+        }
+
+        /// <summary>Номера в таблице сверху вниз должны расти: 1, 2, 2.1, 2.2, 3… Иначе после правок порядок строк поменялся.</summary>
+        private static void CheckOrder(AuditSchedule schedule, List<CheckFinding> findings)
+        {
+            if (schedule.TablePositions == null) return;
+            List<string> breaks = PositionOrderBreaks(schedule.TablePositions);
+            if (breaks.Count == 0) return;
+            findings.Add(new CheckFinding(Numbering, Severity.Warning,
+                $"«{schedule.Name}»: номера идут не по порядку строк — {breaks.Count} мест")
+            {
+                Current = string.Join("; ", breaks.Take(MaxListed)),
+                Expected = "сверху вниз 1, 2, 2.1, 2.2, 3…",
+                Action = "После правок модели или наименований строки переставились. Перенумерация по порядку строк — кнопка «Позиции».",
+            });
+        }
+
+        /// <summary>Места, где номер в таблице меньше предыдущего или деталь «N.k» стоит не под строкой N. Пустые и нечисловые ячейки пропускаются.</summary>
+        public static List<string> PositionOrderBreaks(IReadOnlyList<string> cells)
+        {
+            var result = new List<string>();
+            (int Main, int Sub)? prev = null;
+            string prevText = string.Empty;
+            foreach (string raw in cells)
+            {
+                string text = (raw ?? string.Empty).Trim();
+                if (!TryPosition(text, out int main, out int sub)) continue;
+                if (prev is (int pm, int ps))
+                {
+                    bool back = main < pm || (main == pm && sub < ps);
+                    bool orphan = sub > 0 && main != pm;
+                    if (back || orphan) result.Add(orphan && !back ? $"{text} не под строкой {main} (после {prevText})" : $"{prevText} → {text}");
+                }
+                prev = (main, sub);
+                prevText = text;
+            }
+            return result;
+        }
+
+        private static bool TryPosition(string text, out int main, out int sub)
+        {
+            main = 0;
+            sub = 0;
+            if (text.Length == 0) return false;
+            int dot = text.IndexOf('.');
+            string head = dot < 0 ? text : text.Substring(0, dot);
+            string tail = dot < 0 ? string.Empty : text.Substring(dot + 1);
+            if (!int.TryParse(head, NumberStyles.None, CultureInfo.InvariantCulture, out main)) return false;
+            if (dot < 0) return true;
+            return int.TryParse(tail, NumberStyles.None, CultureInfo.InvariantCulture, out sub) && sub > 0;
         }
 
         private static void CheckUnits(AuditSchedule schedule, List<CheckFinding> findings)

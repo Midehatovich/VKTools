@@ -195,7 +195,43 @@ namespace VKTools.Revit.Schedules
                 a.Numbers = numbers;
                 audit.Elements.Add(a);
             }
+            audit.TablePositions = TablePositions(vs, definition, audit);
             return audit;
+        }
+
+        /// <summary>Графа позиции сверху вниз из самой таблицы (строки «!…» пропускаются); null — графы нет или скрыта.</summary>
+        private static List<string>? TablePositions(ViewSchedule vs, ScheduleDefinition definition, AuditSchedule audit)
+        {
+            int pos = ScheduleAudit.FieldOf(audit, AuditRole.Position);
+            int name = ScheduleAudit.FieldOf(audit, AuditRole.Name);
+            if (pos < 0 || definition.GetField(pos).IsHidden) return null;
+            int Column(int field)
+            {
+                int c = 0;
+                for (int i = 0; i < field; i++)
+                {
+                    if (!definition.GetField(i).IsHidden) c++;
+                }
+                return c;
+            }
+            try
+            {
+                TableSectionData body = vs.GetTableData().GetSectionData(SectionType.Body);
+                int posColumn = body.FirstColumnNumber + Column(pos);
+                int nameColumn = name >= 0 && !definition.GetField(name).IsHidden ? body.FirstColumnNumber + Column(name) : -1;
+                var result = new List<string>();
+                for (int row = body.FirstRowNumber; row <= body.LastRowNumber; row++)
+                {
+                    if (nameColumn >= 0 && ScheduleAudit.IsExcludedName((vs.GetCellText(SectionType.Body, row, nameColumn) ?? string.Empty).Trim())) continue;
+                    result.Add(vs.GetCellText(SectionType.Body, row, posColumn) ?? string.Empty);
+                }
+                return result;
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException ex)
+            {
+                Host.Log.Warn($"Проверка спецификации: таблица «{vs.Name}» не прочитана — {ex.Message}");
+                return null;
+            }
         }
 
         private static FieldReader Retarget(FieldReader reader, AuditRole role)

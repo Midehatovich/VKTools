@@ -148,5 +148,24 @@ namespace VKTools.Core.Tests
             Assert.True(Assert.Single(rules).Number);
             Assert.True(new SpecOptions(SpecModule.Positions).IsDefault(new SpecDefaults()));
         }
+
+        [Fact]
+        public void Галка_снята_спецификация_не_трогается_и_возвращается()
+        {
+            string rules = PositionSettings.DefaultRules;
+            string off = PositionSettings.Toggle(rules, "Спецификация насосной", false);
+            Assert.False(PositionSettings.Match(PositionSettings.ParseRules(off, new List<ConfigIssue>()), "Спецификация насосной")!.Number);
+            Assert.True(PositionSettings.Match(PositionSettings.ParseRules(off, new List<ConfigIssue>()), "Спецификация ниже 0,000")!.Number);
+            string on = PositionSettings.Toggle(off, "Спецификация насосной", true);
+            Assert.Equal(PositionSettings.DefaultRules.Replace("#schema=1\n", string.Empty).Trim(), on.Replace("#schema=1\n", string.Empty).Trim());
+        }
+
+        [Fact]
+        public void Номера_не_по_порядку_строк_находятся()
+        {
+            Assert.Empty(VKTools.Core.Schedules.ScheduleAudit.PositionOrderBreaks(new[] { "В1", "1", "2", "2.1", "2.2", "", "3", "В2", "4" }));
+            Assert.Equal(new[] { "3 → 2" }, VKTools.Core.Schedules.ScheduleAudit.PositionOrderBreaks(new[] { "1", "3", "2" }));
+            Assert.Single(VKTools.Core.Schedules.ScheduleAudit.PositionOrderBreaks(new[] { "1", "2", "1.1", "3" }));
+        }
     }
 }

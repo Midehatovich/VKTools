@@ -73,6 +73,7 @@ namespace VKTools.Revit.Spec
                 ViewSchedule vs = issued[s];
                 _progress.Report($"Позиции: «{vs.Name}» ({s + 1} из {issued.Count})", s, issued.Count);
                 _progress.ThrowIfCancelled();
+                if (ps.OnlySchedules != null && !ps.OnlySchedules.Contains(vs.Name, StringComparer.Ordinal)) continue;
                 PositionRule? rule = PositionSettings.Match(rules, vs.Name);
                 if (rule == null || !rule.Number)
                 {
