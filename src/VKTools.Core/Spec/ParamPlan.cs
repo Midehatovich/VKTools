@@ -204,6 +204,9 @@ namespace VKTools.Core.Spec
         /// <summary>«Изоляция»: по типу — сколько штук, какая строка «Изделий» и какое имя получится (пример).</summary>
         public List<string> Preview { get; } = new List<string>();
 
+        /// <summary>«Позиции»: спецификации, куда при записи добавляется скрытая графа «Р_Ключ позиции» вторым ключом сортировки (после шапки).</summary>
+        public List<long> PositionKeySchedules { get; } = new List<long>();
+
         public IReadOnlyList<PlanIssue> Issues => _issueOrder;
 
         /// <summary>Откуда взяты правила — в шапку отчёта.</summary>

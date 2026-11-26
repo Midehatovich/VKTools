@@ -55,7 +55,10 @@ namespace VKTools.Core.Spec
         /// <summary>Параметр позиции. Спецификация, графа «Позиция» которой показывает другой параметр, не нумеруется (замечание).</summary>
         public ParamKey? PosParam { get; set; }
 
-        /// <summary>Вложенные детали одной строки-родителя: «номер родителя.N» (39.1, 76.3).</summary>
+        /// <summary>
+        /// «Позиции вложенных через точку» (по умолчанию, решение 2026-11-26): детали сразу под родителем, «номер родителя.N» (39.1, 76.3),
+        /// порядок держит скрытая графа «Р_Ключ позиции». false — «по порядку»: детали там, куда их ставит сортировка, свой номер.
+        /// </summary>
         public bool SubNumbers { get; set; } = true;
 
         public string Rules { get; set; } = DefaultRules;
@@ -150,7 +153,7 @@ namespace VKTools.Core.Spec
         public static PositionRule? Match(IEnumerable<PositionRule> rules, string scheduleName) => rules.FirstOrDefault(r => r.Matches(scheduleName));
     }
 
-    /// <summary>Строка спецификации для нумерации: в порядке, как она стоит в спецификации.</summary>
+    /// <summary>Строка спецификации (как её собирает Revit без ключа позиции) в порядке таблицы.</summary>
     public sealed class PositionRow
     {
         public PositionRow(IReadOnlyList<long> ids, string current)
@@ -164,37 +167,110 @@ namespace VKTools.Core.Spec
         /// <summary>Позиция сейчас: общая у строки или «‹варианты›».</summary>
         public string Current { get; }
 
-        /// <summary>Строка не нумеруется («!Не учитывать», параметр только для чтения…): номер не занимает.</summary>
+        /// <summary>Строка не нумеруется («!Не учитывать», без наименования): номер не занимает, но место (ключ) у неё есть.</summary>
         public bool Skip { get; set; }
 
-        /// <summary>Все элементы строки — вложенные детали элементов одной строки-родителя (индекс в той же спецификации).</summary>
-        public int? Parent { get; set; }
+        /// <summary>Блок (шапка системы), под которым стоит строка. Деталь получает подномер только от родителя из того же блока.</summary>
+        public string Group { get; set; } = string.Empty;
     }
 
-    /// <summary>Номера строк одной спецификации: 1, 2, 3… по порядку; вложенные детали — «номер родителя.N».</summary>
+    /// <summary>Итоговая строка: основная или часть строки деталей одного родителя («номер.N» сразу под ним).</summary>
+    public sealed class PositionUnit
+    {
+        public PositionUnit(int source, List<long> ids, bool skip)
+        {
+            Source = source;
+            Ids = ids;
+            Skip = skip;
+        }
+
+        /// <summary>Индекс исходной строки.</summary>
+        public int Source { get; }
+
+        public List<long> Ids { get; }
+
+        public bool Skip { get; }
+
+        /// <summary>Индекс строки-родителя в итоговом списке; null — основная строка.</summary>
+        public int? Parent { get; set; }
+
+        /// <summary>Номер; null — строка без номера.</summary>
+        public string? Number { get; set; }
+
+        /// <summary>Ключ сортировки «Р_Ключ позиции»: «0012», деталь — «0012.01». Ставит строку сразу под родителем, какой бы ни была категория.</summary>
+        public string Key { get; set; } = string.Empty;
+    }
+
+    /// <summary>Номера и ключи строк одной спецификации: 1, 2, 3… по порядку; вложенные детали — «номер родителя.N» сразу под родителем.</summary>
     public static class PositionNumbering
     {
         public const string Variants = "‹варианты›";
 
-        /// <returns>Номер для каждой строки; null — строка не нумеруется.</returns>
-        public static string?[] Number(IReadOnlyList<PositionRow> rows, bool subNumbers)
+        /// <param name="rows">Строки в порядке таблицы (без ключа позиции).</param>
+        /// <param name="parentRowOf">Элемент → индекс строки его верхнего родителя в этой спецификации; null — не вложенный или родителя нет.</param>
+        /// <param name="subNumbers">true — «через точку» (детали под родителем), false — «по порядку» (детали там, куда их ставит сортировка).</param>
+        public static List<PositionUnit> Layout(IReadOnlyList<PositionRow> rows, Func<long, int?> parentRowOf, bool subNumbers)
         {
-            var result = new string?[rows.Count];
-            bool IsSub(int i) => subNumbers && rows[i].Parent is int p && p >= 0 && p < rows.Count && p != i && !rows[p].Skip && rows[p].Parent == null;
-            int n = 0;
-            for (int i = 0; i < rows.Count; i++)
+            // Строка деталей: все элементы вложенные, родители — в других не пропускаемых строках того же блока
+            var split = new Dictionary<int, List<(int Parent, long Id)>>();
+            if (subNumbers)
             {
-                if (rows[i].Skip || IsSub(i)) continue;
-                result[i] = (++n).ToString(CultureInfo.InvariantCulture);
+                for (int r = 0; r < rows.Count; r++)
+                {
+                    if (rows[r].Skip || rows[r].Ids.Count == 0) continue;
+                    var parts = new List<(int, long)>();
+                    bool ok = true;
+                    foreach (long id in rows[r].Ids)
+                    {
+                        int? p = parentRowOf(id);
+                        if (!(p is int pr) || pr == r || pr < 0 || pr >= rows.Count || rows[pr].Skip
+                            || !string.Equals(rows[pr].Group, rows[r].Group, StringComparison.Ordinal))
+                        {
+                            ok = false;
+                            break;
+                        }
+                        parts.Add((pr, id));
+                    }
+                    if (ok) split[r] = parts;
+                }
+                // Родитель сам деталь (цепочка) — такая строка остаётся обычной
+                foreach (int r in split.Keys.ToList())
+                {
+                    if (split[r].Any(x => split.ContainsKey(x.Parent))) split.Remove(r);
+                }
             }
-            var subCount = new Dictionary<int, int>();
-            for (int i = 0; i < rows.Count; i++)
+
+            var children = new Dictionary<int, List<PositionUnit>>();
+            foreach (KeyValuePair<int, List<(int Parent, long Id)>> pair in split.OrderBy(p => p.Key))
             {
-                if (rows[i].Skip || !IsSub(i)) continue;
-                int parent = rows[i].Parent!.Value;
-                int k = subCount.TryGetValue(parent, out int c) ? c + 1 : 1;
-                subCount[parent] = k;
-                result[i] = result[parent] + "." + k.ToString(CultureInfo.InvariantCulture);
+                foreach (IGrouping<int, (int Parent, long Id)> byParent in pair.Value.GroupBy(x => x.Parent))
+                {
+                    if (!children.TryGetValue(byParent.Key, out List<PositionUnit>? list)) children[byParent.Key] = list = new List<PositionUnit>();
+                    list.Add(new PositionUnit(pair.Key, byParent.Select(x => x.Id).ToList(), false));
+                }
+            }
+
+            var result = new List<PositionUnit>();
+            int n = 0;
+            int rank = 0;
+            for (int r = 0; r < rows.Count; r++)
+            {
+                if (split.ContainsKey(r)) continue;
+                var main = new PositionUnit(r, rows[r].Ids.ToList(), rows[r].Skip);
+                rank++;
+                main.Key = rank.ToString("D4", CultureInfo.InvariantCulture);
+                if (!main.Skip) main.Number = (++n).ToString(CultureInfo.InvariantCulture);
+                int mainIndex = result.Count;
+                result.Add(main);
+                if (!children.TryGetValue(r, out List<PositionUnit>? subs)) continue;
+                for (int k = 0; k < subs.Count; k++)
+                {
+                    PositionUnit sub = subs[k];
+                    sub.Parent = mainIndex;
+                    sub.Key = main.Key + "." + (k + 1).ToString("D2", CultureInfo.InvariantCulture);
+                    sub.Number = main.Number + "." + (k + 1).ToString(CultureInfo.InvariantCulture);
+                    result.Add(sub);
+                }
             }
             return result;
         }

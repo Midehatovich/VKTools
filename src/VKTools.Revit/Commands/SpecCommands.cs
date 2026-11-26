@@ -99,7 +99,7 @@ namespace VKTools.Revit.Commands
                 (SpecOptions options, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, module);
                 string? parameterNote = null;
                 // Свой набор «Р_»: параметры нужны всем модулям; набор ADSK — только «VK_Сокращение системы» для «Системы и этажа»
-                if (Core.Config.ParamProfile.IsOwn || (module == SpecModule.SystemFloor && options.SystemFloor.NeedsVkParameters))
+                if (Core.Config.ParamProfile.IsOwn || module == SpecModule.Positions || (module == SpecModule.SystemFloor && options.SystemFloor.NeedsVkParameters))
                 {
                     string? refused = VkParameters.Ensure(doc, app.Application, out parameterNote);
                     if (refused != null)

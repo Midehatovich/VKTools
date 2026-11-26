@@ -122,6 +122,14 @@ namespace VKTools.Revit.Spec
                     var failures = new FailureCollector(SystemMergeExecutor.RegisteredUpdaters(doc), SystemMergeExecutor.DisableOnFailureApplications);
                     using (Transaction transaction = FailureCollector.Start(doc, "VK Tools: запись параметров", failures))
                     {
+                        // «Позиции»: скрытая графа ключа сортировки в спецификациях (детали сразу под родителем)
+                        foreach (long scheduleId in plan.PositionKeySchedules)
+                        {
+                            if (!(doc.GetElement(scheduleId.ToElementId()) is ViewSchedule vs)) continue;
+                            string? refused = PositionKeys.Install(doc, vs);
+                            if (refused != null) result.Warnings.Add($"«{vs.Name}»: ключ позиции не добавлен — {refused}; детали встанут по категории.");
+                            else log.Info($"  «{vs.Name}»: графа «{Core.Config.ParamProfile.PositionKeyName}» — ключ сортировки после системы.");
+                        }
                         using (timings.Measure("запись значений"))
                         {
                             for (int i = 0; i < changes.Count; i++)
