@@ -287,7 +287,8 @@ namespace VKTools.Revit.UI
     /// <summary>Вкладка «Настройка» окна «Позиции»: параметр позиции, подномера вложенных, таблица «Спецификации».</summary>
     internal sealed class PositionsPanel : PipeTablePanel
     {
-        private readonly CheckBox _sub;
+        private readonly RadioButton _sub;
+        private readonly RadioButton _flat;
         private readonly ComboBox _param;
 
         public PositionsPanel(string documentTitle)
@@ -302,19 +303,33 @@ namespace VKTools.Revit.UI
             _param = new ComboBox { Width = 360, ToolTip = "Тот же параметр, что в графе «Позиция» спецификаций. Спецификация с другим параметром в графе не нумеруется." };
             _param.SelectionChanged += (s, e) => RaiseChanged();
             row.Children.Add(_param);
-            _sub = new CheckBox
+            Top.Children.Add(row);
+            var modes = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
+            modes.Children.Add(new TextBlock { Text = "Вложенные детали", Width = 110, VerticalAlignment = VerticalAlignment.Center });
+            _sub = new RadioButton
             {
-                Content = "Вложенные детали — «номер родителя.N»",
+                Content = "Позиции вложенных через точку",
+                GroupName = "vkPositionsNested",
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = "Фланцы и шпильки затвора, начинка шкафа встают сразу под родителем, какой бы ни была категория: 39, 39.1, 39.2… "
+                    + "Порядок держит скрытая графа «Р_Ключ позиции» (плагин добавляет её сам вторым ключом сортировки).",
+            };
+            _flat = new RadioButton
+            {
+                Content = "Позиции вложенных по порядку",
+                GroupName = "vkPositionsNested",
                 Margin = new Thickness(16, 0, 0, 0),
                 VerticalAlignment = VerticalAlignment.Center,
-                ToolTip = "Фланцы и шпильки затвора, начинка шкафа: 39.1, 39.2… если все детали строки от одной строки-родителя. Выключено — все строки подряд.",
+                ToolTip = "Детали стоят там, куда их ставит сортировка (по категории), и получают свой номер подряд.",
             };
             _sub.Click += (s, e) => RaiseChanged();
-            row.Children.Add(_sub);
-            Top.Children.Add(row);
+            _flat.Click += (s, e) => RaiseChanged();
+            modes.Children.Add(_sub);
+            modes.Children.Add(_flat);
+            Top.Children.Add(modes);
             Top.Children.Add(new TextBlock
             {
-                Text = "Запускайте последней, перед выпуском. Номера идут сверху вниз так, как строки стоят в таблице Revit; строки «!…» номер не занимают. "
+                Text = "Запускайте последней, перед выпуском. Номера идут сверху вниз так, как строки стоят в таблице Revit; строки «!…» и без наименования номер не занимают. "
                     + "Элемент в двух нумеруемых спецификациях получит два разных номера — это ошибка в отчёте, такую спецификацию поставьте «не трогать».",
                 Foreground = Brushes.DimGray,
                 TextWrapping = TextWrapping.Wrap,
@@ -327,7 +342,11 @@ namespace VKTools.Revit.UI
 
         protected override string TableText(SpecOptions options) => options.Positions.Rules;
 
-        protected override void LoadOwn(SpecOptions options) => _sub.IsChecked = options.Positions.SubNumbers;
+        protected override void LoadOwn(SpecOptions options)
+        {
+            _sub.IsChecked = options.Positions.SubNumbers;
+            _flat.IsChecked = !options.Positions.SubNumbers;
+        }
 
         protected override void Parse(string text, List<ConfigIssue> issues) => PositionSettings.ParseRules(text, issues);
 

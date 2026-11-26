@@ -82,7 +82,7 @@ namespace VKTools.Revit.Spec
                 if (NumberSchedule(vs, posKey, ps.SubNumbers, report)) numbered++;
             }
             _plan.Notes.Add($"Позиции: оформленных спецификаций {issued.Count}, нумеруется {numbered}; параметр {posKey.Name}; "
-                + (ps.SubNumbers ? "вложенные детали одной строки-родителя — «номер.N»" : "все строки подряд") + ".");
+                + (ps.SubNumbers ? "вложенные через точку — сразу под родителем, «номер.N»" : "вложенные по порядку — где их ставит сортировка") + ".");
         }
 
         /// <returns>true — спецификация пронумерована (изменения добавлены в план).</returns>
@@ -115,35 +115,52 @@ namespace VKTools.Revit.Spec
                 _plan.AddIssue(M, Severity.Info, string.Empty, $"{title}: «Для каждого экземпляра» — каждый элемент получит свой номер", vs.Name);
             }
 
-            List<List<AuditElement>> groups = ScheduleAudit.Rows(audit);
-            var rows = new List<PositionRow>(groups.Count);
+            // Графа «Р_Ключ позиции»: строки и порядок собираются «как без VK Tools» — без ключа и со снятым ради него ключом
+            ElementId? keyParamId = PositionKeys.ParamId(_doc);
+            int keyField = PositionKeys.FieldIndex(definition, keyParamId);
+            List<(int Index, bool Desc)> naturalSort = PositionKeys.NaturalSort(definition, keyField);
+            var rows = new List<PositionRow>();
             var rowOf = new Dictionary<long, int>();
-            for (int r = 0; r < groups.Count; r++)
+            List<List<AuditElement>> groups;
+            var savedSort = audit.Fields.Select(f => f.Sort).ToList();
+            try
             {
-                List<AuditElement> g = groups[r];
-                var row = new PositionRow(g.Select(e => e.Id).ToList(), PositionNumbering.Common(g.Select(e => ScheduleAudit.ValueOf(e, posField))));
-                string name = nameField >= 0 ? PositionNumbering.Common(g.Select(e => ScheduleAudit.ValueOf(e, nameField))) : string.Empty;
-                if (ScheduleAudit.IsExcludedName(name)) row.Skip = true;
-                else if (nameField >= 0 && name.Length == 0)
+                for (int i = 0; i < audit.Fields.Count; i++) audit.Fields[i].Sort = naturalSort.Any(k => k.Index == i);
+                groups = ScheduleAudit.Rows(audit);
+                for (int r = 0; r < groups.Count; r++)
                 {
-                    // Пустое наименование (трубы без «Имён труб» и т. п.): номер не даём, чтобы не было номеров у пустых строк на листе
-                    row.Skip = true;
-                    AuditElement first = g[0];
-                    PlanIssue unnamed = _plan.AddIssue(M, Severity.Warning, posKey.Name, $"{title}: строка без наименования — номер не дан", $"{first.Family}: {first.Type}", first.Id, g.Count);
-                    unnamed.Action = "Заполните наименование («Имена труб», «Изоляция» или семейство) и запустите «Позиции» снова.";
-                    unnamed.Ids.AddRange(g.Skip(1).Select(e => e.Id));
+                    List<AuditElement> g = groups[r];
+                    var row = new PositionRow(g.Select(e => e.Id).ToList(), PositionNumbering.Common(g.Select(e => ScheduleAudit.ValueOf(e, posField))))
+                    {
+                        Group = ScheduleAudit.GroupOf(audit, g[0]),
+                    };
+                    string name = nameField >= 0 ? PositionNumbering.Common(g.Select(e => ScheduleAudit.ValueOf(e, nameField))) : string.Empty;
+                    if (ScheduleAudit.IsExcludedName(name)) row.Skip = true;
+                    else if (nameField >= 0 && name.Length == 0)
+                    {
+                        // Пустое наименование (трубы без «Имён труб» и т. п.): номер не даём, чтобы не было номеров у пустых строк на листе
+                        row.Skip = true;
+                        AuditElement first = g[0];
+                        PlanIssue unnamed = _plan.AddIssue(M, Severity.Warning, posKey.Name, $"{title}: строка без наименования — номер не дан", $"{first.Family}: {first.Type}", first.Id, g.Count);
+                        unnamed.Action = "Заполните наименование («Имена труб», «Изоляция» или семейство) и запустите «Позиции» снова.";
+                        unnamed.Ids.AddRange(g.Skip(1).Select(e => e.Id));
+                    }
+                    rows.Add(row);
+                    foreach (AuditElement e in g) rowOf[e.Id] = r;
                 }
-                rows.Add(row);
-                foreach (AuditElement e in g) rowOf[e.Id] = r;
+            }
+            finally
+            {
+                for (int i = 0; i < audit.Fields.Count; i++) audit.Fields[i].Sort = savedSort[i];
             }
 
-            // Порядок строк как в таблице Revit
+            // Порядок строк как в таблице Revit (без ключа позиции)
             bool sorted = definition.GetSortGroupFields().Any(f => f.FieldId == field.FieldId);
-            List<int>? order = sorted ? null : TableOrder(vs, definition, posField, groups, posKey);
+            List<int>? order = sorted ? null : TableOrder(vs, definition, posField, keyField, groups, posKey);
             string orderNote;
             if (order == null)
             {
-                order = FallbackOrder(definition, groups);
+                order = FallbackOrder(naturalSort, groups);
                 orderNote = sorted ? "позиция входит в сортировку — порядок по полям сортировки" : "таблицу прочитать не удалось — порядок по полям сортировки";
                 _plan.AddIssue(M, Severity.Warning, string.Empty, $"{title}: {orderNote}", vs.Name)
                     .Action = "Сверьте номера с таблицей после пробного прогона. Если позиция в сортировке — уберите её оттуда (номер должен идти по порядку строк).";
@@ -155,86 +172,97 @@ namespace VKTools.Revit.Spec
             var ordered = order.Select(i => rows[i]).ToList();
             var orderedIndex = new Dictionary<int, int>();
             for (int i = 0; i < order.Count; i++) orderedIndex[order[i]] = i;
-
-            // Вложенные детали: все элементы строки — вложенные, и их верхние родители в одной строке этой спецификации
-            for (int i = 0; i < order.Count; i++)
+            var topCache = new Dictionary<long, int?>();
+            int? ParentRowOf(long id)
             {
-                int? parentRow = null;
-                bool ok = true;
-                foreach (long id in ordered[i].Ids)
-                {
-                    Element? top = TopParent(id);
-                    if (top == null || !rowOf.TryGetValue(top.Id.ToLong(), out int pr))
-                    {
-                        ok = false;
-                        break;
-                    }
-                    if (parentRow == null) parentRow = pr;
-                    else if (parentRow != pr)
-                    {
-                        ok = false;
-                        break;
-                    }
-                }
-                // Родитель — только в том же блоке системы: муфта под датчик в В21.2 не получает «1.1» от оросителя из другого блока
-                if (ok && parentRow.HasValue && orderedIndex.TryGetValue(parentRow.Value, out int pIndex) && pIndex != i
-                    && ScheduleAudit.GroupOf(audit, groups[order[i]][0]) == ScheduleAudit.GroupOf(audit, groups[parentRow.Value][0]))
-                    ordered[i].Parent = pIndex;
+                if (topCache.TryGetValue(id, out int? cached)) return cached;
+                Element? top = TopParent(id);
+                int? result = top != null && rowOf.TryGetValue(top.Id.ToLong(), out int pr) && orderedIndex.TryGetValue(pr, out int pi) ? pi : (int?)null;
+                topCache[id] = result;
+                return result;
+            }
+            List<PositionUnit> units = PositionNumbering.Layout(ordered, ParentRowOf, subNumbers);
+
+            // Ключ позиции: «через точку» — графа нужна (добавится при записи), «по порядку» — значения пишутся, только если графа уже есть
+            bool keyInstalled = keyField >= 0 && PositionKeys.IsSorted(definition, keyField);
+            bool writeKeys = subNumbers || keyField >= 0;
+            ParamKey keyKey = ParamKey.Shared(ParamProfile.PositionKeyName, ParamProfile.PositionKeyGuid);
+            string keyNote = string.Empty;
+            if (writeKeys && keyParamId == null)
+            {
+                writeKeys = false;
+                keyNote = $"; графа «{ParamProfile.PositionKeyName}» и параметр добавятся при «Применить» (в пробном прогоне без них)";
+                _plan.AddIssue(M, Severity.Info, ParamProfile.PositionKeyName, $"{title}: параметра «{ParamProfile.PositionKeyName}» в проекте ещё нет — добавится при «Применить»", vs.Name);
+            }
+            else if (subNumbers && !keyInstalled)
+            {
+                _plan.PositionKeySchedules.Add(vs.Id.ToLong());
+                keyNote = $"; при записи добавится скрытая графа «{ParamProfile.PositionKeyName}» (ключ сортировки после системы)";
             }
 
-            string?[] numbers = PositionNumbering.Number(ordered, subNumbers);
             int changed = 0;
             int rowsChanged = 0;
-            int subRows = 0;
             int max = 0;
-            for (int i = 0; i < ordered.Count; i++)
+            for (int i = 0; i < units.Count; i++)
             {
-                string? number = numbers[i];
-                if (number == null) continue;
-                if (number.IndexOf('.') >= 0) subRows++;
-                else max = Math.Max(max, int.Parse(number, CultureInfo.InvariantCulture));
+                PositionUnit unit = units[i];
+                string? number = unit.Number;
+                if (number != null && unit.Parent == null) max = Math.Max(max, int.Parse(number, CultureInfo.InvariantCulture));
+                long? parentId = unit.Parent is int pu ? units[pu].Ids[0] : (long?)null;
+                string source = $"{title}, строка {i + 1}" + (unit.Parent is int pn ? $" (деталь строки {units[pn].Number})" : string.Empty);
                 bool rowChanged = false;
-                foreach (long id in ordered[i].Ids)
+                foreach (long id in unit.Ids)
                 {
                     Element? e = _doc.GetElement(id.ToElementId());
                     if (e == null) continue;
                     string subject = $"{title}: {(e.Category?.Name ?? "?")} : {TypeLabel(e)}";
-                    Parameter? p = _access.Find(e, posKey);
-                    if (p == null)
-                    {
-                        Element? type = TypeOf(e);
-                        bool typeParam = type != null && _access.Find(type, posKey) != null;
-                        _plan.AddIssue(M, Severity.Warning, posKey.Name, typeParam ? "параметр типа — номер у строки не задать (нужен экземпляра)" : "у элемента нет параметра", subject, id)
-                            .Action = typeParam ? "Сделайте позицию параметром экземпляра (Управление → Параметры проекта)." : "Добавьте параметр в категорию (Управление → Параметры проекта).";
-                        continue;
-                    }
-                    if (p.StorageType != StorageType.String)
-                    {
-                        _plan.AddIssue(M, Severity.Error, posKey.Name, $"параметр не текстовый ({ParamAccess.DataTypeLabel(p)})", subject, id);
-                        continue;
-                    }
-                    string current = (p.AsString() ?? string.Empty).Trim();
-                    if (string.Equals(current, number, StringComparison.Ordinal))
-                    {
-                        _plan.CountUnchanged(M);
-                        continue;
-                    }
-                    if (p.IsReadOnly)
-                    {
-                        _plan.AddIssue(M, Severity.Error, posKey.Name, "только для чтения: задан формулой или связан в семействе", subject, id);
-                        continue;
-                    }
-                    if (Guard(M, e, p, posKey.Name, subject)) continue;
-                    long? parentId = ordered[i].Parent is int pi ? ordered[pi].Ids[0] : (long?)null;
-                    AddChange(M, e, posKey, current, ParamValue.OfText(number), $"{title}, строка {i + 1}" + (parentId.HasValue ? $" (деталь строки {numbers[ordered[i].Parent!.Value]})" : string.Empty), parentId);
+                    bool elementChanged = number != null && WritePositionText(e, posKey, number, subject, source, parentId, true);
+                    if (writeKeys && WritePositionText(e, keyKey, unit.Key, subject, source, parentId, false)) elementChanged = true;
+                    if (!elementChanged) continue;
                     changed++;
                     rowChanged = true;
                 }
                 if (rowChanged) rowsChanged++;
             }
-            int skipped = ordered.Count(r => r.Skip);
-            _plan.Preview.Add($"{title}: строк {ordered.Count}, номера 1…{max}" + (subRows > 0 ? $", подномеров {subRows}" : string.Empty)
-                + (skipped > 0 ? $", «!» без номера {skipped}" : string.Empty) + $"; меняется строк {rowsChanged}, элементов {changed}; {orderNote}.");
+            int subRows = units.Count(u => u.Parent != null);
+            int skipped = units.Count(u => u.Skip);
+            _plan.Preview.Add($"{title}: строк {units.Count}, номера 1…{max}" + (subRows > 0 ? $", деталей под родителем {subRows}" : string.Empty)
+                + (skipped > 0 ? $", без номера («!», без наименования) {skipped}" : string.Empty) + $"; меняется строк {rowsChanged}, элементов {changed}; {orderNote}{keyNote}.");
+            return true;
+        }
+
+        /// <summary>Записать текст в параметр элемента (позиция или ключ). true — значение меняется (изменение в плане).</summary>
+        private bool WritePositionText(Element e, ParamKey key, string value, string subject, string source, long? parentId, bool countUnchanged)
+        {
+            const SpecModule M = SpecModule.Positions;
+            long id = e.Id.ToLong();
+            Parameter? p = _access.Find(e, key);
+            if (p == null)
+            {
+                Element? type = TypeOf(e);
+                bool typeParam = type != null && _access.Find(type, key) != null;
+                _plan.AddIssue(M, Severity.Warning, key.Name, typeParam ? "параметр типа — значение у строки не задать (нужен экземпляра)" : "у элемента нет параметра", subject, id)
+                    .Action = typeParam ? "Сделайте параметр параметром экземпляра (Управление → Параметры проекта)." : "Добавьте параметр в категорию (Управление → Параметры проекта).";
+                return false;
+            }
+            if (p.StorageType != StorageType.String)
+            {
+                _plan.AddIssue(M, Severity.Error, key.Name, $"параметр не текстовый ({ParamAccess.DataTypeLabel(p)})", subject, id);
+                return false;
+            }
+            string current = (p.AsString() ?? string.Empty).Trim();
+            if (string.Equals(current, value, StringComparison.Ordinal))
+            {
+                if (countUnchanged) _plan.CountUnchanged(M);
+                return false;
+            }
+            if (p.IsReadOnly)
+            {
+                _plan.AddIssue(M, Severity.Error, key.Name, "только для чтения: задан формулой или связан в семействе", subject, id);
+                return false;
+            }
+            if (Guard(M, e, p, key.Name, subject)) return false;
+            AddChange(M, e, key, current, ParamValue.OfText(value), source, parentId);
             return true;
         }
 
@@ -269,7 +297,7 @@ namespace VKTools.Revit.Spec
         /// Порядок строк из таблицы: метка «§k» в позицию всех элементов строки k, перестроение, чтение графы сверху вниз, откат.
         /// null — не получилось (тогда порядок по полям сортировки).
         /// </summary>
-        private List<int>? TableOrder(ViewSchedule vs, ScheduleDefinition definition, int posField, List<List<AuditElement>> groups, ParamKey posKey)
+        private List<int>? TableOrder(ViewSchedule vs, ScheduleDefinition definition, int posField, int keyField, List<List<AuditElement>> groups, ParamKey posKey)
         {
             if (_doc.IsReadOnly || groups.Count == 0) return null;
             int column = 0;
@@ -287,6 +315,8 @@ namespace VKTools.Revit.Spec
                     t.Start();
                     try
                     {
+                        // Ключ позиции вне сортировки, снятый ключ на месте — таблица как без VK Tools
+                        PositionKeys.Detach(definition, keyField);
                         for (int r = 0; r < groups.Count; r++)
                         {
                             string mark = OrderMark + r.ToString(CultureInfo.InvariantCulture);
@@ -341,14 +371,8 @@ namespace VKTools.Revit.Spec
         }
 
         /// <summary>Порядок по полям сортировки спецификации (по возрастанию/убыванию), «2» раньше «10».</summary>
-        private static List<int> FallbackOrder(ScheduleDefinition definition, List<List<AuditElement>> groups)
+        private static List<int> FallbackOrder(List<(int Index, bool Desc)> keys, List<List<AuditElement>> groups)
         {
-            var fieldIndex = new Dictionary<ScheduleFieldId, int>();
-            for (int i = 0; i < definition.GetFieldCount(); i++) fieldIndex[definition.GetField(i).FieldId] = i;
-            var keys = definition.GetSortGroupFields()
-                .Where(f => fieldIndex.ContainsKey(f.FieldId))
-                .Select(f => (Index: fieldIndex[f.FieldId], Desc: f.SortOrder == ScheduleSortOrder.Descending))
-                .ToList();
             var idx = Enumerable.Range(0, groups.Count).ToList();
             idx.Sort((a, b) =>
             {

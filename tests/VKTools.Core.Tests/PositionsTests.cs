@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using VKTools.Core.Config;
 using VKTools.Core.Spec;
 using Xunit;
@@ -8,43 +9,93 @@ namespace VKTools.Core.Tests
     /// <summary>0.17.1 «Позиции»: своя нумерация с 1 в каждой спецификации (решение 2026-11-24), подномера вложенных.</summary>
     public class PositionsTests
     {
-        private static PositionRow Row(string current = "", bool skip = false, int? parent = null) =>
-            new PositionRow(new long[] { 1 }, current) { Skip = skip, Parent = parent };
+        // Строка r — один элемент с id = 100 + r (у строки деталей — несколько: 100 + r, 1000 + r…)
+        private static PositionRow Row(int r, bool skip = false, string group = "", params long[] extra)
+        {
+            var ids = new List<long> { 100 + r };
+            ids.AddRange(extra);
+            return new PositionRow(ids, string.Empty) { Skip = skip, Group = group };
+        }
+
+        private static List<PositionUnit> Layout(PositionRow[] rows, Dictionary<long, int> parents, bool sub = true) =>
+            PositionNumbering.Layout(rows, id => parents.TryGetValue(id, out int p) ? p : (int?)null, sub);
+
+        private static string[] Numbers(List<PositionUnit> units) => units.Select(u => u.Number ?? "-").ToArray();
 
         [Fact]
         public void Нумерация_с_1_по_порядку_строк_без_пропусков()
         {
-            var rows = new[] { Row("40"), Row("39"), Row(""), Row("‹варианты›") };
-            Assert.Equal(new[] { "1", "2", "3", "4" }, PositionNumbering.Number(rows, true));
+            var rows = new[] { Row(0), Row(1), Row(2), Row(3) };
+            List<PositionUnit> units = Layout(rows, new Dictionary<long, int>());
+            Assert.Equal(new[] { "1", "2", "3", "4" }, Numbers(units));
+            Assert.Equal(new[] { "0001", "0002", "0003", "0004" }, units.Select(u => u.Key));
         }
 
         [Fact]
-        public void Строка_с_восклицательным_знаком_номер_не_занимает()
+        public void Строка_с_восклицательным_знаком_номер_не_занимает_но_место_держит()
         {
-            var rows = new[] { Row(), Row(skip: true), Row() };
-            Assert.Equal(new string?[] { "1", null, "2" }, PositionNumbering.Number(rows, true));
+            var rows = new[] { Row(0), Row(1, skip: true), Row(2) };
+            List<PositionUnit> units = Layout(rows, new Dictionary<long, int>());
+            Assert.Equal(new[] { "1", "-", "2" }, Numbers(units));
+            Assert.Equal("0002", units[1].Key);
         }
 
         [Fact]
-        public void Детали_затвора_получают_номер_родителя_и_подномер()
+        public void Детали_встают_сразу_под_родителем_через_точку()
         {
-            // Фланцы и шпильки стоят в таблице выше затвора: номер затвора всё равно 1-й по порядку основных строк
-            var rows = new[] { Row(parent: 2), Row(parent: 2), Row(), Row() };
-            Assert.Equal(new[] { "1.1", "1.2", "1", "2" }, PositionNumbering.Number(rows, true));
+            // Фланцы (строка 0) и шпильки (строка 3) затвора (строка 1): по категории фланцы выше затвора, шпильки ниже отвода
+            var rows = new[] { Row(0), Row(1), Row(2), Row(3) };
+            var parents = new Dictionary<long, int> { [100] = 1, [103] = 1 };
+            List<PositionUnit> units = Layout(rows, parents);
+            Assert.Equal(new[] { 1, 0, 3, 2 }, units.Select(u => u.Source));
+            Assert.Equal(new[] { "1", "1.1", "1.2", "2" }, Numbers(units));
+            Assert.Equal(new[] { "0001", "0001.01", "0001.02", "0002" }, units.Select(u => u.Key));
         }
 
         [Fact]
-        public void Без_подномеров_все_строки_подряд()
+        public void По_порядку_детали_остаются_где_стоят_со_своим_номером()
         {
-            var rows = new[] { Row(parent: 2), Row(parent: 2), Row(), Row() };
-            Assert.Equal(new[] { "1", "2", "3", "4" }, PositionNumbering.Number(rows, false));
+            var rows = new[] { Row(0), Row(1), Row(2), Row(3) };
+            var parents = new Dictionary<long, int> { [100] = 1, [103] = 1 };
+            List<PositionUnit> units = Layout(rows, parents, sub: false);
+            Assert.Equal(new[] { 0, 1, 2, 3 }, units.Select(u => u.Source));
+            Assert.Equal(new[] { "1", "2", "3", "4" }, Numbers(units));
+        }
+
+        [Fact]
+        public void Одинаковые_фланцы_двух_затворов_делятся_на_две_строки()
+        {
+            // Строка 0 — фланцы: элемент 100 от затвора в строке 1, элемент 500 — от затвора в строке 2
+            var rows = new[] { Row(0, extra: 500), Row(1), Row(2) };
+            var parents = new Dictionary<long, int> { [100] = 1, [500] = 2 };
+            List<PositionUnit> units = Layout(rows, parents);
+            Assert.Equal(new[] { "1", "1.1", "2", "2.1" }, Numbers(units));
+            Assert.Equal(new long[] { 100 }, units[1].Ids);
+            Assert.Equal(new long[] { 500 }, units[3].Ids);
+        }
+
+        [Fact]
+        public void Родитель_из_другого_блока_системы_деталь_нумеруется_обычно()
+        {
+            var rows = new[] { Row(0, group: ""), Row(1, group: "В21.2") };
+            var parents = new Dictionary<long, int> { [101] = 0 };
+            Assert.Equal(new[] { "1", "2" }, Numbers(Layout(rows, parents)));
         }
 
         [Fact]
         public void Родитель_без_номера_деталь_нумеруется_как_обычная_строка()
         {
-            var rows = new[] { Row(skip: true), Row(parent: 0), Row() };
-            Assert.Equal(new string?[] { null, "1", "2" }, PositionNumbering.Number(rows, true));
+            var rows = new[] { Row(0, skip: true), Row(1), Row(2) };
+            var parents = new Dictionary<long, int> { [101] = 0 };
+            Assert.Equal(new[] { "-", "1", "2" }, Numbers(Layout(rows, parents)));
+        }
+
+        [Fact]
+        public void Строка_где_не_все_элементы_детали_остаётся_обычной()
+        {
+            var rows = new[] { Row(0, extra: 500), Row(1) };
+            var parents = new Dictionary<long, int> { [100] = 1 };
+            Assert.Equal(new[] { "1", "2" }, Numbers(Layout(rows, parents)));
         }
 
         [Fact]

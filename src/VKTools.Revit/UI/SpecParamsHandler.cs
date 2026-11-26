@@ -109,7 +109,7 @@ namespace VKTools.Revit.UI
                 SpecRunMode mode = _request == SpecRequest.Apply ? SpecRunMode.Apply : SpecRunMode.Trial;
                 // Настройку переключили на «VK_Сокращение системы» в окне, а в проекте его ещё нет: при записи плагин добавляет его сам
                 // (отдельной операцией); пробный прогон модель не меняет — там запись в него покажется как «параметра нет».
-                if ((Core.Config.ParamProfile.IsOwn || (options.Module == SpecModule.SystemFloor && options.SystemFloor.NeedsVkParameters))
+                if ((Core.Config.ParamProfile.IsOwn || options.Module == SpecModule.Positions || (options.Module == SpecModule.SystemFloor && options.SystemFloor.NeedsVkParameters))
                     && VkParameters.NeedsSetup(doc, out _))
                 {
                     if (mode == SpecRunMode.Trial)
@@ -239,7 +239,7 @@ namespace VKTools.Revit.UI
                 : options.Module == SpecModule.PipeReserve
                     ? $"параметр количества {options.Reserve.QtyParam?.Name ?? "не выбран"}, строк таблицы «Коэффициенты» {PipeReserveSettings.ParseRules(options.Reserve.Table, new List<ConfigIssue>()).Count}"
                 : options.Module == SpecModule.Positions
-                    ? $"позиция в {options.Positions.PosParam?.Name ?? "не выбран"}, подномера вложенных {(options.Positions.SubNumbers ? "да" : "нет")}, правил {PositionSettings.ParseRules(options.Positions.Rules, new List<ConfigIssue>()).Count}"
+                    ? $"позиция в {options.Positions.PosParam?.Name ?? "не выбран"}, вложенные {(options.Positions.SubNumbers ? "через точку" : "по порядку")}, правил {PositionSettings.ParseRules(options.Positions.Rules, new List<ConfigIssue>()).Count}"
                 : options.Module == SpecModule.Vendor
                     ? $"{(options.Vendor.Overwrite ? "перезапись заполненных" : "только пустые")}, поиск по {options.Vendor.NameParam?.Name ?? "не выбран"}, правил {VendorSettings.ParseRules(options.Vendor.Rules, new List<ConfigIssue>()).Count}"
                 : options.Module == SpecModule.PipeNames
