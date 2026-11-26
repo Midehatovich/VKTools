@@ -271,13 +271,32 @@ namespace VKTools.Core.Schedules
             return order;
         }
 
+        /// <summary>
+        /// Заголовок группы, под которым элемент стоит в спецификации: первое поле сортировки (обычно сокращение системы),
+        /// если это не наименование/позиция/марка. Иначе — система элемента. Так у начинки шкафов в отчёте та же система,
+        /// что в шапке спецификации, а не система родителя или соседа.
+        /// </summary>
+        private static string GroupOf(AuditSchedule schedule, AuditElement e)
+        {
+            for (int i = 0; i < schedule.Fields.Count; i++)
+            {
+                AuditField f = schedule.Fields[i];
+                if (!f.Sort) continue;
+                if (f.Role != AuditRole.Other) break;
+                string v = Value(e, i);
+                if (v.Length > 0) return v;
+                break;
+            }
+            return e.System;
+        }
+
         private static string Label(AuditSchedule schedule, Row row, int nameIdx, int posIdx)
         {
             AuditElement first = row.Elements[0];
             string name = nameIdx >= 0 ? Common(row, nameIdx) : string.Empty;
             if (name.Length == 0) name = $"{first.Family}: {first.Type}".Trim(' ', ':');
             string pos = posIdx >= 0 ? Common(row, posIdx) : string.Empty;
-            string sys = first.System;
+            string sys = GroupOf(schedule, first);
             var label = new StringBuilder();
             if (sys.Length > 0) label.Append(sys).Append(", ");
             if (pos.Length > 0) label.Append("поз. ").Append(pos).Append(", ");
@@ -424,7 +443,7 @@ namespace VKTools.Core.Schedules
                 foreach (var group in empty.GroupBy(e => (e.Family, e.Type)).OrderByDescending(g => g.Count()))
                 {
                     AuditElement first = group.First();
-                    string systems = string.Join(", ", group.Select(e => e.System).Where(s => s.Length > 0).Distinct().OrderBy(s => s, StringComparer.CurrentCulture).Take(MaxListed));
+                    string systems = string.Join(", ", group.Select(e => GroupOf(schedule, e)).Where(s => s.Length > 0).Distinct().OrderBy(s => s, StringComparer.CurrentCulture).Take(MaxListed));
                     var finding = new CheckFinding(Empty, role == AuditRole.Name || role == AuditRole.Quantity ? Severity.Error : Severity.Warning,
                         $"«{schedule.Name}»: пустая графа «{field.Name}» — {group.Count()} эл. «{group.Key.Family}: {group.Key.Type}»"
                         + (systems.Length > 0 ? $" ({systems})" : string.Empty))

@@ -155,6 +155,27 @@ namespace VKTools.Core.Tests
             Assert.Equal(new[] { hidden.Id }, excluded.RelatedElementIds);
         }
 
+        [Fact]
+        public void Система_в_отчёте_берётся_из_шапки_спецификации()
+        {
+            // Начинка шкафа В21.1: своя система элемента «В21.2», а в спецификации она под шапкой «В21.1»
+            var s = new AuditSchedule(1, "Ниже 0,000", new List<AuditField>
+            {
+                new AuditField("Сокращение", AuditRole.Other) { Sort = true },
+                new AuditField("Поз.", AuditRole.Position),
+                new AuditField("Наименование", AuditRole.Name) { Sort = true },
+            });
+            for (int i = 1; i <= 2; i++)
+            {
+                s.Elements.Add(new AuditElement(5000 + i, new[] { "В21.1", "76." + i, "— огнетушитель порошковый" })
+                {
+                    Family = "Шкаф", Type = "ОП-4", System = "В21.2",
+                });
+            }
+            CheckFinding v = Assert.Single(Of(ScheduleAudit.Run(new[] { s }), ScheduleAudit.Variants));
+            Assert.Contains("«В21.1, — огнетушитель", v.Message);
+        }
+
         [Theory]
         [InlineData("Отвод 90° Ду150", "Отвод #° Ду#")]
         [InlineData("Труба ø21.3x2,8", "Труба ø#x#")]
