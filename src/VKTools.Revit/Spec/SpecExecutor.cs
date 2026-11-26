@@ -94,6 +94,7 @@ namespace VKTools.Revit.Spec
             : modules.Contains(SpecModule.PipeReserve) ? "VK Tools: запас труб"
             : modules.Contains(SpecModule.PipeNames) ? "VK Tools: имена труб"
             : modules.Contains(SpecModule.Vendor) ? "VK Tools: марки и поставщики"
+            : modules.Contains(SpecModule.Positions) ? "VK Tools: позиции"
             : modules.Count == 1 && modules[0] == SpecModule.Nested ? "VK Tools: перенос во вложенные" : "VK Tools: группирование";
 
         /// <param name="saveSettings">Для «Применить»: сохранить настройки окна в модели той же операцией (null — не нужно). Возвращает причину отказа.</param>

@@ -283,4 +283,61 @@ namespace VKTools.Revit.UI
             options.Vendor = vd;
         }
     }
+
+    /// <summary>Вкладка «Настройка» окна «Позиции»: параметр позиции, подномера вложенных, таблица «Спецификации».</summary>
+    internal sealed class PositionsPanel : PipeTablePanel
+    {
+        private readonly CheckBox _sub;
+        private readonly ComboBox _param;
+
+        public PositionsPanel(string documentTitle)
+            : base("positions.csv", documentTitle,
+                "Спецификации: первая подходящая строка сверху. «Спецификация» — часть имени или маска с * («*ниже 0,000*»), «*» — все. "
+                + "«Нумерация»: «с 1» — свои номера 1, 2, 3… по порядку строк; «не трогать» — номера не меняются. Смотрятся только оформленные "
+                + "(«ADSK_Назначение вида» = «Оформленные спецификации» или созданные кнопкой). «Примечание» — для себя.",
+                PositionSettings.Columns, "Спецификации → строк, номера, сколько изменится (по последнему «Обновить»)")
+        {
+            var row = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
+            row.Children.Add(new TextBlock { Text = "Номер пишется в", Width = 110, VerticalAlignment = VerticalAlignment.Center });
+            _param = new ComboBox { Width = 360, ToolTip = "Тот же параметр, что в графе «Позиция» спецификаций. Спецификация с другим параметром в графе не нумеруется." };
+            _param.SelectionChanged += (s, e) => RaiseChanged();
+            row.Children.Add(_param);
+            _sub = new CheckBox
+            {
+                Content = "Вложенные детали — «номер родителя.N»",
+                Margin = new Thickness(16, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                ToolTip = "Фланцы и шпильки затвора, начинка шкафа: 39.1, 39.2… если все детали строки от одной строки-родителя. Выключено — все строки подряд.",
+            };
+            _sub.Click += (s, e) => RaiseChanged();
+            row.Children.Add(_sub);
+            Top.Children.Add(row);
+            Top.Children.Add(new TextBlock
+            {
+                Text = "Запускайте последней, перед выпуском. Номера идут сверху вниз так, как строки стоят в таблице Revit; строки «!…» номер не занимают. "
+                    + "Элемент в двух нумеруемых спецификациях получит два разных номера — это ошибка в отчёте, такую спецификацию поставьте «не трогать».",
+                Foreground = Brushes.DimGray,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
+
+        protected override ComboBox ParamBox => _param;
+
+        protected override ParamKey? Param(SpecOptions options) => options.Positions.PosParam;
+
+        protected override string TableText(SpecOptions options) => options.Positions.Rules;
+
+        protected override void LoadOwn(SpecOptions options) => _sub.IsChecked = options.Positions.SubNumbers;
+
+        protected override void Parse(string text, List<ConfigIssue> issues) => PositionSettings.ParseRules(text, issues);
+
+        public override void ApplyTo(SpecOptions options)
+        {
+            PositionSettings ps = options.Positions.Clone();
+            ps.SubNumbers = _sub.IsChecked == true;
+            ps.PosParam = SelectedParam;
+            ps.Rules = Table.Text();
+            options.Positions = ps;
+        }
+    }
 }

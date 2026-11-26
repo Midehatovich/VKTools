@@ -65,6 +65,10 @@ namespace VKTools.Revit.UI
             Draw(size, Violet, "M 6,7 L 26,7 L 26,25 L 6,25 Z M 6,12 L 26,12 M 11,7 L 11,25 M 20,7 L 20,25");
 
         /// <summary>Таблица с галкой: проверка спецификации.</summary>
+        /// <summary>«Позиции»: столбик номеров 1-2-3.</summary>
+        public static ImageSource Positions(int size) =>
+            Draw(size, Green, "M 7,9 L 9,7 L 9,13 M 7,17 L 11,17 L 7,23 L 11,23 M 15,8 L 25,8 M 15,15 L 25,15 M 15,22 L 25,22");
+
         public static ImageSource CheckSchedule(int size) =>
             Draw(size, Blue, "M 5,7 L 21,7 L 21,25 L 5,25 Z M 5,12 L 21,12 M 10,7 L 10,25 M 17,19 L 21,23 L 28,14");
 

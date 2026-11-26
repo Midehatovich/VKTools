@@ -102,6 +102,13 @@ namespace VKTools.Revit.Schedules
             return report;
         }
 
+        /// <summary>Графы и элементы одной спецификации (для «Позиций»): графа i = поле i определения.</summary>
+        public static AuditSchedule ReadSchedule(Document doc, ViewSchedule vs, CheckReport report)
+        {
+            (SpecOptions options, _) = SpecSettingsLoader.Load(doc, SpecModule.SystemFloor);
+            return Read(doc, vs, new ParamAccess(doc), options.SystemFloor.SystemParam, report);
+        }
+
         /// <summary>«ADSK_Учитывать в спецификации» = 0 (Нет): элемент нарочно не в спецификации.</summary>
         private static bool Excluded(Element e)
         {

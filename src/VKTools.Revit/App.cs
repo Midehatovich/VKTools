@@ -199,6 +199,18 @@ namespace VKTools.Revit
             spec.AddItem(reserve);
             spec.AddItem(pipeNames);
             spec.AddItem(vendor);
+            var positions = new PushButtonData("VKTools.Positions", "Позиции", assembly, typeof(PositionsCommand).FullName)
+            {
+                ToolTip = "Своя нумерация позиций в каждой оформленной спецификации: с 1, по порядку строк, без пропусков и повторов.",
+                LongDescription =
+                    "Номер пишется в параметр графы «Позиция» (Р_Позиция или ADSK_Позиция) всем элементам строки. Вложенные детали одной строки-родителя " +
+                    "получают «номер.N» (39.1, 76.3). Строки «!Не учитывать» номер не занимают. Какие спецификации нумеровать — таблица в окне, хранится в модели. " +
+                    "Запускать последним, перед выпуском: после «Расчётных позиций» и правок наименований.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.Positions(32),
+                Image = RibbonIcons.Positions(16),
+            };
+            spec.AddItem(positions);
 
             RibbonPanel schedules = application.CreateRibbonPanel(TabName, "Выпуск");
             var createSchedule = new PushButtonData("VKTools.CreateSchedule", "Создать\nспецификацию", assembly, typeof(CreateScheduleCommand).FullName)

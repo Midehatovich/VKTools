@@ -96,6 +96,7 @@ namespace VKTools.Revit.UI
             bool reserve = _module == SpecModule.PipeReserve;
             bool names = _module == SpecModule.PipeNames;
             bool vendor = _module == SpecModule.Vendor;
+            bool positions = _module == SpecModule.Positions;
 
             this.ApplyDefaultLook();
             Title = $"VK Tools — {_module.Title().ToLowerInvariant()}: {document.Title}";
@@ -111,7 +112,9 @@ namespace VKTools.Revit.UI
             DockPanel.SetDock(header, Dock.Top);
             header.Children.Add(new TextBlock
             {
-                Text = vendor
+                Text = positions
+                    ? "Позиции: в каждой оформленной спецификации свои номера с 1 по порядку строк, без пропусков и повторов. Какие спецификации — вкладка «Настройка»."
+                    : vendor
                     ? "Марки и поставщики: марка, код изделия и завод-изготовитель по маске наименования из таблицы проекта (вкладка «Настройка»). Наименования не меняются; по умолчанию пишутся только пустые."
                     : reserve
                     ? "Запас: количество = длина × k жёстким трубам и изоляции на трубах по таблице «Коэффициенты» проекта (вкладка «Настройка»; по умолчанию 1,1 = +10 %)."
@@ -151,7 +154,9 @@ namespace VKTools.Revit.UI
             bottom.Children.Add(new Expander { Header = "Сводка, правила и сообщения Revit", Content = _details });
             var buttons = new DockPanel { Margin = new Thickness(0, 8, 0, 0), LastChildFill = false };
             _defaults = ReportWindow.MakeButton("По умолчанию", (s, e) => ResetToDefaults());
-            _defaults.ToolTip = vendor
+            _defaults.ToolTip = positions
+                ? "Все оформленные спецификации «с 1», параметр позиции набора (Р_Позиция или ADSK_Позиция), подномера вложенных. В модели — после «Сохранить»."
+                : vendor
                 ? "Пустая таблица, только пустые значения, поиск по наименованию. В модели — после «Сохранить»."
                 : reserve
                 ? "ADSK_Количество, трубы и изоляция на трубах × 1,1. В модели — после «Сохранить»."
@@ -185,9 +190,10 @@ namespace VKTools.Revit.UI
             root.Children.Add(bottom);
 
             _tabs = new TabControl();
-            if (ins || reserve || names || vendor)
+            if (ins || reserve || names || vendor || positions)
             {
-                FrameworkElement panel = vendor ? new VendorPanel(document.Title)
+                FrameworkElement panel = positions ? new PositionsPanel(document.Title)
+                    : vendor ? new VendorPanel(document.Title)
                     : reserve ? new PipeReservePanel(document.Title)
                     : names ? new PipeNamesPanel(document.Title)
                     : (FrameworkElement)new InsulationPanel(document.Title);
@@ -643,7 +649,8 @@ namespace VKTools.Revit.UI
             if (_report == null) return;
             string module = _module == SpecModule.Nested ? "перенос" : _module == SpecModule.SystemFloor ? "система-этаж"
                 : _module == SpecModule.Insulation ? "изоляция" : _module == SpecModule.PipeReserve ? "запас-труб"
-                : _module == SpecModule.PipeNames ? "имена-труб" : _module == SpecModule.Vendor ? "марки-поставщики" : "группирование";
+                : _module == SpecModule.PipeNames ? "имена-труб" : _module == SpecModule.Vendor ? "марки-поставщики"
+                : _module == SpecModule.Positions ? "позиции" : "группирование";
             var dialog = new SaveFileDialog
             {
                 Filter = "CSV для Excel (*.csv)|*.csv",
