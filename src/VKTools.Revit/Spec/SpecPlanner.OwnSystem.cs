@@ -112,7 +112,7 @@ namespace VKTools.Revit.Spec
                 }
                 return;
             }
-            if (_guard.Check(child, target) != null)
+            if (_guard.Check(child, target, track: isSelected) != null)
             {
                 candidate.Problems++;
                 if (isSelected) Guard(M, child, target, key.Name, subject);

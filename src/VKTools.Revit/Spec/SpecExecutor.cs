@@ -202,6 +202,7 @@ namespace VKTools.Revit.Spec
                         using (timings.Measure("запись (Assimilate)")) operation.Assimilate();
                         result.Committed = true;
                         result.Status = $"Записано {result.Written} из {result.Planned} одной операцией «{operationName}»: Ctrl+Z отменяет её целиком.";
+                        if (doc.IsWorkshared && written.Count > 0) result.Warnings.Add(BusySummary.SyncReminder(written.Select(c => c.ElementId).Distinct().Count()));
                     }
                 }
                 catch (Exception ex)

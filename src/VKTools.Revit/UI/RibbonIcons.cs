@@ -64,6 +64,10 @@ namespace VKTools.Revit.UI
         public static ImageSource Schedule(int size) =>
             Draw(size, Violet, "M 6,7 L 26,7 L 26,25 L 6,25 Z M 6,12 L 26,12 M 11,7 L 11,25 M 20,7 L 20,25");
 
+        /// <summary>Таблица с галкой: проверка спецификации.</summary>
+        public static ImageSource CheckSchedule(int size) =>
+            Draw(size, Blue, "M 5,7 L 21,7 L 21,25 L 5,25 Z M 5,12 L 21,12 M 10,7 L 10,25 M 17,19 L 21,23 L 28,14");
+
         public static ImageSource Settings(int size) =>
             Draw(size, Gray, "M 7,10 L 25,10 M 7,16 L 25,16 M 7,22 L 25,22 M 12,7.5 L 12,12.5 M 20,13.5 L 20,18.5 M 14,19.5 L 14,24.5");
 

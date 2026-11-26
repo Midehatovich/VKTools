@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Autodesk.Revit.DB;
 using VKTools.Core.Checks;
+using VKTools.Core.Spec;
 using VKTools.Revit.Compat;
 
 namespace VKTools.Revit.Spec
@@ -14,6 +15,7 @@ namespace VKTools.Revit.Spec
         private readonly Document _doc;
         private readonly bool _workshared;
         private readonly Dictionary<long, string?> _workshareCache = new Dictionary<long, string?>();
+        private readonly Dictionary<long, string> _owners = new Dictionary<long, string>();
 
         public EditGuard(Document doc)
         {
@@ -21,12 +23,19 @@ namespace VKTools.Revit.Spec
             _workshared = doc.IsWorkshared;
         }
 
+        /// <summary>Занятые и устаревшие элементы, встреченные за прогон: по ним решается, писать ли вообще (0.17.0).</summary>
+        public BusySummary Busy { get; } = new BusySummary();
+
+        /// <summary>Причина запрета всей записи по настройке пользователя; null — писать можно.</summary>
+        public string? BusyBlockReason() => Busy.BlockReason(Infrastructure.Host.LoadSettings().PartialWriteWhenBusy);
+
         /// <summary>null — писать можно; иначе важность и причина для отчёта.</summary>
-        public (Severity Severity, string Reason)? Check(Element element, Parameter parameter)
+        /// <param name="track">false — только узнать (подсказка в окне), в <see cref="Busy"/> не считать: значение писаться не будет.</param>
+        public (Severity Severity, string Reason)? Check(Element element, Parameter parameter, bool track = true)
         {
             string? group = GroupReason(element, parameter);
             if (group != null) return (Severity.Warning, group);
-            string? share = WorkshareReason(element);
+            string? share = WorkshareReason(element, track);
             if (share != null) return (Severity.Warning, share);
             return null;
         }
@@ -50,17 +59,22 @@ namespace VKTools.Revit.Spec
             return null;
         }
 
-        private string? WorkshareReason(Element element)
+        private string? WorkshareReason(Element element, bool track)
         {
             if (!_workshared) return null;
             long id = element.Id.ToLong();
-            if (_workshareCache.TryGetValue(id, out string? cached)) return cached;
+            if (_workshareCache.TryGetValue(id, out string? cached))
+            {
+                if (cached != null && track) Track(id, cached);
+                return cached;
+            }
             string? reason = null;
             try
             {
                 if (WorksharingUtils.GetCheckoutStatus(_doc, element.Id, out string owner) == CheckoutStatus.OwnedByOtherUser)
                 {
                     reason = $"элемент занят пользователем «{owner}»";
+                    _owners[id] = owner;
                 }
                 else
                 {
@@ -76,7 +90,14 @@ namespace VKTools.Revit.Spec
                 // Статус не прочитали — Revit сам откажет при фиксации, если элемент чужой
             }
             _workshareCache[id] = reason;
+            if (reason != null && track) Track(id, reason);
             return reason;
+        }
+
+        private void Track(long id, string reason)
+        {
+            if (_owners.TryGetValue(id, out string? owner)) Busy.AddOwned(id, owner);
+            else Busy.AddOutdated(id);
         }
     }
 }

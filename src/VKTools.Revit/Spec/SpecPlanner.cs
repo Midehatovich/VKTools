@@ -61,6 +61,16 @@ namespace VKTools.Revit.Spec
             IOperationProgress progress, OperationTimings timings)
         {
             var planner = new SpecPlanner(doc, progress);
+            ParamPlan plan = planner.BuildCore(options, defaults, scope, timings);
+            // Занятые и устаревшие элементы: по умолчанию не пишем ничего (всё или ничего, 0.17.0)
+            string? busy = planner._guard.BusyBlockReason();
+            if (busy != null) planner.Block(busy);
+            return plan;
+        }
+
+        private ParamPlan BuildCore(SpecOptions options, SpecDefaults defaults, ICollection<ElementId>? scope, OperationTimings timings)
+        {
+            SpecPlanner planner = this;
             if (options.Module == SpecModule.SystemFloor)
             {
                 bool chain = options.SystemFloor.ChainNested;
@@ -386,7 +396,7 @@ namespace VKTools.Revit.Spec
                 }
                 return;
             }
-            (Severity Severity, string Reason)? blocked = _guard.Check(child, target);
+            (Severity Severity, string Reason)? blocked = _guard.Check(child, target, track: isSelected);
             if (blocked != null)
             {
                 candidate.Problems++;

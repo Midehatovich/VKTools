@@ -212,6 +212,8 @@ namespace VKTools.Revit.Calc
                         using (timings.Measure("запись (Assimilate)")) operation.Assimilate();
                         result.Committed = true;
                         result.Status = $"Записано: {Summary(result, false)} — одной операцией «{OperationName}», Ctrl+Z отменяет её целиком.";
+                        int touchedCount = result.Created + result.Updated + result.Deleted + result.TypesCreated + result.TypesUpdated;
+                        if (doc.IsWorkshared && touchedCount > 0) result.Warnings.Add(BusySummary.SyncReminder(touchedCount));
                     }
                 }
                 catch (Exception ex)

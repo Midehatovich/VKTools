@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using VKTools.Core.Calc;
 using VKTools.Core.Checks;
+using VKTools.Core.Spec;
 using VKTools.Revit.Infrastructure;
 using VKTools.Revit.Spec;
 
@@ -53,7 +54,7 @@ namespace VKTools.Revit.Calc
             {
                 report.Findings.Add(new CheckFinding(CheckRun, Severity.Error, "Запись запрещена: " + plan.WriteBlockedReason)
                 {
-                    Action = "Исправьте причину (таблицы на вкладках, папка правил отдела) и нажмите «Обновить».",
+                    Action = BusySummary.ActionFor(plan.WriteBlockedReason) ?? "Исправьте причину (таблицы на вкладках, папка правил отдела) и нажмите «Обновить».",
                 });
             }
             foreach (string note in plan.Notes) report.Findings.Add(new CheckFinding("Сводка", Severity.Info, note));

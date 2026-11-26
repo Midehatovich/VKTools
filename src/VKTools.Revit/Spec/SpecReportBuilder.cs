@@ -60,7 +60,7 @@ namespace VKTools.Revit.Spec
             {
                 report.Findings.Add(new CheckFinding(CheckRun, Severity.Error, "Запись запрещена: " + plan.WriteBlockedReason)
                 {
-                    Action = "Проверьте папку правил отдела (VK Tools → Настройки → «Проверить»).",
+                    Action = BusySummary.ActionFor(plan.WriteBlockedReason) ?? "Проверьте папку правил отдела (VK Tools → Настройки → «Проверить»).",
                 });
             }
             foreach (string note in plan.Notes) report.Findings.Add(new CheckFinding("Сводка", Severity.Info, note));

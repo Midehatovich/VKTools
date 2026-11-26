@@ -19,6 +19,7 @@ namespace VKTools.Revit.UI
         private readonly UserSettings _settings;
         private readonly TextBox _folder;
         private readonly TextBox _retention;
+        private readonly CheckBox _partial;
         private readonly TextBlock _checkResult;
 
         public SettingsWindow(UserSettings settings)
@@ -63,6 +64,22 @@ namespace VKTools.Revit.UI
                 TextWrapping = TextWrapping.Wrap,
             });
 
+            panel.Children.Add(new TextBlock { Text = "Совместная работа", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 12, 0, 4) });
+            _partial = new CheckBox
+            {
+                Content = "Если часть элементов занята коллегами — записывать остальное",
+                IsChecked = settings.PartialWriteWhenBusy,
+            };
+            panel.Children.Add(_partial);
+            panel.Children.Add(new TextBlock
+            {
+                Text = "По умолчанию выключено: при занятых или устаревших элементах кнопки не записывают ничего, "
+                    + "чтобы позиции, группы и имена в спецификации не разъехались.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brushes.DimGray,
+                Margin = new Thickness(0, 2, 0, 0),
+            });
+
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
             var save = new Button { Content = "Сохранить", IsDefault = true, Padding = new Thickness(12, 3, 12, 3), Margin = new Thickness(0, 0, 8, 0) };
             save.Click += (s, e) => Save();
@@ -103,6 +120,7 @@ namespace VKTools.Revit.UI
             }
             _settings.DepartmentRulesFolder = _folder.Text.Trim();
             _settings.LogRetentionDays = days;
+            _settings.PartialWriteWhenBusy = _partial.IsChecked == true;
             try
             {
                 _settings.Save(Host.SettingsPath);
