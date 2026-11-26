@@ -288,7 +288,7 @@ namespace VKTools.Core.Schedules
         /// если это не наименование/позиция/марка. Иначе — система элемента. Так у начинки шкафов в отчёте та же система,
         /// что в шапке спецификации, а не система родителя или соседа.
         /// </summary>
-        private static string GroupOf(AuditSchedule schedule, AuditElement e)
+        public static string GroupOf(AuditSchedule schedule, AuditElement e)
         {
             // Поле сортировки, похожее на систему («UNI_Сокращение для системы», «Р_Сокращение системы»), а не «UNI_Сортировка» = 6
             for (int i = 0; i < schedule.Fields.Count; i++)

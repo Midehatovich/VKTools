@@ -76,7 +76,7 @@ namespace VKTools.Revit.Spec
                 PositionRule? rule = PositionSettings.Match(rules, vs.Name);
                 if (rule == null || !rule.Number)
                 {
-                    _plan.Preview.Add($"«{vs.Name}»: не трогается" + (rule != null ? $" (строка {rule.Line} «{rule.Mask}»)" : " (нет строки в таблице)"));
+                    _plan.Preview.Add($"«{vs.Name}»: не трогается" + (rule != null ? $" (строка {rules.IndexOf(rule) + 1} таблицы, «{rule.Mask}»)" : " (нет строки в таблице)"));
                     continue;
                 }
                 if (NumberSchedule(vs, posKey, ps.SubNumbers, report)) numbered++;
@@ -176,7 +176,10 @@ namespace VKTools.Revit.Spec
                         break;
                     }
                 }
-                if (ok && parentRow.HasValue && orderedIndex.TryGetValue(parentRow.Value, out int pIndex) && pIndex != i) ordered[i].Parent = pIndex;
+                // Родитель — только в том же блоке системы: муфта под датчик в В21.2 не получает «1.1» от оросителя из другого блока
+                if (ok && parentRow.HasValue && orderedIndex.TryGetValue(parentRow.Value, out int pIndex) && pIndex != i
+                    && ScheduleAudit.GroupOf(audit, groups[order[i]][0]) == ScheduleAudit.GroupOf(audit, groups[parentRow.Value][0]))
+                    ordered[i].Parent = pIndex;
             }
 
             string?[] numbers = PositionNumbering.Number(ordered, subNumbers);
