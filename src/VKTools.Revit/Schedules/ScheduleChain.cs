@@ -15,6 +15,8 @@ namespace VKTools.Revit.Schedules
     /// <summary>Функции VK Tools, которые «Создать спецификацию» применяет после создания (в порядке выпуска).</summary>
     internal enum ChainStep
     {
+        /// <summary>Только в «Подготовить и собрать»: в «Создать» система и этаж обновляются до окна.</summary>
+        SystemFloor,
         Insulation,
         Grouping,
         Calc,
@@ -52,7 +54,14 @@ namespace VKTools.Revit.Schedules
     /// </summary>
     internal static class ScheduleChain
     {
-        public static readonly IReadOnlyList<ChainStep> Order = new[] { ChainStep.Insulation, ChainStep.Grouping, ChainStep.Calc, ChainStep.PipeReserve, ChainStep.PipeNames, ChainStep.Vendor, ChainStep.Positions };
+        /// <summary>
+        /// Порядок выпуска (план 0.17, 2026-11-24): имена труб до марок и до расчётных позиций — окраска ищет «неоцинкованная» в имени,
+        /// марки подбираются по имени; позиции — последними.
+        /// </summary>
+        public static readonly IReadOnlyList<ChainStep> Order = new[] { ChainStep.Insulation, ChainStep.Grouping, ChainStep.PipeNames, ChainStep.Vendor, ChainStep.PipeReserve, ChainStep.Calc, ChainStep.Positions };
+
+        /// <summary>«Подготовить и собрать»: система и этаж первыми, дальше как в «Создать».</summary>
+        public static readonly IReadOnlyList<ChainStep> PrepareOrder = new[] { ChainStep.SystemFloor }.Concat(Order).ToList();
 
         public static string Title(ChainStep step) => step switch
         {
@@ -62,16 +71,19 @@ namespace VKTools.Revit.Schedules
             ChainStep.PipeReserve => "Запас труб",
             ChainStep.Vendor => "Марки и поставщики",
             ChainStep.Positions => "Позиции",
+            ChainStep.SystemFloor => "Система и этаж",
             _ => "Имена труб",
         };
 
-        public static ChainStepResult Run(Document doc, ChainStep step, string scheduleName, IOperationProgress progress, OperationTimings timings)
+        /// <param name="scheduleName">Новая спецификация «Создать»; null — «Подготовить и собрать»: вся модель по сохранённым настройкам.</param>
+        public static ChainStepResult Run(Document doc, ChainStep step, string? scheduleName, IOperationProgress progress, OperationTimings timings)
         {
             progress.ThrowIfCancelled();
             if (step == ChainStep.Calc) return RunCalc(doc, scheduleName, progress, timings);
             if (step == ChainStep.Positions) return RunPositions(doc, scheduleName, progress, timings);
             SpecModule module = step switch
             {
+                ChainStep.SystemFloor => SpecModule.SystemFloor,
                 ChainStep.Insulation => SpecModule.Insulation,
                 ChainStep.Grouping => SpecModule.Grouping,
                 ChainStep.PipeReserve => SpecModule.PipeReserve,
@@ -91,18 +103,21 @@ namespace VKTools.Revit.Schedules
         }
 
         /// <summary>Позиции только новой спецификации, с настройкой окна «Позиции» (режим вложенных, таблица «не трогать»).</summary>
-        private static ChainStepResult RunPositions(Document doc, string scheduleName, IOperationProgress progress, OperationTimings timings)
+        private static ChainStepResult RunPositions(Document doc, string? scheduleName, IOperationProgress progress, OperationTimings timings)
         {
             string title = Title(ChainStep.Positions);
             progress.Report(title + ": анализ…");
             (SpecOptions options, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, SpecModule.Positions);
             PositionSettings ps = options.Positions.Clone();
-            ps.OnlySchedules = new[] { scheduleName };
+            if (scheduleName != null) ps.OnlySchedules = new[] { scheduleName };
             options.Positions = ps;
             ParamPlan plan = SpecPlanner.Build(doc, options, defaults, null, progress, timings);
             ChainStepResult result = Apply(doc, plan, options.SavedInProject, title, progress, timings);
-            string? line = plan.Preview.FirstOrDefault();
-            if (line != null && result.Error == null) result.Summary += " " + line;
+            if (result.Error == null)
+            {
+                IEnumerable<string> lines = scheduleName != null ? plan.Preview.Take(1) : plan.Preview;
+                foreach (string line in lines) result.Summary += " " + line;
+            }
             return result;
         }
 
@@ -142,27 +157,27 @@ namespace VKTools.Revit.Schedules
         /// Расчётные позиции: новая спецификация добавляется к отмеченным (и сохраняется в настройке Р3), позиции остальных
         /// пересчитываются как обычно. Если отмеченных нет (расчёт по всей модели) — шаг пропускается: иначе позиции «МОДЕЛЬ» удалились бы.
         /// </summary>
-        private static ChainStepResult RunCalc(Document doc, string scheduleName, IOperationProgress progress, OperationTimings timings)
+        private static ChainStepResult RunCalc(Document doc, string? scheduleName, IOperationProgress progress, OperationTimings timings)
         {
             var result = new ChainStepResult(Title(ChainStep.Calc));
             progress.Report("Расчётные позиции: анализ…");
             (CalcOptions options, CalcDefaults defaults) = CalcSettingsLoader.Load(doc);
-            if (options.Schedules.Count == 0)
+            if (options.Schedules.Count == 0 && scheduleName != null)
             {
                 result.Skipped = true;
                 result.Summary = "пропущено — в настройке не отмечены спецификации (расчёт по всей модели). Отметьте спецификации в окне «Расчётные позиции»";
                 return result;
             }
             string before = options.Signature();
-            bool added = !options.Schedules.Contains(scheduleName, StringComparer.Ordinal);
-            if (added) options.Schedules.Add(scheduleName);
+            bool added = scheduleName != null && !options.Schedules.Contains(scheduleName, StringComparer.Ordinal);
+            if (added) options.Schedules.Add(scheduleName!);
             CalcPlan plan = CalcPlanner.Build(doc, options, defaults, progress, timings);
-            string? covered = added ? Overlap(plan, scheduleName) : null;
+            string? covered = added ? Overlap(plan, scheduleName!) : null;
             if (covered != null)
             {
                 // Трубы новой спецификации уже считаются в отмеченной: своя область дала бы вторые копии позиций, и обе спецификации
                 // показали бы обе копии. Новая не добавляется — позиции отмеченной видны в ней, если проходят её фильтры.
-                options.Schedules.Remove(scheduleName);
+                options.Schedules.Remove(scheduleName!);
                 plan = CalcPlanner.Build(doc, options, defaults, progress, timings);
                 result.Summary = $"новая спецификация не добавлена в расчёт — её трубы уже считаются в {covered}; "
                     + "в новой видны позиции оттуда (по её фильтрам). ";
