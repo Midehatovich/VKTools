@@ -116,8 +116,9 @@ namespace VKTools.Revit.Schedules
             }
             result.Lines.Add($"Системы: {(set.Systems.All ? "все" : ScheduleRequest.JoinAnd(systems))}.");
             result.Lines.Add($"Этажи: {(set.Floors.All ? "все" : ScheduleRequest.JoinAnd(floors))}.");
+            if (!set.Zones.All) result.Lines.Add("Зоны: " + ScheduleRequest.JoinAnd(request.ResolveZones(data.Zones)) + ".");
             if (request.IsRoom) result.Lines.Add($"Помещение: {(request.RoomTitle.Length > 0 ? request.RoomTitle : request.Room)}" + (request.RoomExclusive ? " — только в этой спецификации." : "."));
-            result.Lines.Add("Фильтры: " + string.Join("; ", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name)) + ".");
+            result.Lines.Add("Фильтры: " + string.Join("; ", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name, data.ZoneParam.Name)) + ".");
             return result;
         }
 
@@ -174,7 +175,7 @@ namespace VKTools.Revit.Schedules
                     Host.Log.Error("Обновить фильтры спецификации: Revit отказал.", ex);
                 }
             }
-            result.Lines.Add("Фильтры: " + string.Join("; ", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name)) + ".");
+            result.Lines.Add("Фильтры: " + string.Join("; ", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name, data.ZoneParam.Name)) + ".");
             return result;
         }
 
@@ -182,9 +183,10 @@ namespace VKTools.Revit.Schedules
         {
             request.KnownSystems = data.Systems.ToList();
             request.KnownFloors = data.KnownFloorValues;
+            request.KnownZones = data.Zones.ToList();
             request.SystemParam = data.SystemParam.Id;
             request.FloorParam = data.FloorParam.Id;
-            request.FilterSignature = string.Join("\n", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name));
+            request.FilterSignature = string.Join("\n", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name, data.ZoneParam.Name));
         }
 
         /// <summary>Графы формы: заголовок, ширина, выравнивание, итог. Неразвёрнутые строки, без общего итога.</summary>
@@ -454,6 +456,17 @@ namespace VKTools.Revit.Schedules
                 }
             }
 
+            ScheduleField? zone = null;
+            if (set.Zones.Conditions.Count > 0)
+            {
+                zone = ScheduleFields.Ensure(doc, definition, data.ZoneParam, true);
+                if (zone == null)
+                {
+                    result.Error = $"параметра «{data.ZoneParam.Name}» нет среди полей спецификации: запустите «Система и этаж» с выбранным источником зоны — плагин добавит его";
+                    return false;
+                }
+            }
+
             var keep = new List<ScheduleFilter>();
             var removed = new List<string>();
             foreach (ScheduleFilter filter in definition.GetFilters())
@@ -462,7 +475,7 @@ namespace VKTools.Revit.Schedules
                 if (data.IsReplaced(doc, field.ParameterId))
                 {
                     if (!ScheduleFields.Is(doc, field.ParameterId, data.SystemParam) && !ScheduleFields.Is(doc, field.ParameterId, data.FloorParam)
-                        && !ScheduleFields.Is(doc, field.ParameterId, data.RoomParam))
+                        && !ScheduleFields.Is(doc, field.ParameterId, data.RoomParam) && !ScheduleFields.Is(doc, field.ParameterId, data.ZoneParam))
                     {
                         removed.Add($"«{field.GetName()}» {FilterText(filter)}");
                     }
@@ -492,6 +505,15 @@ namespace VKTools.Revit.Schedules
                 foreach (FilterCondition c in set.Rooms)
                 {
                     ScheduleFilter? f = Make(definition, room.FieldId, c, data.RoomParam.Name, result);
+                    if (f == null) return false;
+                    filters.Add(f);
+                }
+            }
+            if (zone != null)
+            {
+                foreach (FilterCondition c in set.Zones.Conditions)
+                {
+                    ScheduleFilter? f = Make(definition, zone.FieldId, c, data.ZoneParam.Name, result);
                     if (f == null) return false;
                     filters.Add(f);
                 }

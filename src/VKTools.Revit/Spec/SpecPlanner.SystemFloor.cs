@@ -126,7 +126,7 @@ namespace VKTools.Revit.Spec
                 if (sampledInsulation++ >= CandidateSamples) break;
                 AddTextCandidates(ins, candidates);
             }
-            foreach (ParamKey? key in new[] { sf.SystemParam, sf.FloorParam })
+            foreach (ParamKey? key in new[] { sf.SystemParam, sf.FloorParam, sf.ZoneParam })
             {
                 if (key != null && !candidates.ContainsKey(key)) candidates[key] = new ParamCandidate(key, "—");
             }
@@ -198,6 +198,7 @@ namespace VKTools.Revit.Spec
             }
 
             PlanRooms(sf, elements, insulations);
+            PlanZones(sf, elements, insulations);
             PlanOwnCopy(defaults);
 
             List<FloorRename> renames = sf.EffectiveFloors().ToList();

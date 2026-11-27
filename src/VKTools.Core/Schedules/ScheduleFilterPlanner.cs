@@ -200,8 +200,9 @@ namespace VKTools.Core.Schedules
         /// <summary>Больше фильтров окно «Свойства спецификации» не показывает: дальше спецификацию не поправить руками.</summary>
         public const int MaxFilters = 8;
 
-        private ScheduleFilterSet(FilterPlan systems, FilterPlan floors, int otherFilters, IReadOnlyList<FilterCondition> rooms)
+        private ScheduleFilterSet(FilterPlan systems, FilterPlan floors, int otherFilters, IReadOnlyList<FilterCondition> rooms, FilterPlan zones)
         {
+            Zones = zones;
             Systems = systems;
             Floors = floors;
             OtherFilters = otherFilters;
@@ -210,9 +211,10 @@ namespace VKTools.Core.Schedules
             SystemConditions = systems.All
                 ? new List<FilterCondition> { new FilterCondition(ConditionKind.HasParameter) }
                 : systems.Conditions.ToList();
-            Count = SystemConditions.Count + floors.Conditions.Count + rooms.Count + otherFilters;
+            Count = SystemConditions.Count + floors.Conditions.Count + rooms.Count + zones.Conditions.Count + otherFilters;
             if (systems.Error != null) Error = "системы: " + systems.Error;
             else if (floors.Error != null) Error = "этажи: " + floors.Error;
+            else if (zones.Error != null) Error = "зоны: " + zones.Error;
             else if (Count > MaxFilters)
             {
                 Error = $"нужно {Count} фильтров, а в спецификации Revit их не больше {MaxFilters}"
@@ -234,6 +236,9 @@ namespace VKTools.Core.Schedules
         /// </summary>
         public IReadOnlyList<FilterCondition> Rooms { get; }
 
+        /// <summary>По «Р_Зона» (0.17.6): выбраны все или зон в модели нет — фильтра нет.</summary>
+        public FilterPlan Zones { get; }
+
         public int OtherFilters { get; }
 
         public int Count { get; }
@@ -241,22 +246,29 @@ namespace VKTools.Core.Schedules
         public string? Error { get; }
 
         public static ScheduleFilterSet Build(IEnumerable<string> knownSystems, IEnumerable<string> systems,
-            IEnumerable<string> knownFloors, IEnumerable<string> floors, int otherFilters, IEnumerable<FilterCondition>? rooms = null)
+            IEnumerable<string> knownFloors, IEnumerable<string> floors, int otherFilters, IEnumerable<FilterCondition>? rooms = null,
+            IEnumerable<string>? knownZones = null, IEnumerable<string>? zones = null)
         {
+            List<string> zoneKnown = (knownZones ?? Array.Empty<string>()).ToList();
+            List<string> zoneChosen = (zones ?? zoneKnown).ToList();
+            FilterPlan zonePlan = zoneKnown.Count == 0 || zoneKnown.All(z => zoneChosen.Contains(z, StringComparer.Ordinal))
+                ? new FilterPlan(true, Array.Empty<FilterCondition>(), null)
+                : ScheduleFilterPlanner.Plan(zoneKnown, zoneChosen);
             List<string> floorKnown = knownFloors.ToList();
             List<string> floorChosen = floors.ToList();
             FilterPlan floorPlan = floorKnown.Count == 0 || floorKnown.All(f => floorChosen.Contains(f, StringComparer.Ordinal))
                 ? new FilterPlan(true, Array.Empty<FilterCondition>(), null)
                 : ScheduleFilterPlanner.Plan(floorKnown, floorChosen);
             return new ScheduleFilterSet(ScheduleFilterPlanner.Plan(knownSystems, systems), floorPlan, otherFilters,
-                (rooms ?? Array.Empty<FilterCondition>()).ToList());
+                (rooms ?? Array.Empty<FilterCondition>()).ToList(), zonePlan);
         }
 
-        public List<string> Describe(string systemField, string floorField, string roomField = Config.ParamProfile.RoomName)
+        public List<string> Describe(string systemField, string floorField, string roomField = Config.ParamProfile.RoomName, string zoneField = Config.ParamProfile.ZoneName)
         {
             var lines = SystemConditions.Select(c => c.Describe(systemField)).ToList();
             lines.AddRange(Floors.Conditions.Select(c => c.Describe(floorField)));
             lines.AddRange(Rooms.Select(c => c.Describe(roomField)));
+            lines.AddRange(Zones.Conditions.Select(c => c.Describe(zoneField)));
             return lines;
         }
     }
