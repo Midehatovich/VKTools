@@ -100,6 +100,7 @@ namespace VKTools.Revit.UI
                 Table.ShowIssues(issues);
                 List<string> lines = preview.ToList();
                 _preview.Text = lines.Count == 0 ? "Нажмите «Обновить»." : string.Join(Environment.NewLine, lines);
+                LoadPreview(lines);
             }
             finally
             {
@@ -116,6 +117,11 @@ namespace VKTools.Revit.UI
         protected abstract ParamKey? Param(SpecOptions options);
 
         protected abstract string TableText(SpecOptions options);
+
+        /// <summary>Строки превью по последнему анализу (для своих элементов вкладки).</summary>
+        protected virtual void LoadPreview(IReadOnlyList<string> lines)
+        {
+        }
 
         protected virtual void LoadOwn(SpecOptions options)
         {
@@ -290,6 +296,7 @@ namespace VKTools.Revit.UI
         private readonly RadioButton _sub;
         private readonly RadioButton _flat;
         private readonly ComboBox _param;
+        private readonly WrapPanel _schedules;
 
         public PositionsPanel(string documentTitle)
             : base("positions.csv", documentTitle,
@@ -327,6 +334,14 @@ namespace VKTools.Revit.UI
             modes.Children.Add(_sub);
             modes.Children.Add(_flat);
             Top.Children.Add(modes);
+            var pick = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+            var pickLabel = new TextBlock { Text = "Нумеровать", Width = 110, VerticalAlignment = VerticalAlignment.Top };
+            DockPanel.SetDock(pickLabel, Dock.Left);
+            pick.Children.Add(pickLabel);
+            _schedules = new WrapPanel();
+            _schedules.Children.Add(new TextBlock { Text = "оформленные спецификации появятся после «Обновить»", Foreground = Brushes.DimGray });
+            pick.Children.Add(_schedules);
+            Top.Children.Add(pick);
             Top.Children.Add(new TextBlock
             {
                 Text = "Запускайте последней, перед выпуском. Номера идут сверху вниз так, как строки стоят в таблице Revit; строки «!…» и без наименования номер не занимают. "
@@ -341,6 +356,34 @@ namespace VKTools.Revit.UI
         protected override ParamKey? Param(SpecOptions options) => options.Positions.PosParam;
 
         protected override string TableText(SpecOptions options) => options.Positions.Rules;
+
+        /// <summary>Галки оформленных спецификаций: снятая — строка «имя;не трогать» в таблице (и наоборот). Затем «Обновить».</summary>
+        protected override void LoadPreview(IReadOnlyList<string> lines)
+        {
+            _schedules.Children.Clear();
+            foreach (string line in lines)
+            {
+                if (!line.StartsWith("«", StringComparison.Ordinal)) continue;
+                int end = line.IndexOf("»:", StringComparison.Ordinal);
+                if (end < 1) continue;
+                string name = line.Substring(1, end - 1);
+                var box = new CheckBox
+                {
+                    Content = name,
+                    IsChecked = line.IndexOf("не трогается", end, StringComparison.Ordinal) < 0 && line.IndexOf("нет графы позиции", end, StringComparison.Ordinal) < 0,
+                    Margin = new Thickness(0, 0, 16, 2),
+                    ToolTip = "Снята — спецификация «не трогать» (строка в таблице ниже). После галки нажмите «Обновить».",
+                };
+                box.Click += (s, e) =>
+                {
+                    Table.CommitEdits();
+                    Table.Load(PositionSettings.Toggle(Table.Text(), name, box.IsChecked == true));
+                    RaiseChanged();
+                };
+                _schedules.Children.Add(box);
+            }
+            if (_schedules.Children.Count == 0) _schedules.Children.Add(new TextBlock { Text = "оформленных спецификаций нет", Foreground = Brushes.DimGray });
+        }
 
         protected override void LoadOwn(SpecOptions options)
         {

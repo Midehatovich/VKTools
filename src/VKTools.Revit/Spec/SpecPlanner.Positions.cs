@@ -68,21 +68,49 @@ namespace VKTools.Revit.Spec
             }
             var report = new CheckReport("Позиции", _doc.Title, DateTime.Now);
             int numbered = 0;
+            // Элементы нумеруемых спецификаций: общий элемент у двух получит номер последней — первая «поедет» (живая проверка 0.17.3)
+            var numberedSets = issued
+                .Where(v => PositionSettings.Match(rules, v.Name) is PositionRule r && r.Number)
+                .ToDictionary(v => v.Name, v => new HashSet<long>(new FilteredElementCollector(_doc, v.Id).WhereElementIsNotElementType().ToElementIds().Select(id => id.ToLong())), StringComparer.Ordinal);
             for (int s = 0; s < issued.Count; s++)
             {
                 ViewSchedule vs = issued[s];
                 _progress.Report($"Позиции: «{vs.Name}» ({s + 1} из {issued.Count})", s, issued.Count);
                 _progress.ThrowIfCancelled();
+                if (ps.OnlySchedules != null && !ps.OnlySchedules.Contains(vs.Name, StringComparer.Ordinal)) continue;
                 PositionRule? rule = PositionSettings.Match(rules, vs.Name);
                 if (rule == null || !rule.Number)
                 {
                     _plan.Preview.Add($"«{vs.Name}»: не трогается" + (rule != null ? $" (строка {rules.IndexOf(rule) + 1} таблицы, «{rule.Mask}»)" : " (нет строки в таблице)"));
                     continue;
                 }
+                if (SharedWithNumbered(vs.Name, numberedSets, skip: ps.OnlySchedules != null)) continue;
                 if (NumberSchedule(vs, posKey, ps.SubNumbers, report)) numbered++;
             }
             _plan.Notes.Add($"Позиции: оформленных спецификаций {issued.Count}, нумеруется {numbered}; параметр {posKey.Name}; "
                 + (ps.SubNumbers ? "вложенные через точку — сразу под родителем, «номер.N»" : "вложенные по порядку — где их ставит сортировка") + ".");
+        }
+
+        /// <summary>
+        /// Общие элементы с другими нумеруемыми спецификациями. При нумерации одной спецификации («Создать», шаг «Позиции») — пропуск:
+        /// иначе её номера перепишут номера той. В окне «Позиции» — предупреждение (номер останется от последней).
+        /// </summary>
+        /// <returns>true — спецификацию пропустить.</returns>
+        private bool SharedWithNumbered(string name, Dictionary<string, HashSet<long>> numberedSets, bool skip)
+        {
+            if (!numberedSets.TryGetValue(name, out HashSet<long>? own)) return false;
+            var shared = numberedSets.Where(kv => !string.Equals(kv.Key, name, StringComparison.Ordinal))
+                .Select(kv => (Name: kv.Key, Count: kv.Value.Count(own.Contains)))
+                .Where(x => x.Count > 0).ToList();
+            if (shared.Count == 0) return false;
+            string list = string.Join(", ", shared.Select(x => $"«{x.Name}» — {x.Count} эл."));
+            PlanIssue issue = _plan.AddIssue(SpecModule.Positions, Severity.Warning, string.Empty,
+                $"«{name}»: элементы есть и в других нумеруемых спецификациях: {list}" + (skip ? " — не нумеруется" : string.Empty), name);
+            issue.Action = skip
+                ? "Номера новой спецификации переписали бы номера той. Поставьте одной из них «не трогать» в окне «Позиции» или сузьте фильтры, затем «Позиции»."
+                : "У общего элемента один параметр позиции — останется номер последней спецификации. Поставьте одной из них «не трогать» (галка «Нумеровать»).";
+            if (skip) _plan.Preview.Add($"«{name}»: не нумеруется — элементы уже в нумеруемых: {list}");
+            return skip;
         }
 
         /// <returns>true — спецификация пронумерована (изменения добавлены в план).</returns>

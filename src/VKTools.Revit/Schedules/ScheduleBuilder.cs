@@ -584,7 +584,21 @@ namespace VKTools.Revit.Schedules
                     fields.Add(old);
                 }
             }
-            definition.SetSortGroupFields(fields);
+            // Revit 2022 и раньше держит не больше 4 ключей: лишние с конца снимаются (с заметкой)
+            while (true)
+            {
+                try
+                {
+                    definition.SetSortGroupFields(fields);
+                    return;
+                }
+                catch (Autodesk.Revit.Exceptions.ApplicationException) when (fields.Count > 1)
+                {
+                    ScheduleSortGroupField last = fields[fields.Count - 1];
+                    result.Notes.Add($"ключ сортировки «{definition.GetField(last.FieldId).GetName()}» снят: Revit держит не больше 4 ключей");
+                    fields.RemoveAt(fields.Count - 1);
+                }
+            }
         }
     }
 }

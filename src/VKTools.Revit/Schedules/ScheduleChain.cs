@@ -21,6 +21,9 @@ namespace VKTools.Revit.Schedules
         PipeReserve,
         PipeNames,
         Vendor,
+
+        /// <summary>Позиции новой спецификации — последним: номера зависят от наименований и марок.</summary>
+        Positions,
     }
 
     internal sealed class ChainStepResult
@@ -49,7 +52,7 @@ namespace VKTools.Revit.Schedules
     /// </summary>
     internal static class ScheduleChain
     {
-        public static readonly IReadOnlyList<ChainStep> Order = new[] { ChainStep.Insulation, ChainStep.Grouping, ChainStep.Calc, ChainStep.PipeReserve, ChainStep.PipeNames, ChainStep.Vendor };
+        public static readonly IReadOnlyList<ChainStep> Order = new[] { ChainStep.Insulation, ChainStep.Grouping, ChainStep.Calc, ChainStep.PipeReserve, ChainStep.PipeNames, ChainStep.Vendor, ChainStep.Positions };
 
         public static string Title(ChainStep step) => step switch
         {
@@ -58,6 +61,7 @@ namespace VKTools.Revit.Schedules
             ChainStep.Calc => "Расчётные позиции",
             ChainStep.PipeReserve => "Запас труб",
             ChainStep.Vendor => "Марки и поставщики",
+            ChainStep.Positions => "Позиции",
             _ => "Имена труб",
         };
 
@@ -65,6 +69,7 @@ namespace VKTools.Revit.Schedules
         {
             progress.ThrowIfCancelled();
             if (step == ChainStep.Calc) return RunCalc(doc, scheduleName, progress, timings);
+            if (step == ChainStep.Positions) return RunPositions(doc, scheduleName, progress, timings);
             SpecModule module = step switch
             {
                 ChainStep.Insulation => SpecModule.Insulation,
@@ -83,6 +88,22 @@ namespace VKTools.Revit.Schedules
             (SpecOptions options, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, module);
             ParamPlan plan = SpecPlanner.Build(doc, options, defaults, null, progress, timings);
             return Apply(doc, plan, options.SavedInProject, title, progress, timings);
+        }
+
+        /// <summary>Позиции только новой спецификации, с настройкой окна «Позиции» (режим вложенных, таблица «не трогать»).</summary>
+        private static ChainStepResult RunPositions(Document doc, string scheduleName, IOperationProgress progress, OperationTimings timings)
+        {
+            string title = Title(ChainStep.Positions);
+            progress.Report(title + ": анализ…");
+            (SpecOptions options, SpecDefaults defaults) = SpecSettingsLoader.Load(doc, SpecModule.Positions);
+            PositionSettings ps = options.Positions.Clone();
+            ps.OnlySchedules = new[] { scheduleName };
+            options.Positions = ps;
+            ParamPlan plan = SpecPlanner.Build(doc, options, defaults, null, progress, timings);
+            ChainStepResult result = Apply(doc, plan, options.SavedInProject, title, progress, timings);
+            string? line = plan.Preview.FirstOrDefault();
+            if (line != null && result.Error == null) result.Summary += " " + line;
+            return result;
         }
 
         /// <summary>Записать готовый план (без окна). Ошибка записи — в <see cref="ChainStepResult.Error"/>.</summary>

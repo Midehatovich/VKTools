@@ -63,6 +63,9 @@ namespace VKTools.Core.Spec
 
         public string Rules { get; set; } = DefaultRules;
 
+        /// <summary>Только эти спецификации (шаг «Позиции» в «Создать спецификацию» — новая). Не хранится в модели; null — все по таблице.</summary>
+        public IReadOnlyCollection<string>? OnlySchedules { get; set; }
+
         public static PositionSettings Default() => new PositionSettings { PosParam = ParamProfile.TargetKey(ParamRole.Position) };
 
         public PositionSettings Clone() => (PositionSettings)MemberwiseClone();
@@ -147,6 +150,29 @@ namespace VKTools.Core.Spec
                 result.Add(new PositionRule(mask, number, row.LineNumber));
             }
             return result;
+        }
+
+        /// <summary>
+        /// Галка спецификации в окне: убрать строки с её точным именем и, если по оставшимся правилам режим другой, вставить строку
+        /// «имя;с 1» или «имя;не трогать» сразу под заголовком (первой — она главнее масок).
+        /// </summary>
+        public static string Toggle(string rules, string scheduleName, bool number)
+        {
+            string text = (rules ?? string.Empty).TrimStart('\uFEFF').Replace("\r\n", "\n");
+            var lines = text.Split('\n').ToList();
+            int header = lines.FindIndex(l => l.TrimStart().StartsWith(MaskColumn + ";", StringComparison.Ordinal));
+            if (header < 0)
+            {
+                lines = DefaultRules.TrimEnd('\n').Split('\n').ToList();
+                header = lines.FindIndex(l => l.StartsWith(MaskColumn + ";", StringComparison.Ordinal));
+            }
+            string quoted = (scheduleName.IndexOf(';') >= 0 || scheduleName.IndexOf('"') >= 0) ? "\"" + scheduleName.Replace("\"", "\"\"") + "\"" : scheduleName;
+            lines = lines.Where((l, i) => i <= header || !(l.StartsWith(quoted + ";", StringComparison.Ordinal))).ToList();
+            string rest = string.Join("\n", lines);
+            PositionRule? now = Match(ParseRules(rest, new List<ConfigIssue>()), scheduleName);
+            bool current = now != null && now.Number;
+            if (current != number) lines.Insert(header + 1, $"{quoted};{(number ? NumberMode : KeepMode)};галка в окне");
+            return string.Join("\n", lines).TrimEnd('\n') + "\n";
         }
 
         /// <summary>Первое подходящее правило сверху; null — спецификация не упомянута (не трогается).</summary>
