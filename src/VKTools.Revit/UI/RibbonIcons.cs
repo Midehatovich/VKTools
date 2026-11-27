@@ -69,6 +69,10 @@ namespace VKTools.Revit.UI
         public static ImageSource Positions(int size) =>
             Draw(size, Green, "M 7,9 L 9,7 L 9,13 M 7,17 L 11,17 L 7,23 L 11,23 M 15,8 L 25,8 M 15,15 L 25,15 M 15,22 L 25,22");
 
+        /// <summary>«Подготовить и собрать»: три шага-стрелки подряд.</summary>
+        public static ImageSource Prepare(int size) =>
+            Draw(size, Violet, "M 5,10 L 9,16 L 5,22 M 13,10 L 17,16 L 13,22 M 21,10 L 25,16 L 21,22");
+
         public static ImageSource CheckSchedule(int size) =>
             Draw(size, Blue, "M 5,7 L 21,7 L 21,25 L 5,25 Z M 5,12 L 21,12 M 10,7 L 10,25 M 17,19 L 21,23 L 28,14");
 

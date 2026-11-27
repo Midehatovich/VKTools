@@ -225,6 +225,18 @@ namespace VKTools.Revit
                 Image = RibbonIcons.Schedule(16),
             };
             schedules.AddItem(createSchedule);
+            var prepare = new PushButtonData("VKTools.Prepare", "Подготовить\nи собрать", assembly, typeof(PrepareCommand).FullName)
+            {
+                ToolTip = "Все шаги выпуска по порядку одной операцией: система и этаж, изоляция, группирование, имена труб, марки, запас, "
+                    + "расчётные позиции, позиции, фильтры созданных спецификаций; затем проверка спецификаций.",
+                LongDescription =
+                    "Настройки каждого шага — сохранённые в модели. Снятая галка = «не трогать» (выбор хранится в модели). " +
+                    "В конце отчёт по шагам: «Записать» (одна отмена Ctrl+Z) или «Откатить»; при ошибке можно записать прошедшие шаги.",
+                AvailabilityClassName = typeof(ProjectDocumentAvailability).FullName,
+                LargeImage = RibbonIcons.Prepare(32),
+                Image = RibbonIcons.Prepare(16),
+            };
+            schedules.AddItem(prepare);
 
             RibbonPanel service = application.CreateRibbonPanel(TabName, "Сервис");
             var settings = new PushButtonData("VKTools.Settings", "Настройки", assembly, typeof(SettingsCommand).FullName)
