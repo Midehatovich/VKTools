@@ -71,6 +71,7 @@ namespace VKTools.Revit.Commands
 
                     string? failed = null;
                     var done = new List<string>();
+                    var skippedSteps = new List<string>();
                     try
                     {
                         using (var progress = new ProgressScope(app, "подготовить и собрать"))
@@ -86,6 +87,7 @@ namespace VKTools.Revit.Commands
                                     break;
                                 }
                                 done.Add(result.Title);
+                                if (result.Skipped) skippedSteps.Add(result.Title);
                             }
                             if (failed == null && window.UpdateSchedules)
                             {
@@ -117,13 +119,16 @@ namespace VKTools.Revit.Commands
 
                     var confirm = new TaskDialog("VK Tools: подготовить и собрать")
                     {
-                        MainInstruction = failed == null ? "Все шаги прошли — записать?" : $"Ошибка на шаге «{failed}»",
+                        MainInstruction = failed != null ? $"Ошибка на шаге «{failed}»"
+                            : skippedSteps.Count > 0 ? $"Пропущено шагов: {skippedSteps.Count} ({string.Join(", ", skippedSteps)}) — остальное записать?"
+                            : "Все шаги прошли — записать?",
                         MainContent = string.Join("\n\n", report),
                         CommonButtons = TaskDialogCommonButtons.None,
                     };
                     if (failed == null)
                     {
-                        confirm.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Записать", "Все шаги — одна операция, отменяется одним Ctrl+Z");
+                        confirm.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Записать",
+                            (skippedSteps.Count > 0 ? "Пропущенные шаги ничего не пишут (причина — в отчёте выше). " : string.Empty) + "Одна операция, отменяется одним Ctrl+Z");
                     }
                     else if (done.Count > 0)
                     {
