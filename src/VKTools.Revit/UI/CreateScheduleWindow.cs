@@ -30,6 +30,7 @@ namespace VKTools.Revit.UI
         private readonly ScheduleModelData _data;
         private readonly Dictionary<string, CheckBox> _systemBoxes = new Dictionary<string, CheckBox>(StringComparer.Ordinal);
         private readonly Dictionary<string, CheckBox> _floorBoxes = new Dictionary<string, CheckBox>(StringComparer.Ordinal);
+        private readonly Dictionary<string, CheckBox> _zoneBoxes = new Dictionary<string, CheckBox>(StringComparer.Ordinal);
         private readonly Dictionary<string, RadioButton> _systemPresets = new Dictionary<string, RadioButton>(StringComparer.Ordinal);
         private readonly Dictionary<string, RadioButton> _floorPresets = new Dictionary<string, RadioButton>(StringComparer.Ordinal);
         private readonly ComboBox _firstFloor;
@@ -147,6 +148,33 @@ namespace VKTools.Revit.UI
                     Foreground = Brushes.DimGray,
                     TextWrapping = TextWrapping.Wrap,
                     Margin = new Thickness(0, 4, 0, 0),
+                });
+            }
+
+            // Зоны (0.17.6): «Р_Зона» из помещения, этажа или своей разметки
+            var zonePanel = new StackPanel();
+            body.Children.Add(new GroupBox { Header = "Зоны", Content = zonePanel, Padding = new Thickness(6), Margin = new Thickness(0, 0, 0, 8) });
+            if (data.Zones.Count > 0)
+            {
+                zonePanel.Children.Add(new TextBlock
+                {
+                    Text = $"Отметьте зоны этой спецификации (по «{data.ZoneParam.Name}», источник в «Система и этаж»: {data.ZoneSourceText}). Все отмечены — фильтра по зоне нет."
+                        + (data.WithoutZone > 0 ? $" Без зоны {data.WithoutZone} эл. — в спецификацию с выбором зон они не попадут." : string.Empty),
+                    Foreground = data.WithoutZone > 0 ? Brushes.DarkRed : Brushes.DimGray,
+                    TextWrapping = TextWrapping.Wrap,
+                });
+                ScrollViewer zoneList = BoxList(data.Zones.Select(z => (z, z, data.ZoneCounts[z])), _zoneBoxes, () => Recompute(), null);
+                foreach (CheckBox box in _zoneBoxes.Values) box.IsChecked = true;
+                zonePanel.Children.Add(zoneList);
+            }
+            else
+            {
+                zonePanel.Children.Add(new TextBlock
+                {
+                    Text = $"«{data.ZoneParam.Name}» не заполнен ни у одного элемента. Чтобы делить спецификации по зонам (например «Насосная», «Ниже 0,000», «Паркинг»), "
+                        + "выберите источник зоны в окне «Система и этаж» (помещение, этаж или свой параметр) и запустите его.",
+                    Foreground = Brushes.DimGray,
+                    TextWrapping = TextWrapping.Wrap,
                 });
             }
 
@@ -441,6 +469,7 @@ namespace VKTools.Revit.UI
                 Room = SelectedRoom?.Key ?? string.Empty,
                 RoomTitle = SelectedRoom?.Title ?? string.Empty,
                 RoomExclusive = SelectedRoom != null && _roomOnly?.IsChecked == true,
+                Zones = _zoneBoxes.Count > 0 && _zoneBoxes.Values.Any(b => b.IsChecked != true) ? Checked(_zoneBoxes) : new List<string>(),
             };
         }
 
@@ -467,10 +496,11 @@ namespace VKTools.Revit.UI
                     ? "ни один этаж не подходит: выберите «Первый этаж»"
                     : "этажи не выбраны";
             }
+            if (problem == null && _zoneBoxes.Count > 0 && Checked(_zoneBoxes).Count == 0) problem = "зоны не выбраны";
             if (problem == null && name.Length == 0) problem = "задайте название";
             if (problem == null && _data.ViewNames.Contains(name)) problem = $"вид «{name}» уже есть в модели — измените название (созданные кнопкой обновляются ниже)";
 
-            int count = _data.Count(systems, set.Systems.All, floors, set.Floors.All, set.Rooms);
+            int count = _data.Count(systems, set.Systems.All, floors, set.Floors.All, set.Rooms, set.Zones.Conditions);
             var lines = new List<string>
             {
                 $"Попадёт элементов ВК: {count.ToString(CultureInfo.CurrentCulture)} (без расчётных позиций). Название: «{name}».",
@@ -478,7 +508,7 @@ namespace VKTools.Revit.UI
             if (set.Error == null)
             {
                 lines.Add($"Фильтры ({set.Count} из {ScheduleFilterSet.MaxFilters}" + (set.OtherFilters > 0 ? $", из них эталона {set.OtherFilters}" : string.Empty) + "): "
-                    + string.Join("; ", set.Describe(_data.SystemParam.Name, _data.FloorParam.Name, _data.RoomParam.Name)) + ".");
+                    + string.Join("; ", set.Describe(_data.SystemParam.Name, _data.FloorParam.Name, _data.RoomParam.Name, _data.ZoneParam.Name)) + ".");
             }
             if (request.IsRoom && request.RoomExclusive)
             {

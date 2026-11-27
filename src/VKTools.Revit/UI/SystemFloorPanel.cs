@@ -81,6 +81,9 @@ namespace VKTools.Revit.UI
         };
 
         private const string NoMirror = "— не писать —";
+        private const string ZoneNone = "— не писать —";
+        private const string ZoneRoom = "помещение АР (как «Р_Номер помещения»)";
+        private const string ZoneFloor = "этаж (как параметр этажа)";
 
         private readonly CheckBox _writeSystem;
         private readonly ComboBox _systemParam;
@@ -89,6 +92,7 @@ namespace VKTools.Revit.UI
         private readonly ComboBox _floorParam;
         private readonly CheckBox _insulation;
         private readonly CheckBox _writeRoom;
+        private readonly ComboBox _zone;
         private readonly CheckBox _chainNested;
         private readonly TextBlock _nestedNote;
         private readonly WrapPanel _categoryPanel;
@@ -136,6 +140,16 @@ namespace VKTools.Revit.UI
                 Margin = new Thickness(0, 0, 0, 4),
             };
             top.Children.Add(_writeRoom);
+            var zone = new WrapPanel { Margin = new Thickness(0, 0, 0, 6) };
+            zone.Children.Add(new TextBlock { Text = $"Писать «{Core.Config.ParamProfile.ZoneName}» из", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0), Width = 150 });
+            _zone = new ComboBox
+            {
+                Width = 360,
+                ToolTip = "Зона — для «Создать спецификацию» по зонам (например «Насосная», «Ниже 0,000», «Паркинг»): помещение АР, этаж или любой текстовый параметр "
+                    + "с вашей разметкой (ADSK_Группирование и т. п.; экземпляра, иначе типа). Вложенные получают зону родителя, изоляция — основы.",
+            };
+            zone.Children.Add(_zone);
+            top.Children.Add(zone);
             _chainNested = new CheckBox { Content = "Затем перенести во вложенные в той же операции", Margin = new Thickness(0, 0, 0, 0) };
             top.Children.Add(_chainNested);
             _nestedNote = new TextBlock { Foreground = Brushes.DimGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(20, 0, 0, 6) };
@@ -189,6 +203,7 @@ namespace VKTools.Revit.UI
             _systemParam.SelectionChanged += (s, e) => RaiseChanged();
             _floorParam.SelectionChanged += (s, e) => RaiseChanged();
             _mirrorParam.SelectionChanged += (s, e) => RaiseChanged();
+            _zone.SelectionChanged += (s, e) => RaiseChanged();
         }
 
         /// <summary>Пользователь поменял настройку (не загрузка).</summary>
@@ -207,7 +222,7 @@ namespace VKTools.Revit.UI
                     if (_options.Any(o => o.Key.Equals(c.Key))) continue;
                     _options.Add(new ParamOption(c.Key, c.Nested > 0 ? $"{c.Name} ({c.KindText})" : $"{c.Name} ({c.KindText}, в модели не найден)"));
                 }
-                foreach (ParamKey? key in new[] { sf.SystemParam, sf.FloorParam, sf.MirrorParam })
+                foreach (ParamKey? key in new[] { sf.SystemParam, sf.FloorParam, sf.MirrorParam, sf.ZoneParam })
                 {
                     if (key != null && !_options.Any(o => o.Key.Equals(key))) _options.Add(new ParamOption(key, $"{key.Name} ({key.KindText})"));
                 }
@@ -218,6 +233,16 @@ namespace VKTools.Revit.UI
                 mirrorItems.AddRange(_options);
                 _mirrorParam.ItemsSource = mirrorItems;
                 _mirrorParam.SelectedItem = sf.MirrorParam == null ? NoMirror : (object?)_options.FirstOrDefault(o => o.Key.Equals(sf.MirrorParam)) ?? NoMirror;
+                var zoneItems = new List<object> { ZoneNone, ZoneRoom, ZoneFloor };
+                zoneItems.AddRange(_options.Where(o => o.Key.Name != Core.Config.ParamProfile.ZoneName));
+                _zone.ItemsSource = zoneItems;
+                _zone.SelectedItem = sf.Zone switch
+                {
+                    ZoneSource.Room => ZoneRoom,
+                    ZoneSource.Floor => ZoneFloor,
+                    ZoneSource.Param => (object?)_options.FirstOrDefault(o => o.Key.Equals(sf.ZoneParam)) ?? ZoneNone,
+                    _ => ZoneNone,
+                };
                 _writeSystem.IsChecked = sf.WriteSystem;
                 _writeFloor.IsChecked = sf.WriteFloor;
                 _insulation.IsChecked = sf.Insulation;
@@ -260,6 +285,9 @@ namespace VKTools.Revit.UI
             sf.WriteFloor = _writeFloor.IsChecked == true;
             sf.Insulation = _insulation.IsChecked == true;
             sf.WriteRoom = _writeRoom.IsChecked == true;
+            object? zone = _zone.SelectedItem;
+            sf.Zone = zone is ParamOption ? ZoneSource.Param : Equals(zone, ZoneRoom) ? ZoneSource.Room : Equals(zone, ZoneFloor) ? ZoneSource.Floor : ZoneSource.None;
+            sf.ZoneParam = (zone as ParamOption)?.Key;
             sf.ChainNested = _chainNested.IsChecked == true;
             sf.Categories = _categories.Where(c => c.Box.IsChecked == true).Select(c => c.Name).ToList();
             sf.Floors = _rows.Where(r => r.Value.Length > 0).Select(r => new FloorRename(r.Level, r.Value)).ToList();

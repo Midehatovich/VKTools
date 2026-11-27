@@ -36,6 +36,9 @@ namespace VKTools.Core.Config
 
         /// <summary>Ключ сортировки позиций (0.17.1): скрытая графа, ставит детали сразу под родителем. Один параметр в обоих наборах.</summary>
         PositionKey,
+
+        /// <summary>Зона (0.17.6): помещение, этаж или своя разметка (например ADSK_Группирование на ПТ) — фильтр спецификации. Один параметр в обоих наборах.</summary>
+        Zone,
     }
 
     /// <summary>Своё определение параметра VK Tools: имя, GUID (навсегда), тип данных ФОП.</summary>
@@ -87,6 +90,10 @@ namespace VKTools.Core.Config
 
         public static readonly Guid PositionKeyGuid = new Guid("61792ade-3418-4002-9f74-987949c17776");
 
+        public const string ZoneName = "Р_Зона";
+
+        public static readonly Guid ZoneGuid = new Guid("f588375a-0e8a-4412-85a1-5de830efadbe");
+
         public static readonly IReadOnlyList<OwnParamDef> OwnDefinitions = new[]
         {
             new OwnParamDef(ParamRole.Position, "Р_Позиция", new Guid("876103ca-8bd4-4792-8f2f-02e29d454967"), false, "VK Tools: позиция (копия ADSK_Позиция)"),
@@ -103,6 +110,7 @@ namespace VKTools.Core.Config
             new OwnParamDef(ParamRole.System, "Р_Сокращение системы", new Guid("e7686104-a64d-4e99-8466-9fef98d7e175"), false, "VK Tools: сокращение системы для фильтров спецификаций"),
             new OwnParamDef(ParamRole.Room, RoomName, RoomGuid, false, "VK Tools: помещение АР (номер; при повторе номера — с именем) для спецификации по помещению"),
             new OwnParamDef(ParamRole.PositionKey, PositionKeyName, PositionKeyGuid, false, "VK Tools: ключ сортировки позиций (скрытая графа; деталь сразу под родителем)"),
+            new OwnParamDef(ParamRole.Zone, ZoneName, ZoneGuid, false, "VK Tools: зона для фильтра спецификации (помещение, этаж или своя разметка)"),
         };
 
         /// <summary>
@@ -145,6 +153,7 @@ namespace VKTools.Core.Config
             // У ADSK_ своего параметра помещения нет: в обоих наборах — «Р_Номер помещения»
             [ParamRole.Room] = new ParameterRef(RoomName, RoomGuid),
             [ParamRole.PositionKey] = new ParameterRef(PositionKeyName, PositionKeyGuid),
+            [ParamRole.Zone] = new ParameterRef(ZoneName, ZoneGuid),
         };
 
         /// <summary>Роли, значения которых «Система и этаж» копирует из ADSK_* (остальные считает плагин).</summary>

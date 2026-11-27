@@ -27,11 +27,11 @@ namespace VKTools.Core.Tests
         [Fact]
         public void Свои_параметры_кириллица_уникальные_GUID_и_имена()
         {
-            Assert.Equal(14, ParamProfile.OwnDefinitions.Count);
+            Assert.Equal(15, ParamProfile.OwnDefinitions.Count);
             Assert.All(ParamProfile.OwnDefinitions, d => Assert.StartsWith("Р_", d.Name));
             Assert.All(ParamProfile.OwnDefinitions, d => Assert.Equal('Р', d.Name[0]));   // кириллическая «Р», не латинская «P»
-            Assert.Equal(14, ParamProfile.OwnDefinitions.Select(d => d.Guid).Distinct().Count());
-            Assert.Equal(14, ParamProfile.OwnDefinitions.Select(d => d.Role).Distinct().Count());
+            Assert.Equal(15, ParamProfile.OwnDefinitions.Select(d => d.Guid).Distinct().Count());
+            Assert.Equal(15, ParamProfile.OwnDefinitions.Select(d => d.Role).Distinct().Count());
             Assert.DoesNotContain(ParamProfile.OwnDefinitions, d => d.Guid == KnownParameters.VkSystem.Guid);
             Assert.True(ParamProfile.Own(ParamRole.Quantity).Number);
             Assert.True(ParamProfile.Own(ParamRole.Mass).Number);

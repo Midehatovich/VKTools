@@ -266,7 +266,7 @@ namespace VKTools.Revit.UI
 
         private static string SystemFloorText(SystemFloorSettings sf) =>
             $"система → {(sf.WriteSystem ? sf.SystemParam?.Name ?? "не выбран" : "не пишется")}, этаж → {(sf.WriteFloor ? sf.FloorParam?.Name ?? "не выбран" : "не пишется")}, "
-            + $"изоляция {(sf.Insulation ? "да" : "нет")}, помещения {(sf.WriteRoom ? "да" : "нет")}, перенос во вложенные {(sf.ChainNested ? "да" : "нет")}, категорий {sf.Categories.Count}, "
+            + $"изоляция {(sf.Insulation ? "да" : "нет")}, помещения {(sf.WriteRoom ? "да" : "нет")}, зона {sf.ZoneText()}, перенос во вложенные {(sf.ChainNested ? "да" : "нет")}, категорий {sf.Categories.Count}, "
             + $"переименований уровней {sf.EffectiveFloors().Count()}";
 
         internal static void LogPlan(Document doc, ParamPlan plan, OperationTimings timings)

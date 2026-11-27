@@ -21,6 +21,22 @@ namespace VKTools.Core.Spec
         public string Value { get; }
     }
 
+    /// <summary>Откуда «Система и этаж» берёт «Р_Зона» (0.17.6).</summary>
+    public enum ZoneSource
+    {
+        /// <summary>Не писать (по умолчанию).</summary>
+        None,
+
+        /// <summary>Помещение АР — то же значение, что «Р_Номер помещения».</summary>
+        Room,
+
+        /// <summary>Этаж — то же значение, что параметр этажа.</summary>
+        Floor,
+
+        /// <summary>Своя разметка: любой текстовый параметр элемента (экземпляра, иначе типа), например ADSK_Группирование.</summary>
+        Param,
+    }
+
     /// <summary>
     /// Настройка «Система и этаж» (Р4, порт NestedParamSync v2.1, шаги 1, 1б, 2): какие параметры писать, каким категориям,
     /// изоляция от основы, переименование уровней и перенос во вложенные той же операцией. Хранится в модели (ключи sf.*).
@@ -46,6 +62,7 @@ namespace VKTools.Core.Spec
         private const string CategoriesKey = "sf.categories";
         private const string FloorsKey = "sf.floors";
         private const string MirrorKey = "sf.mirrorParam";
+        private const string ZoneKey = "sf.zone";
 
         public ParamKey? SystemParam { get; set; }
 
@@ -66,6 +83,15 @@ namespace VKTools.Core.Spec
         /// Помещений нет нигде — ничего не пишется.
         /// </summary>
         public bool WriteRoom { get; set; } = true;
+
+        /// <summary>
+        /// «Р_Зона» (0.17.6): из помещения, этажа или своего параметра — для фильтра «Создать спецификацию» по зонам
+        /// (ПТ Пушкарева: «Насосная», «Ниже 0,000», «Выше 0,000», «Паркинг» из ADSK_Группирование). Вложенные — зона родителя, изоляция — основы.
+        /// </summary>
+        public ZoneSource Zone { get; set; } = ZoneSource.None;
+
+        /// <summary>Параметр-источник при <see cref="ZoneSource.Param"/>.</summary>
+        public ParamKey? ZoneParam { get; set; }
 
         /// <summary>Изоляция труб получает систему и этаж своей основы.</summary>
         public bool Insulation { get; set; } = true;
@@ -90,11 +116,25 @@ namespace VKTools.Core.Spec
             && (SystemParam.Guid == KnownParameters.VkSystem.Guid || ParamProfile.OwnDefinitions.Any(d => d.Guid == SystemParam.Guid));
 
         /// <summary>Нужны свои параметры VK Tools в проекте (их плагин добавляет сам).</summary>
-        public bool NeedsVkParameters => (WriteSystem && UsesVkSystem) || WriteRoom;
+        public bool NeedsVkParameters => (WriteSystem && UsesVkSystem) || WriteRoom || WritesZone;
+
+        /// <summary>Зона пишется: источник выбран (для «параметра» — и сам параметр).</summary>
+        public bool WritesZone => Zone == ZoneSource.Room || Zone == ZoneSource.Floor || (Zone == ZoneSource.Param && ZoneParam != null);
+
+        /// <summary>«помещение АР», «этаж», «параметр ADSK_Группирование» — для отчёта и окна.</summary>
+        public string ZoneText() => Zone switch
+        {
+            ZoneSource.Room => "помещение АР",
+            ZoneSource.Floor => "этаж",
+            ZoneSource.Param => ZoneParam == null ? "параметр не выбран" : "параметр «" + ZoneParam.Name + "»",
+            _ => "не писать",
+        };
 
         public SystemFloorSettings Clone() => new SystemFloorSettings
         {
             WriteRoom = WriteRoom,
+            Zone = Zone,
+            ZoneParam = ZoneParam,
             SystemParam = SystemParam,
             FloorParam = FloorParam,
             MirrorParam = MirrorParam,
@@ -111,7 +151,7 @@ namespace VKTools.Core.Spec
             Floors.Where(f => f.Level.Length > 0 && f.Value.Length > 0 && f.Value != f.Level);
 
         public string Signature() =>
-            $"{SystemParam?.Id}|{FloorParam?.Id}|{MirrorParam?.Id}|{Flags()}|"
+            $"{SystemParam?.Id}|{FloorParam?.Id}|{MirrorParam?.Id}|{Flags()}|{ZoneValue()}|"
             + string.Join(",", Categories.OrderBy(c => c, StringComparer.Ordinal)) + "|"
             + string.Join("\n", EffectiveFloors().OrderBy(f => f.Level, StringComparer.Ordinal).Select(f => f.Level + "\t" + f.Value));
 
@@ -128,18 +168,28 @@ namespace VKTools.Core.Spec
 
         private static string B(bool value) => value ? "1" : "0";
 
+        private string ZoneValue() => Zone switch
+        {
+            ZoneSource.Room => "room",
+            ZoneSource.Floor => "floor",
+            ZoneSource.Param => "param" + (ZoneParam == null ? string.Empty : ";" + ZoneParam.Id + ";" + ZoneParam.Name),
+            _ => string.Empty,
+        };
+
         /// <summary>Положить в настройки проекта; совпадает с умолчанием — ключи удаляются.</summary>
         public void StoreTo(SpecProjectSettings settings, bool isDefault)
         {
             if (isDefault)
             {
-                foreach (string key in new[] { SystemKey, FloorKey, FlagsKey, CategoriesKey, FloorsKey, MirrorKey }) settings.Set(key, null);
+                foreach (string key in new[] { SystemKey, FloorKey, FlagsKey, CategoriesKey, FloorsKey, MirrorKey, ZoneKey }) settings.Set(key, null);
                 return;
             }
             settings.Set(SystemKey, SystemParam == null ? string.Empty : SystemParam.Id + ";" + SystemParam.Name);
             settings.Set(FloorKey, FloorParam == null ? string.Empty : FloorParam.Id + ";" + FloorParam.Name);
             settings.Set(MirrorKey, MirrorParam == null ? string.Empty : MirrorParam.Id + ";" + MirrorParam.Name);
             settings.Set(FlagsKey, Flags());
+            string zone = ZoneValue();
+            settings.Set(ZoneKey, zone.Length == 0 ? null : zone);
             settings.Set(CategoriesKey, string.Join(",", Categories));
             List<FloorRename> floors = EffectiveFloors().ToList();
             settings.Set(FloorsKey, floors.Count == 0 ? null
@@ -172,6 +222,15 @@ namespace VKTools.Core.Spec
                     case "nested": result.ChainNested = on; break;
                     case "room": result.WriteRoom = on; break;
                 }
+            }
+            string zone = settings.Get(ZoneKey) ?? string.Empty;
+            if (zone == "room") result.Zone = ZoneSource.Room;
+            else if (zone == "floor") result.Zone = ZoneSource.Floor;
+            else if (zone.StartsWith("param", StringComparison.Ordinal))
+            {
+                result.Zone = ZoneSource.Param;
+                string rest = zone.Length > 6 ? zone.Substring(6) : string.Empty;
+                result.ZoneParam = ParseKey(rest, "параметр зоны", issues, ref ok);
             }
             string? categories = settings.Get(CategoriesKey);
             if (categories != null)

@@ -101,6 +101,20 @@ namespace VKTools.Revit.Schedules
             ? new List<FilterCondition> { new FilterCondition(ConditionKind.Equal, request.Room) }
             : ExcludedRooms.Select(r => new FilterCondition(ConditionKind.NotEqual, r)).ToList();
 
+        /// <summary>«Р_Зона» (0.17.6, в обоих наборах): фильтр по зонам.</summary>
+        public ParamKey ZoneParam { get; } = ParamKey.Shared(ParamProfile.ZoneName, ParamProfile.ZoneGuid);
+
+        /// <summary>Непустые значения «Р_Зона» у элементов ВК (естественный порядок).</summary>
+        public List<string> Zones { get; } = new List<string>();
+
+        public Dictionary<string, int> ZoneCounts { get; } = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        /// <summary>Элементов без зоны, когда зоны в модели есть: в спецификацию с выбором зон они не попадут.</summary>
+        public int WithoutZone { get; set; }
+
+        /// <summary>Откуда «Система и этаж» берёт зону — для подсказки окна.</summary>
+        public string ZoneSourceText { get; set; } = "не писать";
+
         public ParamKey SystemParam { get; set; } = ParamKey.Shared(KnownParameters.LsrSystemName.Name, KnownParameters.LsrSystemName.Guid);
 
         public ParamKey FloorParam { get; set; } = ParamKey.Shared(KnownParameters.AdskLevel.Name, KnownParameters.AdskLevel.Guid);
@@ -122,7 +136,7 @@ namespace VKTools.Revit.Schedules
         public bool IsReplaced(Document doc, ElementId parameterId)
         {
             if (ScheduleFields.Is(doc, parameterId, SystemParam) || ScheduleFields.Is(doc, parameterId, FloorParam)) return true;
-            if (ScheduleFields.Is(doc, parameterId, RoomParam)) return true;
+            if (ScheduleFields.Is(doc, parameterId, RoomParam) || ScheduleFields.Is(doc, parameterId, ZoneParam)) return true;
             if (MirrorParam != null && ScheduleFields.Is(doc, parameterId, MirrorParam)) return true;
             // Свой набор «Р_»: фильтры эталона КрМа3 по ADSK_Этаж, VK_Сокращение системы и LSR_* тоже снимаются
             if (ParamProfile.IsOwn && doc.GetElement(parameterId) is SharedParameterElement shared
@@ -142,7 +156,7 @@ namespace VKTools.Revit.Schedules
         public List<FloorInfo> Floors { get; } = new List<FloorInfo>();
 
         /// <summary>Элементов на пару «система → этаж» (пустое — без значения): для подсчёта в окне.</summary>
-        public Dictionary<(string System, string Floor, string Room), int> Pairs { get; } = new Dictionary<(string, string, string), int>();
+        public Dictionary<(string System, string Floor, string Room, string Zone), int> Pairs { get; } = new Dictionary<(string, string, string, string), int>();
 
         public int Elements { get; set; }
 
@@ -167,16 +181,18 @@ namespace VKTools.Revit.Schedules
         public List<string> KnownFloorValues => Floors.Select(f => f.Value).ToList();
 
         /// <summary>Сколько элементов покажет спецификация (без расчётных позиций Р3).</summary>
-        public int Count(ICollection<string> systems, bool allSystems, ICollection<string> floors, bool allFloors, IReadOnlyList<FilterCondition> rooms) =>
+        public int Count(ICollection<string> systems, bool allSystems, ICollection<string> floors, bool allFloors, IReadOnlyList<FilterCondition> rooms,
+            IReadOnlyList<FilterCondition>? zones = null) =>
             Pairs.Where(p => (allSystems || systems.Contains(p.Key.System)) && (allFloors || floors.Contains(p.Key.Floor))
-                && (rooms.Count == 0 || ScheduleFilterPlanner.Matches(rooms, p.Key.Room))).Sum(p => p.Value);
+                && (rooms.Count == 0 || ScheduleFilterPlanner.Matches(rooms, p.Key.Room))
+                && (zones == null || zones.Count == 0 || ScheduleFilterPlanner.Matches(zones, p.Key.Zone))).Sum(p => p.Value);
 
         /// <summary>Пересчитать фильтры выбора на текущей модели.</summary>
         public ScheduleFilterSet Plan(ScheduleRequest request, int otherFilters, out List<string> systems, out List<string> floors)
         {
             systems = request.ResolveSystems(Systems, Groups);
             floors = request.ResolveFloors(Floors);
-            return ScheduleFilterSet.Build(Systems, systems, KnownFloorValues, floors, otherFilters, RoomConditions(request));
+            return ScheduleFilterSet.Build(Systems, systems, KnownFloorValues, floors, otherFilters, RoomConditions(request), Zones, request.ResolveZones(Zones));
         }
     }
 
@@ -204,6 +220,7 @@ namespace VKTools.Revit.Schedules
             if (sf.SystemParam != null) data.SystemParam = sf.SystemParam;
             if (sf.FloorParam != null) data.FloorParam = sf.FloorParam;
             data.MirrorParam = sf.MirrorParam;
+            data.ZoneSourceText = sf.ZoneText();
 
             ReadElements(doc, data, sf);
             ReadViews(doc, data);
@@ -249,7 +266,11 @@ namespace VKTools.Revit.Schedules
                     if (!roomSystems.TryGetValue(room, out HashSet<string>? set)) roomSystems[room] = set = new HashSet<string>(StringComparer.Ordinal);
                     if (sys.Length > 0) set.Add(sys);
                 }
-                data.Pairs[(sys, floor, room)] = data.Pairs.TryGetValue((sys, floor, room), out int p) ? p + 1 : 1;
+                Parameter? zoneParam = access.Find(element, data.ZoneParam);
+                string zone = zoneParam == null ? string.Empty : Text(zoneParam);
+                if (zone.Length > 0) data.ZoneCounts[zone] = data.ZoneCounts.TryGetValue(zone, out int z) ? z + 1 : 1;
+                else data.WithoutZone++;
+                data.Pairs[(sys, floor, room, zone)] = data.Pairs.TryGetValue((sys, floor, room, zone), out int p) ? p + 1 : 1;
             }
             if (roomCounts.Count > 0)
             {
@@ -266,6 +287,8 @@ namespace VKTools.Revit.Schedules
                 }
             }
             data.Systems.AddRange(data.SystemCounts.Keys.OrderBy(s => s, NaturalComparer.Instance));
+            data.Zones.AddRange(data.ZoneCounts.Keys.OrderBy(z => z, NaturalComparer.Instance));
+            if (data.Zones.Count == 0) data.WithoutZone = 0;
             data.Floors.AddRange(FloorNames.Order(floorCounts.Select(kv =>
                 new FloorInfo(kv.Key, floorElevation.TryGetValue(kv.Key, out double e) ? e : (double?)null, kv.Value))));
         }
@@ -314,16 +337,17 @@ namespace VKTools.Revit.Schedules
             int other = OtherFilters(vs.Document, vs.Definition, data);
             ScheduleFilterSet set = data.Plan(request, other, out _, out _);
             if (set.Error != null) return new OwnSchedule(vs.Id.ToLong(), vs.Name, request, "не обновить: " + set.Error, false);
-            string signature = string.Join("\n", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name));
+            string signature = string.Join("\n", set.Describe(data.SystemParam.Name, data.FloorParam.Name, data.RoomParam.Name, data.ZoneParam.Name));
             var added = data.Systems.Where(s => !request.KnownSystems.Contains(s, StringComparer.Ordinal))
-                .Concat(data.KnownFloorValues.Where(f => !request.KnownFloors.Contains(f, StringComparer.Ordinal))).ToList();
+                .Concat(data.KnownFloorValues.Where(f => !request.KnownFloors.Contains(f, StringComparer.Ordinal)))
+                .Concat(request.IsZoned ? data.Zones.Where(z => !request.KnownZones.Contains(z, StringComparer.Ordinal)).Select(z => "зона «" + z + "»") : Enumerable.Empty<string>()).ToList();
             if (signature == request.FilterSignature)
             {
                 return new OwnSchedule(vs.Id.ToLong(), vs.Name, request, added.Count == 0 ? "фильтры актуальны" : "фильтры актуальны (новые значения учтены: " + string.Join(", ", added) + ")", false);
             }
             string why = added.Count > 0 ? "в модели появились " + string.Join(", ", added.Take(6)) + (added.Count > 6 ? "…" : string.Empty)
                 : !request.IsRoom && data.ExcludedRooms.Count > 0 && !request.FilterSignature.Contains(data.RoomParam.Name) ? "есть спецификация помещения — исключить его отсюда"
-                : "состав систем, этажей или помещений изменился";
+                : "состав систем, этажей, помещений или зон изменился";
             return new OwnSchedule(vs.Id.ToLong(), vs.Name, request, "нужно обновить: " + why, true);
         }
 

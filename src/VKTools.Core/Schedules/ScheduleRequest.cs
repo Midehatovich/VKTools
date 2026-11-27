@@ -72,6 +72,21 @@ namespace VKTools.Core.Schedules
 
         public bool IsRoom => Room.Length > 0;
 
+        /// <summary>
+        /// Выбранные зоны «Р_Зона» (0.17.6); пусто — все, фильтра по зоне нет. Список явный: новая зона в модели в спецификацию
+        /// сама не попадёт («Обновить» её исключит).
+        /// </summary>
+        public List<string> Zones { get; set; } = new List<string>();
+
+        /// <summary>Зоны модели на момент создания.</summary>
+        public List<string> KnownZones { get; set; } = new List<string>();
+
+        public bool IsZoned => Zones.Count > 0;
+
+        /// <summary>Зоны для текущей модели: выбранные, которые в ней есть; без выбора — все.</summary>
+        public List<string> ResolveZones(IReadOnlyList<string> known) =>
+            IsZoned ? known.Where(k => Zones.Contains(k, StringComparer.Ordinal)).ToList() : known.ToList();
+
         public bool UsesForm => string.IsNullOrEmpty(Template);
 
         /// <summary>Системы для текущей модели.</summary>
@@ -154,6 +169,7 @@ namespace VKTools.Core.Schedules
                 _ => FloorsText(floors),
             };
             if (floor.Length > 0) name.Append(' ').Append(floor);
+            if (IsZoned) name.Append(Zones.Count == 1 ? " в зоне " : " в зонах ").Append(JoinAnd(Zones.Select(z => "«" + z + "»").ToList()));
             return CleanName(name.ToString());
         }
 
@@ -208,6 +224,8 @@ namespace VKTools.Core.Schedules
                 ["room"] = Room,
                 ["roomTitle"] = RoomTitle,
                 ["roomExclusive"] = B(RoomExclusive),
+                ["zones"] = Join(Zones),
+                ["knownZones"] = Join(KnownZones),
             };
         }
 
@@ -233,6 +251,8 @@ namespace VKTools.Core.Schedules
                 Room = Get("room"),
                 RoomTitle = Get("roomTitle"),
                 RoomExclusive = Get("roomExclusive") != "0",
+                Zones = Split(Get("zones")),
+                KnownZones = Split(Get("knownZones")),
             };
             if (request.SystemPreset.Length == 0) request.SystemPreset = PresetManual;
             if (request.FloorPreset.Length == 0) request.FloorPreset = PresetManual;
