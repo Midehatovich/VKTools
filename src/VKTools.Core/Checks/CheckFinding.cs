@@ -38,6 +38,12 @@ namespace VKTools.Core.Checks
             }
         }
 
+        /// <summary>«Один типоразмер — разные наименования»: варианты (самый частый первым) и их элементы — для «Одно наименование…».</summary>
+        public List<NameVariant> NameVariants { get; } = new List<NameVariant>();
+
+        /// <summary>Параметр графы наименования, где найдены варианты.</summary>
+        public string NameParameter { get; set; } = string.Empty;
+
         public string Category { get; set; } = string.Empty;
 
         public string Family { get; set; } = string.Empty;
@@ -61,5 +67,19 @@ namespace VKTools.Core.Checks
         public string SeverityText => Severity.ToRussian();
 
         public string ElementIdText => ElementId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty;
+    }
+
+    /// <summary>Вариант наименования и элементы с ним.</summary>
+    public sealed class NameVariant
+    {
+        public NameVariant(string name, IReadOnlyList<long> ids)
+        {
+            Name = name;
+            Ids = ids;
+        }
+
+        public string Name { get; }
+
+        public IReadOnlyList<long> Ids { get; }
     }
 }

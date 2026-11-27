@@ -152,6 +152,7 @@ namespace VKTools.Revit.Schedules
                     Sort = sortIds.Contains(field.FieldId.IntegerValue),
                     Totals = field.DisplayType == ScheduleFieldDisplayType.Totals,
                     Accuracy = Accuracy(doc, field),
+                    Parameter = field.FieldType == ScheduleFieldType.Instance || field.FieldType == ScheduleFieldType.ElementType ? NameOf(doc, field.ParameterId) : string.Empty,
                 });
 #if REVIT2022_OR_GREATER
                 if (field.IsCombinedParameterField)
@@ -161,6 +162,7 @@ namespace VKTools.Revit.Schedules
                     {
                         reader.Parts.Add((part.ParamId, part.Prefix ?? string.Empty, part.Suffix ?? string.Empty, part.Separator ?? string.Empty));
                         if (role == AuditRole.Other) role = ScheduleAudit.RoleOf(NameOf(doc, part.ParamId));
+                        if (reader.Field.Parameter.Length == 0) reader.Field.Parameter = NameOf(doc, part.ParamId);
                     }
                     reader = Retarget(reader, role);
                     readers.Add(reader);
@@ -238,7 +240,7 @@ namespace VKTools.Revit.Schedules
         {
             if (role == reader.Field.Role) return reader;
             AuditField f = reader.Field;
-            var copy = new FieldReader(new AuditField(f.Name, role) { Hidden = f.Hidden, Sort = f.Sort, Totals = f.Totals, Accuracy = f.Accuracy });
+            var copy = new FieldReader(new AuditField(f.Name, role) { Hidden = f.Hidden, Sort = f.Sort, Totals = f.Totals, Accuracy = f.Accuracy, Parameter = f.Parameter });
             copy.Parts.AddRange(reader.Parts);
             return copy;
         }

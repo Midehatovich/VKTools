@@ -45,6 +45,9 @@ namespace VKTools.Core.Schedules
 
         /// <summary>Шаг округления в спецификации (0,1; 0,01), 0 — не известен.</summary>
         public double Accuracy { get; set; }
+
+        /// <summary>Имя параметра графы (у комбинированной — первого); пусто — не параметр (формула, счёт).</summary>
+        public string Parameter { get; set; } = string.Empty;
     }
 
     /// <summary>Элемент спецификации: значения граф в порядке <see cref="AuditSchedule.Fields"/>.</summary>
@@ -421,14 +424,19 @@ namespace VKTools.Core.Schedules
                 {
                     Current = string.Join("; ", names.Take(MaxListed).Select(n => $"«{Shorten(n.Value, 80)}» — {n.Count} шт.")),
                     Expected = "одно наименование на типоразмер",
-                    Action = "Обычно отличается одно слово («…неоцинкованная…» и без него): поправьте правило «Имён труб» или «Изоляции», "
-                        + "либо приведите ADSK_Наименование в семействе. Выделены элементы с более редким вариантом.",
+                    Action = "Обычно отличается одно слово («…неоцинкованная…» и без него): кнопка «Одно наименование…» запишет выбранное в Р_Наименование "
+                        + "и запомнит правило в модели; либо поправьте правило «Имён труб»/«Изоляции» или ADSK_Наименование в семействе. Выделены элементы с более редким вариантом.",
                     Category = group.First().Category,
                     Family = group.Key.Family,
                     Type = group.Key.Type,
                 };
                 string major = names[0].Value;
                 Attach(finding, group.Where(e => !string.Equals(Value(e, nameIdx), major, StringComparison.Ordinal) && Value(e, nameIdx).Length > 0));
+                finding.NameParameter = schedule.Fields[nameIdx].Parameter;
+                foreach ((string value, int _) in names)
+                {
+                    finding.NameVariants.Add(new NameVariant(value, group.Where(e => string.Equals(Value(e, nameIdx), value, StringComparison.Ordinal)).Select(e => e.Id).ToList()));
+                }
                 findings.Add(finding);
             }
         }

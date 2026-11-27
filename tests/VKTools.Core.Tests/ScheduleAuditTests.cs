@@ -106,6 +106,9 @@ namespace VKTools.Core.Tests
             List<CheckFinding> all = ScheduleAudit.Run(new[] { s });
             CheckFinding split = Assert.Single(Of(all, ScheduleAudit.NameSplit));
             Assert.Equal(new[] { odd.Id }, split.RelatedElementIds);
+            Assert.Equal(2, split.NameVariants.Count);
+            Assert.Equal(20, split.NameVariants[0].Ids.Count);
+            Assert.Equal(new[] { odd.Id }, split.NameVariants[1].Ids);
             CheckFinding dup = Assert.Single(Of(all, ScheduleAudit.Numbering), f => f.Message.Contains("позиция 95"));
             Assert.Contains("2 разных строк", dup.Message);
         }
