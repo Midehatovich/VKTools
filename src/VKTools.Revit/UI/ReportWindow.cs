@@ -140,6 +140,13 @@ namespace VKTools.Revit.UI
                 DockPanel.SetDock(breakJunction, Dock.Left);
                 buttons.Children.Add(breakJunction);
             }
+            if (report.Findings.Any(f => f.NameVariants.Count > 1))
+            {
+                Button merge = MakeButton("Одно наименование…", (s, e) => MergeNamesSelected());
+                merge.ToolTip = "Для строки «Один типоразмер — разные наименования»: выбрать одно, записать в Р_Наименование и запомнить правило в модели";
+                DockPanel.SetDock(merge, Dock.Left);
+                buttons.Children.Add(merge);
+            }
             buttons.Children.Add(export);
             buttons.Children.Add(close);
             root.Children.Add(buttons);
@@ -298,6 +305,37 @@ namespace VKTools.Revit.UI
             _breakEvent.Raise();
         }
 
+        private void MergeNamesSelected()
+        {
+            List<CheckFinding> rows = _grid.SelectedItems.Cast<CheckFinding>().Where(f => f.NameVariants.Count > 1).ToList();
+            if (rows.Count != 1)
+            {
+                MessageBox.Show(this, "Выделите одну строку «Один типоразмер — разные наименования».", "VK Tools", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            CheckFinding row = rows[0];
+            string target = Core.Config.ParamProfile.Target(Core.Config.ParamRole.Name).Name;
+            if (!Core.Config.ParamProfile.IsOwn)
+            {
+                MessageBox.Show(this, "Модель на наборе ADSK_: «Одно наименование» пишет только в свой параметр Р_Наименование, ADSK_ не трогает. "
+                    + "Поправьте ADSK_Наименование в семействе или правило «Имён труб»/«Изоляции».", "VK Tools", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            if (!string.Equals(row.NameParameter, target, StringComparison.Ordinal))
+            {
+                MessageBox.Show(this, $"Графа наименования этой спецификации показывает «{(row.NameParameter.Length > 0 ? row.NameParameter : "не параметр")}», "
+                    + $"а записывается «{target}»: в таблице ничего не изменится. Замените поле в спецификации на {target}.", "VK Tools", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var dialog = new NamePickWindow(row);
+            dialog.Owner = this;
+            if (dialog.ShowDialog() != true || dialog.Chosen.Length == 0) return;
+            if (!ReportWindowHost.RequestMerge(_document, dialog.Chosen, row.NameVariants.Select(v => (v.Name, v.Ids))))
+            {
+                MessageBox.Show(this, "Окно отчёта не подготовлено командой: запустите проверку ещё раз.", "VK Tools", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
         private void ExportCsv()
         {
             var dialog = new SaveFileDialog
@@ -336,6 +374,17 @@ namespace VKTools.Revit.UI
         private static SelectElementsHandler? _selectHandler;
         private static ExternalEvent? _breakEvent;
         private static BreakJunctionsHandler? _breakHandler;
+        private static ExternalEvent? _mergeEvent;
+        private static MergeNamesHandler? _mergeHandler;
+
+        /// <summary>«Одно наименование…»: false — событие не создано (окно открыто не командой).</summary>
+        public static bool RequestMerge(Document document, string main, IEnumerable<(string Name, IReadOnlyList<long> Ids)> variants)
+        {
+            if (_mergeEvent == null || _mergeHandler == null) return false;
+            _mergeHandler.Request(document, main, variants);
+            _mergeEvent.Raise();
+            return true;
+        }
 
         /// <summary>Вызывать только из команды Revit (ExternalEvent создаётся в контексте API).</summary>
         public static void Show(CheckReport report, Document document, UIApplication app)
@@ -356,6 +405,11 @@ namespace VKTools.Revit.UI
             {
                 _breakHandler = new BreakJunctionsHandler();
                 _breakEvent = ExternalEvent.Create(_breakHandler);
+            }
+            if (_mergeEvent == null || _mergeHandler == null)
+            {
+                _mergeHandler = new MergeNamesHandler();
+                _mergeEvent = ExternalEvent.Create(_mergeHandler);
             }
         }
 
@@ -386,6 +440,65 @@ namespace VKTools.Revit.UI
             _selectEvent = null;
             _breakEvent?.Dispose();
             _breakEvent = null;
+            _mergeEvent?.Dispose();
+            _mergeEvent = null;
         }
+    }
+    /// <summary>Выбор одного наименования из вариантов строки отчёта; текст можно поправить.</summary>
+    internal sealed class NamePickWindow : Window
+    {
+        private readonly TextBox _text;
+
+        public NamePickWindow(CheckFinding row)
+        {
+            this.ApplyDefaultLook();
+            Title = "VK Tools — одно наименование";
+            Width = 760;
+            SizeToContent = SizeToContent.Height;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            var root = new StackPanel { Margin = new Thickness(12) };
+            Content = root;
+            root.Children.Add(new TextBlock
+            {
+                Text = $"«{row.Family}: {row.Type}» — {row.NameVariants.Count} наименования. Какое оставить?",
+                FontWeight = FontWeights.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+            });
+            _text = new TextBox { Text = row.NameVariants[0].Name, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
+            foreach (NameVariant v in row.NameVariants)
+            {
+                var radio = new RadioButton
+                {
+                    Content = new TextBlock { Text = $"{v.Name}  — {v.Ids.Count} эл.", TextWrapping = TextWrapping.Wrap },
+                    GroupName = "names",
+                    IsChecked = ReferenceEquals(v, row.NameVariants[0]),
+                    Margin = new Thickness(0, 2, 0, 2),
+                };
+                string name = v.Name;
+                radio.Checked += (s, e) => _text.Text = name;
+                root.Children.Add(radio);
+            }
+            root.Children.Add(new TextBlock { Text = "Записать (можно поправить):", Margin = new Thickness(0, 8, 0, 0) });
+            root.Children.Add(_text);
+            root.Children.Add(new TextBlock
+            {
+                Text = "Пишется в Р_Наименование у всех элементов этих вариантов (ADSK_ не меняется), одна операция — Ctrl+Z отменяет. "
+                    + "Правило «вариант → это наименование» сохраняется в модели: следующие прогоны шагов плагина не вернут прежний вариант. "
+                    + "Подводный камень: правило действует на всю модель — тот же вариант у другого типоразмера тоже заменится.",
+                Foreground = Brushes.DimGray,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 8, 0, 0),
+            });
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, 0, 0) };
+            var ok = new Button { Content = "Записать", MinWidth = 90, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
+            ok.Click += (s, e) => DialogResult = true;
+            var cancel = new Button { Content = "Отмена", MinWidth = 90, IsCancel = true };
+            buttons.Children.Add(ok);
+            buttons.Children.Add(cancel);
+            root.Children.Add(buttons);
+        }
+
+        public string Chosen => (_text.Text ?? string.Empty).Trim();
     }
 }

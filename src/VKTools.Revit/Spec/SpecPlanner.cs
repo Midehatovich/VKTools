@@ -897,8 +897,22 @@ namespace VKTools.Revit.Spec
             return true;
         }
 
+        private Dictionary<string, string>? _nameAliases;
+
         private void AddChange(SpecModule module, Element element, ParamKey key, string old, ParamValue value, string source, long? sourceId)
         {
+            // «Одно наименование» (0.17.4): выбранное инженером наименование не откатывается следующим прогоном шагов
+            if (value.Kind == ParamValueKind.Text && ParamProfile.IsOwn && key.Equals(ParamProfile.TargetKey(ParamRole.Name)))
+            {
+                _nameAliases ??= NameAliases.Parse(SpecSettingsStore.Read(_doc, out _).Get(NameAliases.Key));
+                string mapped = NameAliases.Map(_nameAliases, value.Text);
+                if (!string.Equals(mapped, value.Text, StringComparison.Ordinal))
+                {
+                    if (string.Equals(mapped, old, StringComparison.Ordinal)) return;
+                    value = ParamValue.OfText(mapped);
+                    source += " (правило «Одно наименование»)";
+                }
+            }
             (string family, string type) = Labels(element);
             _plan.AddChange(new ParamChange(module, element.Id.ToLong(), key, old, value)
             {

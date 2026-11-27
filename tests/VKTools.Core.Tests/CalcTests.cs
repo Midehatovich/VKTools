@@ -58,7 +58,7 @@ namespace VKTools.Core.Tests
             Assert.Equal(new[] { "PRIMER", "PAINT", "METAL", "CORD6", "CORD8", "CORD10", "CORD12H", "CORD12S" }, set.Resources.Select(r => r.Code));
             Assert.Equal(new[] { "9.1", "9.2", "9.3", "9.4", "9.5", "9.6", "9.7", "9.8" }, set.Resources.Select(r => r.Group));
             Assert.Equal(4, set.Cord.Count);
-            Assert.Equal(new[] { "ADSK_Марка", "ADSK_Техническая характеристика", "ADSK_Завод-изготовитель" }, set.ExtraParameters);
+            Assert.Equal(new[] { "ADSK_Марка", "ADSK_Код изделия", "ADSK_Техническая характеристика", "ADSK_Завод-изготовитель", "ADSK_Примечание" }, set.ExtraParameters);
             Assert.Equal(12, set.Supports.Count);
             Assert.Equal(31, set.Rules.Count);
             PipeRule pvc = set.Rules.Single(r => r.NameMask == "*НПВХ*" && r.Matches("Сталь", "Труба НПВХ 110", 110, false));
@@ -218,6 +218,19 @@ namespace VKTools.Core.Tests
         }
 
         [Fact]
+        public void Встроенные_ресурсы_заполняют_пустые_графы_формы()
+        {
+            foreach (CalcResource r in Rules().Resources)
+            {
+                string Extra(string key) => r.Extras.Single(e => e.Key == key).Value;
+                Assert.NotEqual(string.Empty, Extra("ADSK_Марка"));
+                Assert.Equal("-", Extra("ADSK_Код изделия"));
+                Assert.Equal("Россия", Extra("ADSK_Завод-изготовитель"));
+                Assert.Equal("или аналог", Extra("ADSK_Примечание"));
+            }
+        }
+
+        [Fact]
         public void Файл_Dynamo_без_schema_импортируется_с_доп_колонкой()
         {
             string text = "﻿# комментарий\nКод;Наименование;Ед_изм;База;Расход;Слоев;Запас;Порядок;Округление;Основание;ADSK_Завод-изготовитель\n"
@@ -252,8 +265,8 @@ namespace VKTools.Core.Tests
             Assert.Empty(settings.Values);
 
             options.Schedules.Add("Спецификация В1. Надземная часть");
-            options.ResourcesText = options.ResourcesText.Replace("метр", "метр").Replace("920;0,1;калькулятор slpl.ru/node/218, шаг - СП 73.13330.2016 табл. 2;;;",
-                "920;0,1;калькулятор slpl.ru/node/218, шаг - СП 73.13330.2016 табл. 2;;;Альтеза");
+            options.ResourcesText = options.ResourcesText.Replace("920;0,1;калькулятор slpl.ru/node/218, шаг - СП 73.13330.2016 табл. 2;-;-;;Россия;",
+                "920;0,1;калькулятор slpl.ru/node/218, шаг - СП 73.13330.2016 табл. 2;-;-;;Альтеза;");
             options.StoreTo(settings, defaults, "user", DateTime.Now);
             Assert.NotNull(settings.Get("calc.resources"));
             Assert.Null(settings.Get("calc.pipeRules"));
